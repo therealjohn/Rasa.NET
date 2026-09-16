@@ -8,5 +8,6 @@ COPY Rasa.NET.sln.DotSettings /app
 COPY global.json /app
 COPY .config /app/.config
 
-RUN dotnet restore
+ARG NUGET_SOURCE=https://api.nuget.org/v3/index.json
+RUN dotnet restore --source "$NUGET_SOURCE"
 RUN dotnet build --no-restore --configuration Release

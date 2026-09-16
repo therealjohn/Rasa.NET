@@ -4,7 +4,9 @@ This provides an alternative to building and using the project directly on your 
 
 The Dockerfile builds with .NET SDK **10.0.401**, matching `global.json` and CI. The Compose services run the Release binaries directly with `/app` as their working directory, where the three SQLite files are mounted. Game configuration is mounted beside its Release binary. Rebuild the image after updating source or dependencies with `docker compose up --build`.
 
-This currently only supports SQLite for the database.
+To use a different NuGet feed for an image build without changing global configuration, pass `--build-arg NUGET_SOURCE=<feed-url>` to `docker build`.
+
+This guide's Compose example uses SQLite.
 
 The application also supports MySQL 8.0/8.4, but the supplied Compose configuration does not provision it. See [the setup guide](setup.md) for MySQL configuration and migration commands. Do not point smoke tests at an existing developer database.
 

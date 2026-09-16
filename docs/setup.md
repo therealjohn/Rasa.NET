@@ -131,6 +131,8 @@ If you want to add additional migrations as part of a feature, see "Creating mig
 ## Working with the databases and EF Core
 The databases are kept up to date with EF Core. The compatible package set is EF Core/SQLite/Design **9.0.20** with Pomelo MySQL **9.0.0**, running on .NET 10. Pomelo 9 supports EF Core 9, not EF Core 10; upgrade these providers together. EF Core 9 support ends November 10, 2026, so this dependency choice needs review before that date. MySQL 8.0 and 8.4 are supported by the provider.
 
+With Pomelo 9, use MySQL schema names of at most 45 characters. The provider adds a prefix/suffix when acquiring its migration lock, and MySQL limits that lock name to 64 characters. The default Rasa schema names fit. An existing longer-named schema requires a separate upgrade decision; do not bypass migration locking or discard its migration history.
+
 ### Applying migrations
 This section describes how to apply migrations to your MySql database as well as how to add additional migrations if you changed the data model in a way that requires an update to the database.
 
