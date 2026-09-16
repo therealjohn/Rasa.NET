@@ -10,25 +10,28 @@ This guide will help you install and setup the required tools to run Rasa.NET. T
 ## Download, install, and setup the required tooling
 The following tools are required to setup, build, and run Rasa.NET:
 
-- Microsoft Visual Studio 2017 or higher
-- .NET Core SDK and Runtime
+- .NET SDK 10.0.401 (pinned in the repository's `global.json`)
+- Optional: a Visual Studio release that supports this .NET 10 SDK
 - Database System, either:
   - MySQL Server and Workbench or
   - Sqlite (no tools required, but a Sqlite DB browser might help)
 - Git
 
 ### Install Visual Studio
-There is a single Visual Studio solution that contains the projects needed for Rasa.NET. Use Visual Studio 2017 or higher to compile and build these projects.
+There is a single Visual Studio solution that contains the projects needed for Rasa.NET. Use a Visual Studio release that supports .NET 10, or build with the .NET CLI below. Visual Studio 2017 cannot build this solution.
 
 - Download [Visual Studio](https://visualstudio.microsoft.com/). Choose the license that works for you
 - Run the installer after it's downloaded
-- In the Workloads selection, make sure that `.NET desktop development` and `.NET Core cross-platform development` boxes are checked
+- In the Workloads selection, select `.NET desktop development`
 - Continue the installation and let it finish
 
-### Install .NET Core
-Rasa.NET is set to build and run with .NET Core.
+### Install .NET 10
+All seven projects target .NET 10. Install the exact SDK selected by `global.json`; SDK roll-forward is disabled so local builds, CI and Docker use the same version.
 
-- [Download the .NET Core 5 SDK and Runtime](https://dotnet.microsoft.com/download/dotnet/5.0) and install it
+- [Download the .NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) and install version **10.0.401**. The SDK includes the runtime.
+- From the repository root, run `dotnet --version` and verify `10.0.401`.
+
+The supported portable deployment identifiers are `win-x64`, `osx-x64` and `linux-x64`. These preserve the Windows, macOS and Linux x64 deployment families, not support for the obsolete operating-system versions named by the old .NET 5 identifiers. Use an operating system supported by .NET 10.
 
 ### Optional: Install MySQL Server and MySQL Workbench
 Rasa.NET uses MySQL or Sqlite to store game data. Sqlite works well for quick a jump into development and needs no further setup, but if you want to use MySql, download and install MySQL Community Server following these steps:
@@ -126,15 +129,21 @@ To access a MySql server with EF Core, set `Provider` to `MySql`. You need to pr
 If you want to add additional migrations as part of a feature, see "Creating migrations".
 
 ## Working with the databases and EF Core
-The databases are kept up to date with EF core. This process is described here.
+The databases are kept up to date with EF Core. The compatible package set is EF Core/SQLite/Design **9.0.20** with Pomelo MySQL **9.0.0**, running on .NET 10. Pomelo 9 supports EF Core 9, not EF Core 10; upgrade these providers together. EF Core 9 support ends November 10, 2026, so this dependency choice needs review before that date. MySQL 8.0 and 8.4 are supported by the provider.
 
 ### Applying migrations
 This section describes how to apply migrations to your MySql database as well as how to add additional migrations if you changed the data model in a way that requires an update to the database.
 
-First, if not already done, install dotnet-ef (see also https://docs.microsoft.com/en-GB/ef/core/cli/dotnet):
+First restore the solution and the repository-local EF tool from the repository root. The manifest pins `dotnet-ef` to the same version as EF Core; its runtime roll-forward allows the tool to run with only .NET 10 installed. Do not install an unpinned global tool.
 
 - Open powershell
-- `dotnet tool install --global dotnet-ef`
+- `dotnet restore`
+- `dotnet tool restore`
+- `dotnet ef --version` (expected: `9.0.20`)
+
+Before upgrading an existing database, back it up and test these commands on a disposable copy. Keep `__EFMigrationsHistory`; do not use `EnsureCreated`, delete the database, or suppress pending-model errors to bypass an upgrade failure. SQLite applies migrations automatically on server startup; MySQL requires the commands below before starting the servers.
+
+The .NET 10 upgrade adds a `Net10IdentityMetadata` migration for each MySQL context. These migrations update EF's snapshots/history without changing tables or rows: historical migrations already created the identity columns as `AUTO_INCREMENT`, but their old snapshots omitted that metadata. Their rollback is also metadata-only and does not remove `AUTO_INCREMENT`.
 
 Now navigate to the folder of the Rasa.DBL project:
 
@@ -167,12 +176,12 @@ Basically, we differentiate between two types of migrations:
 
 Always ensure, that a migration only does one or the other. This is very easy, as we use code first approach. If you're developing a feature that requires an update to the schema of one or more of the databases, change the entry classes in RASA.DBL/Structures or add new entries by creating the class and adding a DbSet<EntryClass> to the respective DbContext. Then, create a migration applying those changes by executing the following commands:
 
-- `dotnet ef migrations add <Name_of_the_Migration> --context==MySqlAuthContext` 
-- `dotnet ef migrations add <Name_of_the_Migration> --context==SqliteAuthContext`
+- `dotnet ef migrations add <Name_of_the_Migration> --context=MySqlAuthContext`
+- `dotnet ef migrations add <Name_of_the_Migration> --context=SqliteAuthContext`
 
 If you realize something is wrong with the created migrations and you want to remove and recreate the last migration, execute the following commands:
-- `dotnet ef migrations remove --context==MySqlAuthContext` 
-- `dotnet ef migrations remove --context==SqliteAuthContext`
+- `dotnet ef migrations remove --context=MySqlAuthContext`
+- `dotnet ef migrations remove --context=SqliteAuthContext`
 
 Always add migrations for MySql *and* Sqlite for your changes.
 
@@ -207,6 +216,40 @@ You should be ready to compile Rasa.NET and run the servers.
   - Choose "Multiple startup projects"
   - Set "Action" for both projects wether you want to start with or without debugging
 - Of course, you can also build the project and start the Auth server from the bin directory.
+
+### Build and test from the command line
+
+From the repository root:
+
+```powershell
+dotnet restore
+dotnet build --no-restore
+dotnet test --no-build
+dotnet run --project src\Rasa.Auth\Rasa.Auth.csproj --no-build
+```
+
+Start Game in a second terminal with `dotnet run --project src\Rasa.Game\Rasa.Game.csproj --no-build`.
+For a self-contained deployment, publish each server with a portable identifier, for example:
+
+```powershell
+dotnet publish src\Rasa.Auth\Rasa.Auth.csproj -c Release -r win-x64 --self-contained true
+dotnet publish src\Rasa.Game\Rasa.Game.csproj -c Release -r win-x64 --self-contained true
+```
+
+Use `osx-x64` or `linux-x64` for the other deployment targets.
+
+### Database compatibility tests
+
+The default test run checks all six provider models, generates MySQL migration SQL, and creates disposable SQLite databases to verify fresh migrations, upgrades and account persistence. SQLite test files are created under the test output directory and removed afterward.
+
+Live MySQL tests are opt-in. Provision a disposable local MySQL 8.0/8.4 instance on an ephemeral host port, then set `RASA_TEST_MYSQL_CONNECTION` to its connection string (server, port, user and password, with no database). The test account needs permission to create and drop databases. Never use an existing developer instance.
+
+```powershell
+dotnet test src\Rasa.Test\Rasa.Test.csproj --filter TestCategory=MySql
+Remove-Item Env:\RASA_TEST_MYSQL_CONNECTION
+```
+
+Each live test creates a uniquely named database and drops only that database afterward. Tests reject the shared default port 3306 and connection strings naming an existing database. Without the environment variable, the six live MySQL cases are reported as skipped; model/SQL checks alone do not establish live MySQL compatibility.
 
 ### Create a game user
 The authentication server can be used to create a user by running a command in the terminal. The usage is: `create <email> <username> <password>`. Running this command will create a new user in the database that you can use to login with the game client.
