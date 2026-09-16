@@ -118,7 +118,9 @@ namespace Rasa.Test.Database
             }
             Assert.AreEqual(1, ExecuteLockScalar(first, "SELECT IS_FREE_LOCK(@name)", name));
 
-            using var otherDatabase = DisposableDatabase.Create(typeof(MySqlAuthContext), databaseNameLength);
+            var firstDatabaseName = first.Database.GetDbConnection().Database;
+            var otherDatabaseName = firstDatabaseName.Substring(0, firstDatabaseName.Length - 1) + "y";
+            using var otherDatabase = DisposableDatabase.Create(typeof(MySqlAuthContext), databaseNameLength, otherDatabaseName);
             using var other = otherDatabase.CreateContext();
             await other.Database.OpenConnectionAsync();
             using (other.GetService<IHistoryRepository>().AcquireDatabaseLock())
@@ -167,7 +169,7 @@ namespace Rasa.Test.Database
                 _configuration = configuration;
             }
 
-            public static DisposableDatabase Create(Type contextType, int databaseNameLength)
+            public static DisposableDatabase Create(Type contextType, int databaseNameLength, string databaseName = null)
             {
                 var connectionString = Environment.GetEnvironmentVariable("RASA_TEST_MYSQL_CONNECTION");
                 if (string.IsNullOrWhiteSpace(connectionString))
@@ -179,6 +181,10 @@ namespace Rasa.Test.Database
                 Assert.AreNotEqual(3306U, builder.Port, "Use an isolated ephemeral host port, not a shared MySQL port.");
                 Assert.IsTrue(string.IsNullOrEmpty(builder.Database), "Do not supply an existing database.");
                 Assert.IsTrue(databaseNameLength >= 40 && databaseNameLength <= 64);
+                databaseName ??= ("rasa_p0_" + Guid.NewGuid().ToString("N")).PadRight(databaseNameLength, 'x');
+                Assert.AreEqual(databaseNameLength, databaseName.Length);
+                Assert.IsTrue(databaseName.StartsWith("rasa_p0_", StringComparison.Ordinal) &&
+                    databaseName.All(c => char.IsAsciiLetterOrDigit(c) || c == '_'));
 
                 var configuration = new DatabaseConnectionConfiguration
                 {
@@ -186,7 +192,7 @@ namespace Rasa.Test.Database
                     Port = builder.Port,
                     User = builder.UserID,
                     Password = builder.Password,
-                    Database = ("rasa_p0_" + Guid.NewGuid().ToString("N")).PadRight(databaseNameLength, 'x'),
+                    Database = databaseName,
                     TimeoutInMilliseconds = 60000
                 };
                 var administration = new MySqlConnection(builder.ConnectionString);
