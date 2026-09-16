@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
 
@@ -163,8 +164,28 @@ namespace Rasa.Networking
                     case SocketAsyncOperation.Receive:
                         // This value may change in the middle of processing, causing odd behavior
                         var receiveAfter = AutoReceive;
-                        if (ProcessInputBuffer(data, args))
+                        try
+                        {
+                            if (ProcessInputBuffer(data, args))
+                                return;
+                        }
+                        catch (Exception error) when (error is InvalidDataException || error is EndOfStreamException)
+                        {
+                            Logger.WriteLog(LogType.Network, $"Rejected invalid transport frame: {error.Message}");
+                            args.SocketError = SocketError.InvalidArgument;
+                            try
+                            {
+                                if (OnError != null)
+                                    OnError(args);
+                                else
+                                    Close();
+                            }
+                            finally
+                            {
+                                TeardownEventArgs(args);
+                            }
                             return;
+                        }
 
                         if (receiveAfter)
                             ReceiveAsync();
@@ -184,7 +205,7 @@ namespace Rasa.Networking
             TeardownEventArgs(args);
         }
 
-        private int ReadSize(BufferData data)
+        private long ReadSize(BufferData data)
         {
             var headerSize = !CountSize ? LengthSize : 0;
 
@@ -194,10 +215,10 @@ namespace Rasa.Networking
                     return headerSize + data[0];
 
                 case SizeType.Word:
-                    return headerSize + BitConverter.ToInt16(data.Buffer, data.BaseOffset);
+                    return headerSize + BitConverter.ToUInt16(data.Buffer, data.BaseOffset);
 
                 case SizeType.Dword:
-                    return headerSize + BitConverter.ToInt32(data.Buffer, data.BaseOffset);
+                    return headerSize + (long)BitConverter.ToUInt32(data.Buffer, data.BaseOffset);
 
                 default:
                     throw new NotImplementedException($"Only 1, 2 and 4 byte headers are supported! {SizeHeaderLength} is not!");
@@ -210,20 +231,7 @@ namespace Rasa.Networking
 
             while (true)
             {
-                var length = -1;
-
-                if (data.ByteCount >= LengthSize)
-                    length = ReadSize(data);
-
-                if (length != -1)
-                {
-                    data.Length = length;
-
-                    if (data.Length > data.MaxLength)
-                        throw new OutOfMemoryException($"Packet is bigger than the max packet size! Packet size: {length} | Max buffer size: {data.MaxLength}");
-                }
-
-                if (length == -1 || data.ByteCount < length)
+                if (!PrepareFrame(data))
                 {
                     args.SetBuffer(data.BaseOffset + data.ByteCount, data.Length - data.ByteCount);
 
@@ -231,10 +239,10 @@ namespace Rasa.Networking
                     return true;
                 }
 
-                data.Offset = LengthSize;
-                data.Length = length;
+                var length = data.Length;
 
-                OnDecrypt?.Invoke(data);
+                if (OnDecrypt?.Invoke(data) == false)
+                    throw new InvalidDataException("Transport payload failed decryption validation.");
                 OnReceive?.Invoke(data);
 
                 if (data.ByteCount == length)
@@ -247,6 +255,40 @@ namespace Rasa.Networking
             }
 
             return false;
+        }
+
+        internal bool PrepareFrame(BufferData data)
+        {
+            if (data.ByteCount < LengthSize)
+            {
+                CompactInputBuffer(data);
+                data.Length = data.MaxLength;
+                return false;
+            }
+
+            var length = ReadSize(data);
+            if (length < LengthSize || length > BufferManager.BlockSize)
+                throw new InvalidDataException($"Invalid transport size {length}; buffer capacity: {BufferManager.BlockSize}.");
+
+            if (length > data.MaxLength)
+                CompactInputBuffer(data);
+
+            data.Length = (int)length;
+            if (data.ByteCount < length)
+                return false;
+
+            data.Offset = LengthSize;
+            return true;
+        }
+
+        private static void CompactInputBuffer(BufferData data)
+        {
+            if (data.BaseOffset == data.RealBaseOffset)
+                return;
+
+            Buffer.BlockCopy(data.Buffer, data.BaseOffset, data.Buffer, data.RealBaseOffset, data.ByteCount);
+            data.BaseOffset = data.RealBaseOffset;
+            data.Offset = 0;
         }
 
         private void CopyToOtherBuffer(BufferData source, BufferData desti)

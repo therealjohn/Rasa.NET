@@ -44,7 +44,7 @@ namespace Rasa.Cryptography
         {
             long chksum = 0;
 
-            for (var i = offset; i < (length - 4); i += 4)
+            for (var i = offset; i < offset + length - 4; i += 4)
                 chksum ^= BitConverter.ToUInt32(data, i);
 
             return 0 == chksum;

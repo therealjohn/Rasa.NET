@@ -1,9 +1,6 @@
 using System;
-using System.Collections.Generic;
-using System.Diagnostics.Tracing;
 using System.IO;
 using System.IO.Compression;
-using System.Linq;
 using System.Text;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -12,6 +9,7 @@ namespace Rasa.Test.Protocol
     using Rasa.Data;
     using Rasa.Memory;
     using Rasa.Packets.Protocol;
+    using Rasa.Test.Memory;
 
     [TestClass]
     [DoNotParallelize]
@@ -25,7 +23,7 @@ namespace Rasa.Test.Protocol
             using var stream = new MemoryStream(CreatePacket());
             using var reader = new BinaryReader(stream);
             var packet = new ProtocolPacket();
-            using var buffers = new BufferTracker();
+            using var buffers = new ArrayPoolTracker();
 
             packet.Read(reader);
 
@@ -48,7 +46,7 @@ namespace Rasa.Test.Protocol
         {
             using var stream = new MemoryStream(CreatePacket(truncate: truncate, extraDeclaredByte: !truncate));
             using var reader = new BinaryReader(stream);
-            using var buffers = new BufferTracker();
+            using var buffers = new ArrayPoolTracker();
 
             Assert.ThrowsExactly<EndOfStreamException>(() => new ProtocolPacket().Read(reader));
 
@@ -61,9 +59,9 @@ namespace Rasa.Test.Protocol
         {
             using var stream = new MemoryStream(CreatePacket(subtype: 3));
             using var reader = new BinaryReader(stream);
-            using var buffers = new BufferTracker();
+            using var buffers = new ArrayPoolTracker();
 
-            var error = Assert.ThrowsExactly<Exception>(() => new ProtocolPacket().Read(reader));
+            var error = Assert.ThrowsExactly<InvalidDataException>(() => new ProtocolPacket().Read(reader));
 
             buffers.AssertReturned();
             Assert.AreEqual("Invalid Subtype found!", error.Message);
@@ -75,7 +73,7 @@ namespace Rasa.Test.Protocol
         {
             using var stream = new MemoryStream(CreatePacket(invalidDeflate: true));
             using var reader = new BinaryReader(stream);
-            using var buffers = new BufferTracker();
+            using var buffers = new ArrayPoolTracker();
 
             Assert.ThrowsExactly<InvalidDataException>(() => new ProtocolPacket().Read(reader));
 
@@ -157,35 +155,5 @@ namespace Rasa.Test.Protocol
             return stream.ToArray();
         }
 
-        private sealed class BufferTracker : EventListener
-        {
-            private readonly int _thread = Environment.CurrentManagedThreadId;
-            private readonly HashSet<int> _rented = new HashSet<int>();
-            private readonly HashSet<int> _returned = new HashSet<int>();
-
-            protected override void OnEventSourceCreated(EventSource source)
-            {
-                if (source.Name == "System.Buffers.ArrayPoolEventSource")
-                    EnableEvents(source, EventLevel.Verbose);
-            }
-
-            protected override void OnEventWritten(EventWrittenEventArgs data)
-            {
-                if (_rented == null || Environment.CurrentManagedThreadId != _thread ||
-                    data.Payload == null || data.Payload.Count < 2 || (int)data.Payload[1] != 32768)
-                    return;
-                if (data.EventName == "BufferRented")
-                    _rented.Add((int)data.Payload[0]);
-                if (data.EventName == "BufferReturned")
-                    _returned.Add((int)data.Payload[0]);
-            }
-
-            public void AssertReturned()
-            {
-                Dispose();
-                Assert.IsTrue(_rented.Count > 0, "Expected the large decompression buffer to be rented.");
-                CollectionAssert.IsSubsetOf(_rented.ToArray(), _returned.ToArray());
-            }
-        }
     }
 }

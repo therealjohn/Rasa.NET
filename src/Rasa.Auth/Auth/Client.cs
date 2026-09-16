@@ -1,4 +1,5 @@
 ﻿using System;
+using System.IO;
 using System.Net.Sockets;
 
 namespace Rasa.Auth
@@ -184,7 +185,8 @@ namespace Rasa.Auth
 
         private static bool OnDecrypt(BufferData data)
         {
-            return AuthCryptManager.Decrypt(data.Buffer, data.BaseOffset + data.Offset, data.RemainingLength);
+            return data.RemainingLength >= 8 && data.RemainingLength % 8 == 0 &&
+                   AuthCryptManager.Decrypt(data.Buffer, data.BaseOffset + data.Offset, data.RemainingLength);
         }
 
         private void OnReceive(BufferData data)
@@ -211,7 +213,7 @@ namespace Rasa.Auth
                 ClientOpcode.ServerListExt => new ServerListExtPacket(),
                 ClientOpcode.SCCheck       => new SCCheckPacket(),
 
-                _ => throw new ArgumentOutOfRangeException(nameof(opcode)),
+                _ => throw new InvalidDataException($"Unsupported auth opcode: {opcode}."),
             };
         }
 

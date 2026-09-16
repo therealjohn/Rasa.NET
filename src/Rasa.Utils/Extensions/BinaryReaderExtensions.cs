@@ -9,7 +9,20 @@ namespace Rasa.Extensions
         public static string ReadLengthedString(this BinaryReader reader)
         {
             var len = reader.ReadInt32();
-            return len == 0 ? "" : Encoding.UTF8.GetString(reader.ReadBytes(len));
+            return Encoding.UTF8.GetString(reader.ReadBytesExactly(len));
+        }
+
+        public static byte[] ReadBytesExactly(this BinaryReader reader, int length)
+        {
+            if (length < 0)
+                throw new InvalidDataException("Payload length cannot be negative.");
+            if (reader.BaseStream.CanSeek && length > reader.BaseStream.Length - reader.BaseStream.Position)
+                throw new EndOfStreamException("Payload length exceeds the available data.");
+
+            var bytes = reader.ReadBytes(length);
+            if (bytes.Length != length)
+                throw new EndOfStreamException("Incomplete payload.");
+            return bytes;
         }
 
         public static string ReadUtf8StringOn(this BinaryReader reader, int length)

@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Buffers;
-using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
@@ -8,10 +7,14 @@ using System.Text;
 namespace Rasa.Packets.Protocol
 {
     using Data;
+    using Extensions;
     using Memory;
 
     public class ProtocolPacket : IBasePacket
     {
+        public const int HeaderSize = 4;
+        public const int MaxSize = ushort.MaxValue;
+
         public ClientMessageOpcode Type { get; private set; } = ClientMessageOpcode.None;
 
         public ushort Size { get; private set; }
@@ -34,20 +37,41 @@ namespace Rasa.Packets.Protocol
 
         public void Read(BinaryReader br)
         {
-            if (br.BaseStream.Length < 4)
-                throw new Exception("Fragmented receive, should not happen! (4 size header)");
+            var available = br.BaseStream.Length - br.BaseStream.Position;
+            if (available < HeaderSize)
+                throw new InvalidDataException("Incomplete protocol header.");
 
+            Size = br.ReadUInt16();
+            if (Size < HeaderSize || Size > available)
+                throw new InvalidDataException($"Invalid protocol size {Size}; available bytes: {available}.");
+
+            var frame = ArrayPool<byte>.Shared.Rent(Size);
+            try
+            {
+                frame[0] = (byte)Size;
+                frame[1] = (byte)(Size >> 8);
+                br.BaseStream.ReadExactly(frame, 2, Size - 2);
+
+                // Bound inflater read-ahead and all message reads to this wire frame.
+                using var stream = new MemoryStream(frame, 0, Size, false);
+                using var reader = new BinaryReader(stream, Encoding.UTF8, true);
+                ReadFrame(reader);
+
+                if (stream.Position != stream.Length)
+                    throw new InvalidDataException("Protocol frame contains unconsumed bytes.");
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(frame);
+            }
+        }
+
+        private void ReadFrame(BinaryReader br)
+        {
             Size = br.ReadUInt16();
             Channel = br.ReadByte();
 
             br.ReadByte(); // padding
-
-            if (Size > br.BaseStream.Length)
-            {
-                Debugger.Break();
-
-                throw new Exception($"Fragmented receive, should not happen! Packet size: {Size} <-> Buffer length: {br.BaseStream.Length}");
-            }
 
             if (Channel == 0xFF) // Internal channel: Send timeout checking, ignore the packet
                 return;
@@ -78,26 +102,23 @@ namespace Rasa.Packets.Protocol
 
             var readBr = br;
 
-            byte[] uncompressedBuffer = null;
-
             try
             {
                 if (Compress)
                 {
                     var someType = br.ReadByte(); // 0 = No compression
                     if (someType >= 2)
-                        throw new Exception("Invalid compress type received!");
+                        throw new InvalidDataException("Invalid compress type received!");
 
                     if (someType == 1)
                     {
                         var uncompressedSize = br.ReadInt32();
+                        if (uncompressedSize <= 0)
+                            throw new InvalidDataException("Decompressed protocol size must be positive.");
 
-                        uncompressedBuffer = ArrayPool<byte>.Shared.Rent(uncompressedSize);
-
-                        using (var deflateStream = new DeflateStream(br.BaseStream, CompressionMode.Decompress, true))
-                            deflateStream.ReadExactly(uncompressedBuffer, 0, uncompressedSize);
-
-                        readBr = new BinaryReader(new MemoryStream(uncompressedBuffer, 0, uncompressedSize, false), Encoding.UTF8, false);
+                        var compressed = br.ReadBytesExactly((int)(br.BaseStream.Length - br.BaseStream.Position));
+                        readBr = new BinaryReader(ProtocolInflater.Decompress(compressed, uncompressedSize),
+                            Encoding.UTF8, false);
                     }
                 }
 
@@ -107,7 +128,7 @@ namespace Rasa.Packets.Protocol
                     ClientMessageOpcode.Move => new MoveMessage(),
                     ClientMessageOpcode.CallServerMethod => new CallServerMethodMessage(),
                     ClientMessageOpcode.Ping => new PingMessage(),
-                    _ => throw new Exception($"Unable to handle packet type {Type}, because it's a Server -> Client packet!"),
+                    _ => throw new InvalidDataException($"Unsupported client packet type {Type}."),
                 };
 
                 using (var reader = new ProtocolBufferReader(readBr, ProtocolBufferFlags.DontFragment))
@@ -121,7 +142,7 @@ namespace Rasa.Packets.Protocol
                     {
                         Message.RawSubtype = reader.ReadByte();
                         if (Message.RawSubtype < Message.MinSubtype || Message.RawSubtype > Message.MaxSubtype)
-                            throw new Exception("Invalid Subtype found!");
+                            throw new InvalidDataException("Invalid Subtype found!");
                     }
 
                     Message.Read(reader);
@@ -130,13 +151,14 @@ namespace Rasa.Packets.Protocol
 
                     reader.ReadXORCheck((int) br.BaseStream.Position - xorCheckPosition);
                 }
+
+                if (readBr != br && readBr.BaseStream.Position != readBr.BaseStream.Length)
+                    throw new InvalidDataException("Decompressed payload contains unconsumed bytes.");
             }
             finally
             {
                 if (readBr != br)
                     readBr.Dispose();
-                if (uncompressedBuffer != null)
-                    ArrayPool<byte>.Shared.Return(uncompressedBuffer);
             }
         }
 

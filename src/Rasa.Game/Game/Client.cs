@@ -1,9 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
 using System.Net.Sockets;
-using System.Text;
 
 namespace Rasa.Game
 {
@@ -39,13 +37,13 @@ namespace Rasa.Game
         public Manifestation Player = new();
         public Movement Movement { get; set; }
         public uint[] SendSequence { get; } = new uint[256];
-        public uint[] ReceiveSequence { get; } = new uint[256];
+        public uint[] ReceiveSequence => _incomingPackets.ReceiveSequence;
         public List<UserOptions> UserOptions = new();
 
         private readonly object _clientLock = new();
         private readonly ClientPacketHandler _handler;
         private readonly PacketQueue _packetQueue = new();
-        private readonly NonContiguousMemoryStream _incomingDataQueue = new();
+        private readonly ProtocolPacketDecoder _incomingPackets = new();
 
 
         private static PacketRouter<ClientPacketHandler, GameOpcode> PacketRouter { get; } = new PacketRouter<ClientPacketHandler, GameOpcode>();
@@ -88,22 +86,23 @@ namespace Rasa.Game
 
         public void Update(long delta)
         {
-            foreach (var protocolPacket in DecodeIncomingPackets())
-            {
-                try
-                {
-                    HandleProtocolPacket(protocolPacket);
-                }
-                catch (InvalidClientMessageException)
-                {
-                    Close();
-                }
-            }
+            if (State == ClientState.Disconnected)
+                return;
+
+            if (!_incomingPackets.ProcessPending(HandleProtocolPacket, RejectProtocolInput) ||
+                State == ClientState.Disconnected)
+                return;
 
             IBasePacket packet;
 
             while ((packet = _packetQueue.PopOutgoing()) != null)
                 SendPacket(packet);
+        }
+
+        private void RejectProtocolInput(Exception error)
+        {
+            Logger.WriteLog(LogType.Network, $"Rejected invalid game protocol input from {Socket.RemoteAddress}: {error.Message}");
+            Close(false);
         }
 
         public void Close(bool sendPacket = true)
@@ -119,6 +118,7 @@ namespace Rasa.Game
                 Logger.WriteLog(LogType.Network, "*** Client disconnected! Ip: {0}", Socket.RemoteAddress);
 
                 State = ClientState.Disconnected;
+                _incomingPackets.Dispose();
 
                 Socket.Close();
 
@@ -376,13 +376,21 @@ namespace Rasa.Game
 
         private bool OnDecrypt(BufferData data)
         {
-            var result = GameCryptManager.Decrypt(data.Buffer, data.BaseOffset + data.Offset, data.RemainingLength, Data);
+            return DecryptFrame(data, Data);
+        }
+
+        internal static bool DecryptFrame(BufferData data, ClientCryptData cryptData)
+        {
+            if (data.RemainingLength == 0 || data.RemainingLength % 8 != 0)
+                return false;
+
+            var result = GameCryptManager.Decrypt(data.Buffer, data.BaseOffset + data.Offset, data.RemainingLength, cryptData);
             if (!result)
                 return false;
 
             var blowfishPadding = data[data.Offset] & 0xF;
-            if (blowfishPadding > 8)
-                throw new Exception("More than 8 bytes of blowfish padding was added to the packet?");
+            if (blowfishPadding == 0 || blowfishPadding > 8 || blowfishPadding > data.RemainingLength)
+                return false;
 
             data.Offset += blowfishPadding;
 
@@ -396,84 +404,15 @@ namespace Rasa.Game
 		
         private void OnReceive(BufferData data)
         {
-            _incomingDataQueue.CopyFromArray(data.Buffer, data.BaseOffset + data.Offset, data.RemainingLength);
+            _incomingPackets.Append(data.Buffer, data.BaseOffset + data.Offset, data.RemainingLength);
         }
 
-        private IEnumerable<ProtocolPacket> DecodeIncomingPackets()
-        {
-            ProtocolPacket packet;
-
-            while ((packet = DecodeNextPacket()) != null)
-                yield return packet;
-
-            yield break;
-        }
-
-        private ProtocolPacket DecodeNextPacket()
-        {
-            // If there is not enough data to read the packet size at all, then stop processing
-            if (_incomingDataQueue.Length < 2)
-                return null;
-
-            using var br = new BinaryReader(_incomingDataQueue, Encoding.UTF8, true);
-
-            // Peek the packet size to determine if the whole packet has arrived
-            var startPosition = _incomingDataQueue.Position;
-
-            // Read the size of the next packet
-            var packetSize = br.ReadUInt16();
-
-            // Rewind the stream to the starting position
-            _incomingDataQueue.Position = startPosition;
-
-            // If the packet is fragmented and not all the fragments has arrived yet, then stop processing
-            if (packetSize > _incomingDataQueue.Length)
-                return null;
-
-            // Construct and the packet
-            var rawPacket = new ProtocolPacket();
-
-            rawPacket.Read(br);
-
-            // Check for overreading or underreading the packet
-            if (_incomingDataQueue.Position != startPosition + packetSize)
-                throw new Exception($"ProtocolPacket over or under read! Start position: {startPosition} | Packet size: {packetSize} | End position: {_incomingDataQueue.Position}!");
-
-            // Advance the stream by removing the already processed data
-            _incomingDataQueue.RemoveBytes(packetSize);
-
-            // Throw away any packet that came out of order, if it came on a channel
-            if (rawPacket.Channel != 0)
-            {
-                // If an out of sequence packet arrived, then throw it away
-                if (rawPacket.SequenceNumber < ReceiveSequence[rawPacket.Channel])
-                {
-                    Debugger.Break(); // todo: test and remove later
-
-                    return null;
-                }
-
-                // AddOrUpdate the receive sequence for the channel
-                ReceiveSequence[rawPacket.Channel] = rawPacket.SequenceNumber;
-            }
-
-            // Some internal send timeout check, skip the packet
-            if (rawPacket.Type == ClientMessageOpcode.None)
-            {
-                if (rawPacket.Size != 4)
-                    Debugger.Break(); // If it's not send timeout check, let's investigate...
-
-                return null;
-            }
-            
-            return rawPacket;
-        }
         #endregion
 
         public void SaveCharacter()
         {
             var player = Player;
-            if (player == null)
+            if (player == null || player.Id == 0)
             {
                 return;
             }

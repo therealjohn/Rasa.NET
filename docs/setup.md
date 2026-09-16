@@ -266,4 +266,4 @@ If the server consoles launched correctly, you should be ready to start the game
 - Start the game client using the shortcut you created earlier
 - Login with the user you created for the game above
 
-> Note* The game server will crash the first time you try to login due to a bug that is not fixed at the time of writing. Go back to Visual Studio and run the `Rasa.Game` project again. Once it's running, switch back to the game client and log back in.
+> A first-login server crash is reported in [InfiniteRasa/Rasa.NET#45](https://github.com/InfiniteRasa/Rasa.NET/issues/45). Its native-client reproduction remains unverified after the protocol fixes. If you encounter it, restart `Rasa.Game`, leave the client open, and retry login. The [protocol regression guide](protocol-testing.md) distinguishes automated coverage from the client verification still required.

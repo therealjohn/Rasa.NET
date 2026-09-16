@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Diagnostics;
 using System.IO;
 using System.Text;
 
@@ -47,8 +46,7 @@ namespace Rasa.Packets.Protocol
                 case CallServerMethodSubtype.WorldMsgByName:
                     MethodName = reader.ReadString();
 
-                    Debugger.Break(); // This isn't supported yet
-                    break;
+                    throw new InvalidDataException("Named client methods are not supported.");
             }
 
             Payload = reader.ReadArray();
@@ -103,11 +101,20 @@ namespace Rasa.Packets.Protocol
                     Packet.Read(br);
                 }
                 else
+                {
                     Logger.WriteLog(LogType.Error, $"Unhandled game opcode: {MethodId}");
+                    return false;
+                }
 
                 if (br.ReadByte() != 0x66)
                 {
                     Logger.WriteLog(LogType.Error, $"Invalid payload formatting for: {MethodId}. Skipping packet...");
+                    return false;
+                }
+
+                if (br.BaseStream.Position != br.BaseStream.Length)
+                {
+                    Logger.WriteLog(LogType.Error, $"Unexpected trailing payload for: {MethodId}.");
                     return false;
                 }
             }

@@ -49,7 +49,8 @@ namespace Rasa.Login
         private void OnReceive(BufferData data)
         {
             var packet = new ClientKeyPacket();
-            packet.Read(data.GetReader());
+            using var reader = data.GetReader();
+            packet.Read(reader);
 
             DHKeyExchange.GenerateServerK(PrivateKey, packet.B, K);
 
