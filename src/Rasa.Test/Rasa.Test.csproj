@@ -20,6 +20,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Rasa.Utils\Rasa.Utils.csproj" />
     <ProjectReference Include="..\Rasa.Auth\Rasa.Auth.csproj" />
+    <ProjectReference Include="..\Rasa.Game\Rasa.Game.csproj" />
     <ProjectReference Include="..\Rasa.DBL\Rasa.DBL.csproj" />
   </ItemGroup>
 

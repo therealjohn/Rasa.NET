@@ -80,60 +80,64 @@ namespace Rasa.Packets.Protocol
 
             byte[] uncompressedBuffer = null;
 
-            if (Compress)
+            try
             {
-                var someType = br.ReadByte(); // 0 = No compression
-                if (someType >= 2)
-                    throw new Exception("Invalid compress type received!");
-
-                if (someType == 1)
+                if (Compress)
                 {
-                    Debugger.Break(); // TODO: test
+                    var someType = br.ReadByte(); // 0 = No compression
+                    if (someType >= 2)
+                        throw new Exception("Invalid compress type received!");
 
-                    var uncompressedSize = br.ReadInt32();
+                    if (someType == 1)
+                    {
+                        var uncompressedSize = br.ReadInt32();
 
-                    uncompressedBuffer = ArrayPool<byte>.Shared.Rent(uncompressedSize);
+                        uncompressedBuffer = ArrayPool<byte>.Shared.Rent(uncompressedSize);
 
-                    using (var deflateStream = new DeflateStream(br.BaseStream, CompressionMode.Decompress, true)) // TODO: test if the br.BaseStream is cool as the Stream input for the DeflateStream
-                        deflateStream.Read(uncompressedBuffer, 0, uncompressedSize);
+                        using (var deflateStream = new DeflateStream(br.BaseStream, CompressionMode.Decompress, true))
+                            deflateStream.ReadExactly(uncompressedBuffer, 0, uncompressedSize);
 
-                    readBr = new BinaryReader(new MemoryStream(uncompressedBuffer, 0, uncompressedSize, false), Encoding.UTF8, false);
-                }
-            }
-
-            Message = Type switch
-            {
-                ClientMessageOpcode.Login => new LoginMessage(),
-                ClientMessageOpcode.Move => new MoveMessage(),
-                ClientMessageOpcode.CallServerMethod => new CallServerMethodMessage(),
-                ClientMessageOpcode.Ping => new PingMessage(),
-                _ => throw new Exception($"Unable to handle packet type {Type}, because it's a Server -> Client packet!"),
-            };
-
-            using (var reader = new ProtocolBufferReader(readBr, ProtocolBufferFlags.DontFragment))
-            {
-                reader.ReadProtocolFlags();
-
-                // Subtype and Message.Read()
-                reader.ReadDebugByte(41);
-
-                if ((Message.SubtypeFlags & ClientMessageSubtypeFlag.HasSubtype) == ClientMessageSubtypeFlag.HasSubtype)
-                {
-                    Message.RawSubtype = reader.ReadByte();
-                    if (Message.RawSubtype < Message.MinSubtype || Message.RawSubtype > Message.MaxSubtype)
-                        throw new Exception("Invalid Subtype found!");
+                        readBr = new BinaryReader(new MemoryStream(uncompressedBuffer, 0, uncompressedSize, false), Encoding.UTF8, false);
+                    }
                 }
 
-                Message.Read(reader);
+                Message = Type switch
+                {
+                    ClientMessageOpcode.Login => new LoginMessage(),
+                    ClientMessageOpcode.Move => new MoveMessage(),
+                    ClientMessageOpcode.CallServerMethod => new CallServerMethodMessage(),
+                    ClientMessageOpcode.Ping => new PingMessage(),
+                    _ => throw new Exception($"Unable to handle packet type {Type}, because it's a Server -> Client packet!"),
+                };
 
-                reader.ReadDebugByte(42);
+                using (var reader = new ProtocolBufferReader(readBr, ProtocolBufferFlags.DontFragment))
+                {
+                    reader.ReadProtocolFlags();
 
-                reader.ReadXORCheck((int) br.BaseStream.Position - xorCheckPosition);
+                    // Subtype and Message.Read()
+                    reader.ReadDebugByte(41);
+
+                    if ((Message.SubtypeFlags & ClientMessageSubtypeFlag.HasSubtype) == ClientMessageSubtypeFlag.HasSubtype)
+                    {
+                        Message.RawSubtype = reader.ReadByte();
+                        if (Message.RawSubtype < Message.MinSubtype || Message.RawSubtype > Message.MaxSubtype)
+                            throw new Exception("Invalid Subtype found!");
+                    }
+
+                    Message.Read(reader);
+
+                    reader.ReadDebugByte(42);
+
+                    reader.ReadXORCheck((int) br.BaseStream.Position - xorCheckPosition);
+                }
             }
-
-            // If we rented a buffer for decompressing, return it
-            if (uncompressedBuffer != null) 
-                ArrayPool<byte>.Shared.Return(uncompressedBuffer);
+            finally
+            {
+                if (readBr != br)
+                    readBr.Dispose();
+                if (uncompressedBuffer != null)
+                    ArrayPool<byte>.Shared.Return(uncompressedBuffer);
+            }
         }
 
         public void Write(BinaryWriter bw)

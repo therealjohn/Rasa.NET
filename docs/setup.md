@@ -131,7 +131,7 @@ If you want to add additional migrations as part of a feature, see "Creating mig
 ## Working with the databases and EF Core
 The databases are kept up to date with EF Core. The compatible package set is EF Core/SQLite/Design **9.0.20** with Pomelo MySQL **9.0.0**, running on .NET 10. Pomelo 9 supports EF Core 9, not EF Core 10; upgrade these providers together. EF Core 9 support ends November 10, 2026, so this dependency choice needs review before that date. MySQL 8.0 and 8.4 are supported by the provider.
 
-With Pomelo 9, use MySQL schema names of at most 45 characters. The provider adds a prefix/suffix when acquiring its migration lock, and MySQL limits that lock name to 64 characters. The default Rasa schema names fit. An existing longer-named schema requires a separate upgrade decision; do not bypass migration locking or discard its migration history.
+MySQL schema names up to the server's 64-character limit are supported. Rasa preserves Pomelo's migration-lock names for schemas up to 45 characters and uses a deterministic, case-normalized SHA256 lock name for longer schemas. This keeps migration synchronization and history intact without renaming databases. The naming override uses Pomelo 9's protected lock-name hook; revalidate it when upgrading the provider.
 
 ### Applying migrations
 This section describes how to apply migrations to your MySql database as well as how to add additional migrations if you changed the data model in a way that requires an update to the database.
@@ -242,7 +242,7 @@ Use `osx-x64` or `linux-x64` for the other deployment targets.
 
 ### Database compatibility tests
 
-The default test run checks all six provider models, generates MySQL migration SQL, and creates disposable SQLite databases to verify fresh migrations, upgrades and account persistence. SQLite test files are created under the test output directory and removed afterward.
+The default test run checks all six provider models, generates MySQL migration SQL, and creates disposable SQLite databases to verify fresh migrations, upgrades and account persistence. SQLite test files are created under the test output directory and removed afterward. Protocol tests cover large compressed messages, premature EOF, and pooled-buffer cleanup.
 
 Live MySQL tests are opt-in. Provision a disposable local MySQL 8.0/8.4 instance on an ephemeral host port, then set `RASA_TEST_MYSQL_CONNECTION` to its connection string (server, port, user and password, with no database). The test account needs permission to create and drop databases. Never use an existing developer instance.
 
@@ -251,7 +251,7 @@ dotnet test src\Rasa.Test\Rasa.Test.csproj --filter TestCategory=MySql
 Remove-Item Env:\RASA_TEST_MYSQL_CONNECTION
 ```
 
-Each live test creates a uniquely named database and drops only that database afterward. Tests reject the shared default port 3306 and connection strings naming an existing database. Without the environment variable, the six live MySQL cases are reported as skipped; model/SQL checks alone do not establish live MySQL compatibility.
+Each live test creates a uniquely named database and drops only that database afterward. Tests cover schema-name lengths 45, 46 and 64, historical upgrades, and synchronous/asynchronous migration-lock acquisition, contention and release. Tests reject the shared default port 3306 and connection strings naming an existing database. Without the environment variable, the 13 live MySQL cases are reported as skipped; model/SQL checks alone do not establish live MySQL compatibility.
 
 ### Create a game user
 The authentication server can be used to create a user by running a command in the terminal. The usage is: `create <email> <username> <password>`. Running this command will create a new user in the database that you can use to login with the game client.

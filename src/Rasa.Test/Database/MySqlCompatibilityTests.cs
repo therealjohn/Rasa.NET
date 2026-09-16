@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -23,12 +24,14 @@ namespace Rasa.Test.Database
     public class MySqlCompatibilityTests
     {
         [TestMethod]
-        [DataRow(typeof(MySqlAuthContext))]
-        [DataRow(typeof(MySqlCharContext))]
-        [DataRow(typeof(MySqlWorldContext))]
-        public void CleanDatabaseMigratesAndReopens(Type contextType)
+        [DataRow(typeof(MySqlAuthContext), 45)]
+        [DataRow(typeof(MySqlAuthContext), 46)]
+        [DataRow(typeof(MySqlAuthContext), 64)]
+        [DataRow(typeof(MySqlCharContext), 64)]
+        [DataRow(typeof(MySqlWorldContext), 64)]
+        public void CleanDatabaseMigratesAndReopens(Type contextType, int databaseNameLength)
         {
-            using var database = DisposableDatabase.Create(contextType);
+            using var database = DisposableDatabase.Create(contextType, databaseNameLength);
             using (var context = database.CreateContext())
             {
                 context.Database.Migrate();
@@ -43,19 +46,25 @@ namespace Rasa.Test.Database
         }
 
         [TestMethod]
-        [DataRow(typeof(MySqlAuthContext), "20221231011802_Add_test_test_account",
+        [DataRow(typeof(MySqlAuthContext), 45, "20221231011802_Add_test_test_account",
             "INSERT INTO account (email, username, password, salt) VALUES ('p0@example.invalid', 'p0_user', 'p0_hash', 'p0_salt')",
             "SELECT username AS Value FROM account WHERE email = 'p0@example.invalid'", "p0_user")]
-        [DataRow(typeof(MySqlCharContext), "20230202081208_edited_character_teleporter",
+        [DataRow(typeof(MySqlAuthContext), 46, "20221231011802_Add_test_test_account",
+            "INSERT INTO account (email, username, password, salt) VALUES ('p0@example.invalid', 'p0_user', 'p0_hash', 'p0_salt')",
+            "SELECT username AS Value FROM account WHERE email = 'p0@example.invalid'", "p0_user")]
+        [DataRow(typeof(MySqlAuthContext), 64, "20221231011802_Add_test_test_account",
+            "INSERT INTO account (email, username, password, salt) VALUES ('p0@example.invalid', 'p0_user', 'p0_hash', 'p0_salt')",
+            "SELECT username AS Value FROM account WHERE email = 'p0@example.invalid'", "p0_user")]
+        [DataRow(typeof(MySqlCharContext), 64, "20230202081208_edited_character_teleporter",
             "INSERT INTO character_teleporter (character_id, waypointId, waypoint_type) VALUES (123, 456, 0)",
             "SELECT CAST(waypointId AS CHAR) AS Value FROM character_teleporter WHERE character_id = 123", "456")]
-        [DataRow(typeof(MySqlWorldContext), "20230119210702_Add_data_to_world",
+        [DataRow(typeof(MySqlWorldContext), 64, "20230119210702_Add_data_to_world",
             "INSERT INTO player_random_name (name, type, gender) VALUES ('P0Preserved', 1, 1)",
             "SELECT name AS Value FROM player_random_name WHERE name = 'P0Preserved'", "P0Preserved")]
-        public void UpgradePreservesHistoricalRows(Type contextType, string migration,
+        public void UpgradePreservesHistoricalRows(Type contextType, int databaseNameLength, string migration,
             string insert, string select, string expected)
         {
-            using var database = DisposableDatabase.Create(contextType);
+            using var database = DisposableDatabase.Create(contextType, databaseNameLength);
             string[] applied;
             using (var historical = database.CreateContext())
             {
@@ -73,6 +82,77 @@ namespace Rasa.Test.Database
             }
         }
 
+        [TestMethod]
+        [DataRow(45)]
+        [DataRow(46)]
+        [DataRow(64)]
+        public async Task MigrationLocksCoordinateAndReleaseForDistinctDatabases(int databaseNameLength)
+        {
+            using var database = DisposableDatabase.Create(typeof(MySqlAuthContext), databaseNameLength);
+            using var first = database.CreateContext();
+            using var second = database.CreateContext();
+            await first.Database.OpenConnectionAsync();
+            await second.Database.OpenConnectionAsync();
+            Assert.AreEqual(databaseNameLength, first.Database.GetDbConnection().Database.Length);
+            string name;
+            using (first.GetService<IHistoryRepository>().AcquireDatabaseLock())
+            {
+                name = ReadHeldLockName(first);
+                Assert.IsTrue(name.Length <= 64);
+                if (databaseNameLength == 45)
+                {
+                    var legacyName = $"__{first.Database.GetDbConnection().Database}_EFMigrationsLock";
+                    Assert.IsTrue(string.Equals(legacyName, name, StringComparison.OrdinalIgnoreCase));
+                    Assert.AreEqual(0, ExecuteLockScalar(second, "SELECT GET_LOCK(@name, 0)", legacyName),
+                        "Existing short-name clients must coordinate with the provider lock.");
+                }
+                Assert.AreEqual(0, ExecuteLockScalar(second, "SELECT GET_LOCK(@name, 0)", name),
+                    "A second connection must not acquire a held migration lock.");
+            }
+            Assert.AreEqual(1, ExecuteLockScalar(second, "SELECT IS_FREE_LOCK(@name)", name));
+
+            await using (await second.GetService<IHistoryRepository>().AcquireDatabaseLockAsync())
+            {
+                Assert.AreEqual(name, ReadHeldLockName(second), "Sync/async instances must coordinate on one name.");
+                Assert.AreEqual(0, ExecuteLockScalar(first, "SELECT GET_LOCK(@name, 0)", name));
+            }
+            Assert.AreEqual(1, ExecuteLockScalar(first, "SELECT IS_FREE_LOCK(@name)", name));
+
+            using var otherDatabase = DisposableDatabase.Create(typeof(MySqlAuthContext), databaseNameLength);
+            using var other = otherDatabase.CreateContext();
+            await other.Database.OpenConnectionAsync();
+            using (other.GetService<IHistoryRepository>().AcquireDatabaseLock())
+            {
+                var otherName = ReadHeldLockName(other);
+                Assert.IsTrue(otherName.Length <= 64);
+                Assert.AreNotEqual(name, otherName, "Distinct databases need distinct migration locks.");
+                using (first.GetService<IHistoryRepository>().AcquireDatabaseLock())
+                    Assert.AreEqual(name, ReadHeldLockName(first));
+            }
+        }
+
+        private static string ReadHeldLockName(RasaDbContextBase context)
+        {
+            using var command = context.Database.GetDbConnection().CreateCommand();
+            command.CommandText = "SELECT OBJECT_NAME FROM performance_schema.metadata_locks " +
+                "WHERE OBJECT_TYPE = 'USER LEVEL LOCK' AND OWNER_THREAD_ID = " +
+                "(SELECT THREAD_ID FROM performance_schema.threads WHERE PROCESSLIST_ID = CONNECTION_ID())";
+            var name = command.ExecuteScalar() as string;
+            Assert.IsNotNull(name, "The provider must hold an actual MySQL named lock.");
+            return name;
+        }
+
+        private static int ExecuteLockScalar(RasaDbContextBase context, string sql, string name)
+        {
+            using var command = context.Database.GetDbConnection().CreateCommand();
+            command.CommandText = sql;
+            var parameter = command.CreateParameter();
+            parameter.ParameterName = "@name";
+            parameter.Value = name;
+            command.Parameters.Add(parameter);
+            return Convert.ToInt32(command.ExecuteScalar());
+        }
+
         private sealed class DisposableDatabase : IDisposable
         {
             private readonly Type _contextType;
@@ -87,7 +167,7 @@ namespace Rasa.Test.Database
                 _configuration = configuration;
             }
 
-            public static DisposableDatabase Create(Type contextType)
+            public static DisposableDatabase Create(Type contextType, int databaseNameLength)
             {
                 var connectionString = Environment.GetEnvironmentVariable("RASA_TEST_MYSQL_CONNECTION");
                 if (string.IsNullOrWhiteSpace(connectionString))
@@ -98,6 +178,7 @@ namespace Rasa.Test.Database
                     "Integration tests require an explicitly supplied local disposable MySQL instance.");
                 Assert.AreNotEqual(3306U, builder.Port, "Use an isolated ephemeral host port, not a shared MySQL port.");
                 Assert.IsTrue(string.IsNullOrEmpty(builder.Database), "Do not supply an existing database.");
+                Assert.IsTrue(databaseNameLength >= 40 && databaseNameLength <= 64);
 
                 var configuration = new DatabaseConnectionConfiguration
                 {
@@ -105,7 +186,7 @@ namespace Rasa.Test.Database
                     Port = builder.Port,
                     User = builder.UserID,
                     Password = builder.Password,
-                    Database = "rasa_p0_" + Guid.NewGuid().ToString("N"),
+                    Database = ("rasa_p0_" + Guid.NewGuid().ToString("N")).PadRight(databaseNameLength, 'x'),
                     TimeoutInMilliseconds = 60000
                 };
                 var administration = new MySqlConnection(builder.ConnectionString);
