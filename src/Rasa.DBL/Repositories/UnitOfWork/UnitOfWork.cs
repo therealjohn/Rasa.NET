@@ -1,6 +1,8 @@
 ﻿using Microsoft.EntityFrameworkCore;
+using System.Data.Common;
 using Microsoft.EntityFrameworkCore.Storage;
 using System.Data;
+using System.Runtime.ExceptionServices;
 
 namespace Rasa.Repositories.UnitOfWork
 {
@@ -29,6 +31,11 @@ namespace Rasa.Repositories.UnitOfWork
                 try
                 {
                     operation();
+                }
+                catch (System.InvalidOperationException error) when (IsTransientUpdateWrapper(error))
+                {
+                    ExceptionDispatchInfo.Capture(error.InnerException).Throw();
+                    throw;
                 }
                 catch (System.InvalidOperationException error) when (IsProviderConnectionLoss(error))
                 {
@@ -82,6 +89,10 @@ namespace Rasa.Repositories.UnitOfWork
                         typeof(System.Data.Common.DbConnection).IsAssignableFrom(declaringType) ||
                         typeof(System.Data.Common.DbTransaction).IsAssignableFrom(declaringType));
             }
+
+            static bool IsTransientUpdateWrapper(System.InvalidOperationException error) =>
+                error.InnerException is DbUpdateException { InnerException: DbException databaseError } &&
+                databaseError.IsTransient;
         }
 
         public void Reject()

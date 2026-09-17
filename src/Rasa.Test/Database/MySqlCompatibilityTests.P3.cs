@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Data;
 using System.Linq;
 using System.Threading;
@@ -22,6 +23,7 @@ namespace Rasa.Test.Database
     using Rasa.Repositories.Char.CharacterSkills;
     using Rasa.Repositories.Char.Items;
     using Rasa.Structures.Char;
+    using Rasa.Structures;
 
     public partial class MySqlCompatibilityTests
     {
@@ -46,8 +48,9 @@ namespace Rasa.Test.Database
             using (var upgraded = database.CreateContext())
             {
                 upgraded.Database.Migrate();
-                CollectionAssert.AreEqual(applied.Append("20260917130734_AbilityTraySelection").ToArray(),
-                    upgraded.Database.GetAppliedMigrations().ToArray());
+                var upgradedMigrations = upgraded.Database.GetAppliedMigrations().ToArray();
+                CollectionAssert.AreEqual(applied, upgradedMigrations.Take(applied.Length).ToArray());
+                Assert.AreEqual("20260917130734_AbilityTraySelection", upgradedMigrations[applied.Length]);
                 Assert.IsFalse(upgraded.Database.GetPendingMigrations().Any());
                 Assert.AreEqual("0", upgraded.Database.SqlQueryRaw<string>(
                     "SELECT COLUMN_DEFAULT AS Value FROM information_schema.COLUMNS " +
@@ -154,10 +157,14 @@ namespace Rasa.Test.Database
                     Completeable = true
                 });
             using var barrier = new Barrier(2);
+            var contextIds = new ConcurrentBag<Guid>();
+            var rejectedErrorNumbers = new ConcurrentBag<int>();
 
             bool TryGrant()
             {
-                using var unit = CreateP3UnitOfWork(database);
+                using var context = (MySqlCharContext)database.CreateContext();
+                contextIds.Add(context.ContextId.InstanceId);
+                using var unit = CreateP3UnitOfWork(context);
                 var granted = false;
                 try
                 {
@@ -179,8 +186,11 @@ namespace Rasa.Test.Database
                     });
                     return granted;
                 }
-                catch (Exception error) when (error is DbUpdateException or MySqlException)
+                catch (Exception error) when (GameplayRejectionException.IsExpected(error))
                 {
+                    var mysqlError = FindMySqlException(error);
+                    Assert.IsNotNull(mysqlError, "The rejected competitor must be a live MySQL persistence conflict.");
+                    rejectedErrorNumbers.Add(mysqlError.Number);
                     return false;
                 }
             }
@@ -188,7 +198,10 @@ namespace Rasa.Test.Database
             var results = Task.WhenAll(Task.Run(TryGrant), Task.Run(TryGrant))
                 .GetAwaiter().GetResult();
 
+            Assert.AreEqual(2, contextIds.Distinct().Count(), "Competing requests must use distinct DbContext instances.");
             Assert.AreEqual(1, results.Count(result => result));
+            CollectionAssert.AreEqual(new[] { 1213 }, rejectedErrorNumbers.ToArray(),
+                "The losing serializable transaction must be rejected as a MySQL deadlock.");
             using var reopenedContext = (MySqlCharContext)database.CreateContext();
             using var reopened = CreateP3UnitOfWork(reopenedContext);
             var character = reopened.Characters.Get(123);
@@ -331,6 +344,17 @@ namespace Rasa.Test.Database
                 characterSkills: new CharacterSkillsRepository(context), characterTeleporters: null,
                 characterTitles: null, clans: null, clanInventories: null, clanMembers: null,
                 friends: null, ignoreds: null, items: new ItemRepository(context), userOptions: null);
+
+        private static MySqlException FindMySqlException(Exception error)
+        {
+            while (error != null)
+            {
+                if (error is MySqlException mysqlError)
+                    return mysqlError;
+                error = error.InnerException;
+            }
+            return null;
+        }
 
         private sealed class P3ItemChange : IItemChange
         {

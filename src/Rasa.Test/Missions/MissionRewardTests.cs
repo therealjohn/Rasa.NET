@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Data.Common;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
@@ -348,6 +349,43 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
+        public void TransientExecutionStrategyFailurePublishesNothingAndAllowsRetry()
+        {
+            using var context = MissionTestContext.WithCompletableMission(429);
+            var before = context.ReadRewardTotals();
+            context.AfterSave = _ => ThrowAtPersistenceBoundary(new InvalidOperationException(
+                "Injected execution strategy wrapper.",
+                new DbUpdateException("Injected transient update failure.", new TestDbException(true))));
+
+            Assert.IsFalse(context.Manager.TryCompleteNpcMission(
+                context.Client, context.Receiver.EntityId, 429, 0));
+
+            AssertUnchanged(context, before);
+            context.AfterSave = null;
+            Assert.IsTrue(context.Manager.TryCompleteNpcMission(
+                context.Client, context.Receiver.EntityId, 429, 0));
+        }
+
+        [TestMethod]
+        public void NonTransientExecutionStrategyLookalikePreservesIdentityAndStack()
+        {
+            using var context = MissionTestContext.WithCompletableMission(429);
+            var before = context.ReadRewardTotals();
+            var expected = new InvalidOperationException(
+                "Injected execution strategy lookalike.",
+                new DbUpdateException("Injected non-transient update failure.", new TestDbException(false)));
+            context.AfterSave = _ => ThrowAtPersistenceBoundary(expected);
+
+            var actual = Assert.ThrowsExactly<InvalidOperationException>(() =>
+                context.Manager.TryCompleteNpcMission(
+                    context.Client, context.Receiver.EntityId, 429, 0));
+
+            Assert.AreSame(expected, actual);
+            StringAssert.Contains(actual.StackTrace, nameof(ThrowAtPersistenceBoundary));
+            AssertUnchanged(context, before);
+        }
+
+        [TestMethod]
         public void WrongReceiverNonCompletableMissionAndInvalidSelectionAreRejected()
         {
             using var context = MissionTestContext.WithCompletableMission(429);
@@ -491,5 +529,17 @@ namespace Rasa.Test.Missions
         private static ICollection GetFreeEntityIds() => (ICollection)typeof(EntityManager)
             .GetField("_freeEntityIds", BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(EntityManager.Instance)!;
+
+        private sealed class TestDbException : DbException
+        {
+            private readonly bool _isTransient;
+
+            internal TestDbException(bool isTransient) : base("Injected database failure.")
+            {
+                _isTransient = isTransient;
+            }
+
+            public override bool IsTransient => _isTransient;
+        }
     }
 }

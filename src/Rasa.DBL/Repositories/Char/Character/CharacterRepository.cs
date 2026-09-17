@@ -152,12 +152,8 @@ namespace Rasa.Repositories.Char.Character
 
         public void UpdateCharacterCredits(uint id, int credits)
         {
-            var query = _charContext.CreateNoTrackingQuery(_charContext.CharacterEntries);
-            var entry = query.Where(e => e.Id == id).FirstOrDefault();
-
+            var entry = _charContext.GetWritableEnsuring(_charContext.CharacterEntries, id);
             entry.Credit = credits;
-
-            _charContext.CharacterEntries.Update(entry);
             _charContext.SaveChanges();
         }
 
