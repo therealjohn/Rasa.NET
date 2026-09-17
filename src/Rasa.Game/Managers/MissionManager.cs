@@ -318,7 +318,7 @@ namespace Rasa.Managers
             }
         }
 
-        public bool TryCompleteNpcMission(Client client, ulong npcEntityId, uint missionId, int selectionIndex)
+        internal bool TryCompleteNpcMission(Client client, ulong npcEntityId, uint missionId, int selectionIndex)
         {
             if (client == null)
                 return false;
@@ -359,6 +359,13 @@ namespace Rasa.Managers
                                 mission.MissionState != (uint)MissionState.Active ||
                                 !mission.Completeable)
                                 throw new GameplayRejectionException("Durable mission is not completable.");
+                            if (!TryGetNpcOnPlayerMap(client.Player, npcEntityId, out var currentNpc) ||
+                                !ReferenceEquals(currentNpc, npc) ||
+                                currentNpc.EntityId != npcEntityId ||
+                                currentNpc.DbId != definition.MissionReciver ||
+                                currentNpc.Npc == null)
+                                throw new GameplayRejectionException(
+                                    "Mission receiver changed before reward persistence.");
 
                             grant = rewardDefinition.CreateGrant(selectionIndex);
                             grant.PlanAndSave(client, character, unitOfWork, _manifestationManager);

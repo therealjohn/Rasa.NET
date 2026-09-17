@@ -1,5 +1,9 @@
 using System;
+using System.Collections;
+using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -7,6 +11,7 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 namespace Rasa.Test.Missions
 {
     using Rasa.Data;
+    using Rasa.Game;
     using Rasa.Managers;
     using Rasa.Packets.Inventory.Server;
     using Rasa.Packets.Manifestation.Server;
@@ -82,20 +87,36 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
-        public void ConcurrentTurnInGrantsAtMostOnce()
+        public void CompetingClientsGrantOneRewardBatchAndOneDurableCompletion()
         {
             using var context = MissionTestContext.WithCompletableMission(429);
+            var competitor = context.CreateCompetingClient();
+            context.ResetCharUnitCount();
             var before = context.ReadRewardTotals();
+            using var start = new ManualResetEventSlim();
+            Assert.AreNotSame(context.Client.SyncRoot, competitor.SyncRoot);
 
             var results = Task.WhenAll(
-                Task.Run(() => context.Manager.TryCompleteNpcMission(
-                    context.Client, context.Receiver.EntityId, 429, 0)),
-                Task.Run(() => context.Manager.TryCompleteNpcMission(
-                    context.Client, context.Receiver.EntityId, 429, 0))).GetAwaiter().GetResult();
+                Task.Run(() =>
+                {
+                    start.Wait();
+                    return context.Manager.TryCompleteNpcMission(
+                        context.Client, context.Receiver.EntityId, 429, 0);
+                }),
+                Task.Run(() =>
+                {
+                    start.Wait();
+                    return context.Manager.TryCompleteNpcMission(
+                        competitor, context.Receiver.EntityId, 429, 0);
+                }));
+            start.Set();
+            var completed = results.GetAwaiter().GetResult();
 
-            Assert.AreEqual(1, results.Count(result => result));
+            Assert.AreEqual(1, completed.Count(result => result));
+            Assert.AreEqual(2, context.CharUnitsCreated);
             AssertGrantedOnce(context, before, 5);
-            Assert.AreEqual(1, context.Drain().OfType<MissionRewardedPacket>().Count());
+            Assert.AreEqual(1, context.Drain().Concat(MissionTestContext.Drain(competitor))
+                .OfType<MissionRewardedPacket>().Count());
         }
 
         [TestMethod]
@@ -165,7 +186,7 @@ namespace Rasa.Test.Missions
                 ? new InvalidOperationException("Injected application failure.")
                 : new NullReferenceException("Injected application failure.");
             if (duringQuery)
-                context.BeforeQuery = () => ThrowAtPersistenceBoundary(expected);
+                context.BeforeQuery = _ => ThrowAtPersistenceBoundary(expected);
             else
                 context.AfterSave = database =>
                 {
@@ -194,6 +215,9 @@ namespace Rasa.Test.Missions
         public void ProgrammingFailureReleasesStagedRewardEntities()
         {
             using var context = MissionTestContext.WithCompletableMission(429);
+            var heldEntityIds = new List<ulong>();
+            while (GetFreeEntityIds().Count > 0)
+                heldEntityIds.Add(EntityManager.Instance.GetEntityId);
             var expectedEntityId = EntityManager.Instance.GetEntityId;
             EntityManager.Instance.FreeEntity(expectedEntityId);
             var expected = new InvalidOperationException("Injected application failure.");
@@ -207,6 +231,94 @@ namespace Rasa.Test.Missions
             var reusableEntityId = EntityManager.Instance.GetEntityId;
             Assert.AreEqual(expectedEntityId, reusableEntityId);
             EntityManager.Instance.FreeEntity(reusableEntityId);
+            foreach (var entityId in heldEntityIds)
+                EntityManager.Instance.FreeEntity(entityId);
+        }
+
+        [TestMethod]
+        public void MidPublicationFailureReleasesOnlyUnregisteredStagedEntities()
+        {
+            using var context = MissionTestContext.WithCompletableMission(429);
+            var expected = new InvalidOperationException("Injected publication failure.");
+            var published = 0;
+            using var grant = new InventoryManager.InventoryGrant(_ =>
+            {
+                if (published++ == 1)
+                    ThrowAtPersistenceBoundary(expected);
+            });
+            using (var unit = context.CreateChar())
+                unit.ExecuteTransaction(() => grant.PlanAndSave(
+                    context.Client,
+                    new[] { new InventoryManager.InventoryItemGrant(28, 100001) },
+                    unit));
+            var staged = GetStagedItems(grant);
+            Assert.AreEqual(3, staged.Length);
+
+            var actual = Assert.ThrowsExactly<InvalidOperationException>(() => grant.Publish(context.Client));
+
+            Assert.AreSame(expected, actual);
+            StringAssert.Contains(actual.StackTrace, nameof(ThrowAtPersistenceBoundary));
+            grant.Dispose();
+            var freeIds = GetFreeEntityIds();
+            CollectionAssert.DoesNotContain(freeIds, staged[0].EntityId);
+            CollectionAssert.Contains(freeIds, staged[1].EntityId);
+            CollectionAssert.Contains(freeIds, staged[2].EntityId);
+            EntityManager.Instance.ReleaseEntity(staged[0].EntityId, EntityType.Item);
+        }
+
+        [TestMethod]
+        public void ClosedConnectionLookalikeInvalidOperationPreservesIdentityAndStack()
+        {
+            using var context = MissionTestContext.WithCompletableMission(429);
+            var before = context.ReadRewardTotals();
+            var expected = new InvalidOperationException(
+                "The transaction object is not associated with the same connection object as this command.");
+            context.AfterSave = database =>
+            {
+                database.Database.GetDbConnection().Close();
+                ThrowAtPersistenceBoundary(expected);
+            };
+
+            var actual = Assert.ThrowsExactly<InvalidOperationException>(() =>
+                context.Manager.TryCompleteNpcMission(
+                    context.Client, context.Receiver.EntityId, 429, 0));
+
+            Assert.AreSame(expected, actual);
+            StringAssert.Contains(actual.StackTrace, nameof(ThrowAtPersistenceBoundary));
+            AssertUnchanged(context, before);
+        }
+
+        [TestMethod]
+        public void ReceiverRemovedAfterTransactionStartsCannotReceiveReward()
+        {
+            using var context = MissionTestContext.WithCompletableMission(429);
+            var before = context.ReadRewardTotals();
+            var removed = 0;
+            context.BeforeQuery = _ =>
+            {
+                if (Interlocked.Exchange(ref removed, 1) == 0)
+                    context.RemoveNpcFromWorld(context.Receiver);
+            };
+
+            Assert.IsFalse(context.Manager.TryCompleteNpcMission(
+                context.Client, context.Receiver.EntityId, 429, 0));
+
+            AssertUnchanged(context, before);
+        }
+
+        [TestMethod]
+        public void IntegerSelectionTurnInApiIsNotPublic()
+        {
+            var method = typeof(MissionManager).GetMethod(
+                nameof(MissionManager.TryCompleteNpcMission),
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                null,
+                new[] { typeof(Client), typeof(ulong), typeof(uint), typeof(int) },
+                null);
+
+            Assert.IsNotNull(method);
+            Assert.IsFalse(method.IsPublic);
+            Assert.IsTrue(method.IsAssembly);
         }
 
         [TestMethod]
@@ -361,5 +473,23 @@ namespace Rasa.Test.Missions
         }
 
         private static void ThrowAtPersistenceBoundary(Exception error) => throw error;
+
+        private static Item[] GetStagedItems(InventoryManager.InventoryGrant grant)
+        {
+            var slots = (Array)typeof(InventoryManager.InventoryGrant)
+                .GetField("_slots", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(grant)!;
+            return slots.Cast<object>()
+                .Where(slot => slot != null)
+                .Select(slot => (Item)slot.GetType()
+                    .GetField("Staged", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .GetValue(slot))
+                .Where(item => item != null)
+                .ToArray();
+        }
+
+        private static ICollection GetFreeEntityIds() => (ICollection)typeof(EntityManager)
+            .GetField("_freeEntityIds", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(EntityManager.Instance)!;
     }
 }

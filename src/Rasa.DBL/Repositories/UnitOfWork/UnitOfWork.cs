@@ -26,19 +26,26 @@ namespace Rasa.Repositories.UnitOfWork
             using var transaction = _dbContext.Database.BeginTransaction(System.Data.IsolationLevel.Serializable);
             try
             {
-                operation();
+                try
+                {
+                    operation();
+                }
+                catch (System.InvalidOperationException error) when (IsProviderConnectionLoss(error))
+                {
+                    throw new DbUpdateException("Transaction connection was lost before commit.", error);
+                }
                 RequireOpenTransaction();
                 Complete();
                 RequireOpenTransaction();
-                transaction.Commit();
-            }
-            catch (System.InvalidOperationException error) when (
-                transaction.GetDbTransaction().Connection?.State != ConnectionState.Open &&
-                error.Message.Contains("transaction object is not associated with the same connection object",
-                    System.StringComparison.OrdinalIgnoreCase))
-            {
-                _dbContext.ChangeTracker.Clear();
-                throw new DbUpdateException("Transaction connection was lost before commit.", error);
+                try
+                {
+                    transaction.Commit();
+                }
+                catch (System.InvalidOperationException error) when (
+                    transaction.GetDbTransaction().Connection?.State != ConnectionState.Open)
+                {
+                    throw new DbUpdateException("Transaction connection was lost before commit.", error);
+                }
             }
             catch
             {
@@ -63,6 +70,17 @@ namespace Rasa.Repositories.UnitOfWork
             {
                 if (transaction.GetDbTransaction().Connection?.State != ConnectionState.Open)
                     throw new DbUpdateException("Transaction connection was lost before commit.");
+            }
+
+            bool IsProviderConnectionLoss(System.InvalidOperationException error)
+            {
+                var connection = _dbContext.Database.GetDbConnection();
+                var declaringType = error.TargetSite?.DeclaringType;
+                return connection.State != ConnectionState.Open &&
+                    declaringType?.Assembly == connection.GetType().Assembly &&
+                    (typeof(System.Data.Common.DbCommand).IsAssignableFrom(declaringType) ||
+                        typeof(System.Data.Common.DbConnection).IsAssignableFrom(declaringType) ||
+                        typeof(System.Data.Common.DbTransaction).IsAssignableFrom(declaringType));
             }
         }
 

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Threading;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -41,12 +42,14 @@ namespace Rasa.Test.Missions
         private readonly List<Creature> _npcs = new();
         private readonly HashSet<ulong> _originalItems = EntityManager.Instance.Items.Keys.ToHashSet();
         private readonly List<uint> _addedTemplates = new();
+        private int _charUnitsCreated;
         private string Database => Path.Combine(_directory, "missions");
 
         internal int SaveAttempts { get; private set; }
+        internal int CharUnitsCreated => _charUnitsCreated;
         internal Action<SqliteCharContext> BeforeSave { get; set; }
         internal Action<SqliteCharContext> AfterSave { get; set; }
-        internal Action BeforeQuery { get; set; }
+        internal Action<SqliteCharContext> BeforeQuery { get; set; }
         internal Client Client { get; }
         internal MapChannel Map => _world.Map;
         internal MissionManager Manager { get; }
@@ -250,7 +253,47 @@ namespace Rasa.Test.Missions
             return npc;
         }
 
+        internal void RemoveNpcFromWorld(Creature npc)
+        {
+            foreach (var cell in Map.MapCellInfo.Cells.Values)
+                cell.CreatureList.Remove(npc);
+            EntityManager.Instance.UnregisterEntity(npc.EntityId);
+            EntityManager.Instance.UnregisterCreature(npc.EntityId);
+        }
+
+        internal Client CreateCompetingClient()
+        {
+            foreach (var cell in Map.MapCellInfo.Cells.Values)
+                cell.CreatureList.Remove(Receiver);
+            var client = _world.CreateClient(factory: this);
+            client.Player.Id = Client.Player.Id;
+            client.Player.Level = Client.Player.Level;
+            client.Player.Experience = Client.Player.Experience;
+            client.Player.Credits[CurencyType.Credits] = Client.Player.Credits[CurencyType.Credits];
+            client.Player.Credits[CurencyType.Prestige] = Client.Player.Credits[CurencyType.Prestige];
+            client.Player.Inventory.PersonalInventory = Enumerable.Repeat(0UL, 250).ToList();
+            typeof(Client).GetProperty(nameof(Client.AccountEntry))!.SetValue(client,
+                new GameAccountEntry { Id = Client.AccountEntry.Id, SelectedSlot = 0 });
+            try
+            {
+                CellManager.Instance.AddToWorld(client);
+            }
+            finally
+            {
+                var seed = CellManager.Instance.GetCellSeed(Receiver.Position);
+                CellManager.Instance.GetCell(Map, seed & 0xFFFF, seed >> 16).CreatureList.Add(Receiver);
+            }
+            using var unit = CreateChar();
+            Manager.Hydrate(client.Player, unit.CharacterMissions.Get(client.Player.Id));
+            Drain(client);
+            return client;
+        }
+
         internal List<PythonPacket> Drain() => WorldTestContext.Drain(Client)
+            .Select(packet => packet.Message).OfType<CallMethodMessage>()
+            .Select(packet => packet.Packet).ToList();
+
+        internal static List<PythonPacket> Drain(Client client) => WorldTestContext.Drain(client)
             .Select(packet => packet.Message).OfType<CallMethodMessage>()
             .Select(packet => packet.Packet).ToList();
 
@@ -265,6 +308,7 @@ namespace Rasa.Test.Missions
 
         public ICharUnitOfWork CreateChar()
         {
+            Interlocked.Increment(ref _charUnitsCreated);
             var context = OpenWithHooks();
             context.SavingChanges += (_, _) =>
             {
@@ -282,6 +326,8 @@ namespace Rasa.Test.Missions
                 clans: null, clanInventories: null, clanMembers: null, friends: null,
                 ignoreds: null, items: new ItemRepository(context), userOptions: null);
         }
+
+        internal void ResetCharUnitCount() => _charUnitsCreated = 0;
 
         public IWorldUnitOfWork CreateWorld() =>
             throw new InvalidOperationException("Unexpected world database access.");
@@ -323,7 +369,7 @@ namespace Rasa.Test.Missions
                 Microsoft.EntityFrameworkCore.Diagnostics.CommandEventData eventData,
                 InterceptionResult<System.Data.Common.DbDataReader> result)
             {
-                owner.BeforeQuery?.Invoke();
+                owner.BeforeQuery?.Invoke((SqliteCharContext)eventData.Context);
                 return result;
             }
         }

@@ -64,10 +64,16 @@ namespace Rasa.Managers
                 internal uint Count;
                 internal uint OriginalCount;
                 internal uint Maximum;
+                internal bool OwnershipTransferred;
             }
 
             private readonly Slot[] _slots = new Slot[PersonalCategorySize * PersonalCategoryCount];
-            private bool _published;
+            private readonly Action<Item> _beforeRegister;
+
+            internal InventoryGrant(Action<Item> beforeRegister = null)
+            {
+                _beforeRegister = beforeRegister;
+            }
 
             internal void PlanAndSave(
                 Client client,
@@ -168,7 +174,6 @@ namespace Rasa.Managers
 
             internal void Publish(Client client)
             {
-                _published = true;
                 for (var index = 0; index < _slots.Length; index++)
                 {
                     var slot = _slots[index];
@@ -182,7 +187,9 @@ namespace Rasa.Managers
                     else
                     {
                         var item = slot.Staged;
+                        _beforeRegister?.Invoke(item);
                         EntityManager.Instance.RegisterEntity(item.EntityId, EntityType.Item);
+                        slot.OwnershipTransferred = true;
                         EntityManager.Instance.RegisterItem(item.EntityId, item);
                         client.Player.Inventory.PersonalInventory[index] = item.EntityId;
                         ItemManager.Instance.SendItemDataToClient(client, item, false);
@@ -207,10 +214,9 @@ namespace Rasa.Managers
 
             public void Dispose()
             {
-                if (!_published)
-                    foreach (var slot in _slots)
-                        if (slot?.Staged != null)
-                            EntityManager.Instance.FreeEntity(slot.Staged.EntityId);
+                foreach (var slot in _slots)
+                    if (slot?.Staged != null && !slot.OwnershipTransferred)
+                        EntityManager.Instance.FreeEntity(slot.Staged.EntityId);
             }
         }
     }

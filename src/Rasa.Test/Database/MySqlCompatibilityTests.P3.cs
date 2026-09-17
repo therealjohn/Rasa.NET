@@ -1,5 +1,8 @@
+using System;
 using System.Data;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -139,6 +142,63 @@ namespace Rasa.Test.Database
                 (missions[0].MissionId, missions[0].MissionState, missions[0].Completeable));
             Assert.AreEqual((429U, 4U, true),
                 (missions[1].MissionId, missions[1].MissionState, missions[1].Completeable));
+        }
+
+        [TestMethod]
+        public void P4CompetingMissionRewardTransactionsGrantAtMostOnce()
+        {
+            using var database = CreateP3Database();
+            using (var seed = CreateP3UnitOfWork(database))
+                seed.CharacterMissions.Add(new CharacterMissionEntry(123, 429, 0)
+                {
+                    Completeable = true
+                });
+            using var barrier = new Barrier(2);
+
+            bool TryGrant()
+            {
+                using var unit = CreateP3UnitOfWork(database);
+                var granted = false;
+                try
+                {
+                    unit.ExecuteTransaction(() =>
+                    {
+                        var mission = unit.CharacterMissions.Get(123, 429);
+                        if (mission?.MissionState != 0 || !mission.Completeable)
+                            return;
+                        Assert.IsTrue(barrier.SignalAndWait(TimeSpan.FromSeconds(10)),
+                            "Both MySQL transactions must read the active mission before either writes rewards.");
+                        unit.Characters.UpdateCharacterProgression(123, 4100, 9);
+                        unit.Characters.UpdateCharacterCredits(123, 107);
+                        var itemId = unit.Items.CreateItem(
+                            new P3ItemChange { ItemTemplateId = 28, StackSize = 3 });
+                        unit.CharacterInventories.AddInvItem(17, 123, 1, 50, itemId);
+                        mission.MissionState = 4;
+                        mission.Completeable = false;
+                        granted = true;
+                    });
+                    return granted;
+                }
+                catch (Exception error) when (error is DbUpdateException or MySqlException)
+                {
+                    return false;
+                }
+            }
+
+            var results = Task.WhenAll(Task.Run(TryGrant), Task.Run(TryGrant))
+                .GetAwaiter().GetResult();
+
+            Assert.AreEqual(1, results.Count(result => result));
+            using var reopenedContext = (MySqlCharContext)database.CreateContext();
+            using var reopened = CreateP3UnitOfWork(reopenedContext);
+            var character = reopened.Characters.Get(123);
+            Assert.AreEqual(4100U, character.Experience);
+            Assert.AreEqual(107, character.Credit);
+            var mission = reopened.CharacterMissions.Get(123, 429);
+            Assert.AreEqual(4U, mission.MissionState);
+            Assert.IsFalse(mission.Completeable);
+            Assert.AreEqual(3U, reopenedContext.ItemEntries.Single().StackSize);
+            Assert.AreEqual(1, reopenedContext.CharacterInventoryEntries.Count());
         }
 
         [TestMethod]
