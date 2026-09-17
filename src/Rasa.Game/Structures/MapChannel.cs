@@ -27,6 +27,7 @@ namespace Rasa.Structures
         public MapCellInfo MapCellInfo = new MapCellInfo();
         // effect
         public int CurrentEffectId { get; set; } // increases with every spawned game effect
+        internal HashSet<SprintEffect> SprintEffects { get; } = new();
 
         // Dynamic Object List
         public List<DynamicObject> DynamicObjects = new List<DynamicObject>();
@@ -42,6 +43,7 @@ namespace Rasa.Structures
 
         // Dictionary<uniqueLootDispenserId, dataAboutLootDispenser> LootDispensers
         public Dictionary<ulong, LootDispenser> LootDispensers = new Dictionary<ulong, LootDispenser>();
+        internal object LootSyncRoot { get; } = new();
 
         // Missiles on this mapChannel
         public List<Missile> QueuedMissiles = new List<Missile>();

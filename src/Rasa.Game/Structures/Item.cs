@@ -34,6 +34,7 @@
         public uint StackSize { get; set; }
         // weapon specific
         public uint CurrentAmmo { get; set; }
+        internal long NextWeaponFireTime { get; set; }
         public bool IsJammed { get; set; }
         public int CammeraProfile { get; set; }
     }

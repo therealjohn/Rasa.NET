@@ -16,10 +16,42 @@ namespace Rasa.Structures
         public EntityClasses EntityClass { get; set; }
         public string Name { get; set; }
         public string FamilyName { get; set; }
-        public uint MapContextId { get; set; }
+        private uint _mapContextId;
+        private CharacterState _state;
+        private long _abilityLifetime;
+        private long _actionLifetime;
+        internal long AbilityLifetime => System.Threading.Interlocked.Read(ref _abilityLifetime);
+        internal long ActionLifetime => System.Threading.Interlocked.Read(ref _actionLifetime);
+        internal void InvalidateActionLifetime() => System.Threading.Interlocked.Increment(ref _actionLifetime);
+
+        internal void InvalidateAbilityLifetime()
+        {
+            System.Threading.Interlocked.Increment(ref _abilityLifetime);
+            InvalidateActionLifetime();
+        }
+
+        public uint MapContextId
+        {
+            get => _mapContextId;
+            set
+            {
+                if (_mapContextId != value)
+                    InvalidateAbilityLifetime();
+                _mapContextId = value;
+            }
+        }
         public bool IsRunning { get; set; }
         public bool InCombatMode { get; set; }
-        public CharacterState State { get; set; }
+        public CharacterState State
+        {
+            get => _state;
+            set
+            {
+                if (_state != value && (value == CharacterState.Dead || value == CharacterState.Dying))
+                    InvalidateAbilityLifetime();
+                _state = value;
+            }
+        }
         public ulong Target { get; set; }
         public double MovementSpeed { get; set; }
         public bool WeaponReady { get; set; }

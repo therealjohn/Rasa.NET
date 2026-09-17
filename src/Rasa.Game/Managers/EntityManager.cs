@@ -112,6 +112,12 @@ namespace Rasa.Managers
             }
         }
 
+        internal ulong AllocateUnrecycledEntityId()
+        {
+            lock (_entityIdLock)
+                return _entityId++;
+        }
+
         public EntityClasses GetEntityClassId(ulong entityId)
         {
             switch (GetEntityType(entityId))

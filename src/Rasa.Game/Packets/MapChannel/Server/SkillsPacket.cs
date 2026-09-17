@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.Linq;
 
 namespace Rasa.Packets.MapChannel.Server
 {
@@ -10,22 +11,22 @@ namespace Rasa.Packets.MapChannel.Server
     {
         public override GameOpcode Opcode { get; } = GameOpcode.Skills;
 
-        public static Dictionary<SkillId, SkillsData> SkillsData { get; set; } = new Dictionary<SkillId, SkillsData>();
+        private readonly (SkillId Id, int Rank)[] _skills;
         
         public SkillsPacket(Dictionary<SkillId, SkillsData> skillsData)
         {
-            SkillsData = skillsData;
+            _skills = skillsData.Values.Select(skill => (skill.SkillId, skill.SkillLevel)).ToArray();
         }
 
         public override void Write(PythonWriter pw)
         {
             pw.WriteTuple(1);
-            pw.WriteList(SkillsData.Count);
-            foreach(var entry in SkillsData)
+            pw.WriteList(_skills.Length);
+            foreach(var entry in _skills)
             {
                 pw.WriteTuple(2);
-                pw.WriteInt((int)entry.Value.SkillId);
-                pw.WriteInt(entry.Value.SkillLevel);
+                pw.WriteInt((int)entry.Id);
+                pw.WriteInt(entry.Rank);
             }
         }
     }

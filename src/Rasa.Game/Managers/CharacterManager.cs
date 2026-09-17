@@ -354,6 +354,7 @@ namespace Rasa.Managers
             unitOfWork.Characters.UpdateLoginData(character.Id);
             unitOfWork.Complete();
 
+            ManifestationManager.Instance.RemovePlayerCharacter(client);
             client.Player = CreateCharacterManifestation(client, character);
             client.Player.MapChannel = MapChannelManager.Instance.FindByContextId(client.Player.MapContextId);
             client.LoadingMap = client.Player.MapContextId;

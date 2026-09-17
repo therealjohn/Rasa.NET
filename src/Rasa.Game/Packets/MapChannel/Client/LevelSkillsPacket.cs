@@ -13,13 +13,17 @@
 
         public override void Read(PythonReader pr)
         {
-            pr.ReadTuple();
+            if (pr.ReadTuple() != 1)
+                throw new System.IO.InvalidDataException("Training requires one skill list.");
             ListLenght = pr.ReadList();
+            if (ListLenght < 1 || ListLenght > 73)
+                throw new System.IO.InvalidDataException("Training exceeds the 73-entry skill catalogue.");
             SkillIds = new int[ListLenght];
             SkillLevels = new int[ListLenght];
             for (var i = 0; i < ListLenght; i++)
             {
-                pr.ReadTuple();
+                if (pr.ReadTuple() != 2)
+                    throw new System.IO.InvalidDataException("Training entries require a skill ID and rank.");
                 SkillIds[i] = pr.ReadInt();
                 SkillLevels[i] = pr.ReadInt();
             }

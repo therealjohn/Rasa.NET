@@ -49,6 +49,7 @@ namespace Rasa.Managers
         {
             if (creature == null)
                 return;
+            creature.InvalidateAbilityLifetime();
             // register creature entity
             EntityManager.Instance.RegisterEntity(creature.EntityId, EntityType.Creature);
             EntityManager.Instance.RegisterCreature(creature);
@@ -164,10 +165,16 @@ namespace Rasa.Managers
         {
             if (creature == null)
                 return false;
+            lock (mapChannel.LootSyncRoot)
+                return RemoveCreatureFromWorldLocked(mapChannel, creature);
+        }
 
+        private bool RemoveCreatureFromWorldLocked(MapChannel mapChannel, Creature creature)
+        {
+            LootDispenserManager.RemoveForCorpse(mapChannel, creature);
             var isRegistered = EntityManager.Instance.Creatures.TryGetValue(creature.EntityId, out var registered) &&
                 registered == creature;
-            if (isRegistered)
+            if (isRegistered && creature.Cells != null)
                 foreach (var player in GetClientsInCells(mapChannel, creature.Cells))
                     player.CallMethod(SysEntity.ClientMethodId,
                         new Packets.MapChannel.Server.DestroyPhysicalEntityPacket(creature.EntityId));
@@ -176,6 +183,7 @@ namespace Rasa.Managers
             if (!isRegistered)
                 return false;
 
+            creature.InvalidateAbilityLifetime();
             EntityManager.Instance.ReleaseEntity(creature.EntityId, EntityType.Creature);
             if (creature.State == CharacterState.Dead && creature.SpawnPool != null)
                 SpawnPoolManager.Instance.DecreaseDeadCreatureCount(creature.SpawnPool);
@@ -266,6 +274,18 @@ namespace Rasa.Managers
 
         internal void DetachClient(MapChannel map, Client client)
         {
+            lock (client.SyncRoot)
+                DetachClientLocked(map, client);
+        }
+
+        private void DetachClientLocked(MapChannel map, Client client)
+        {
+            LootDispenserManager.RemoveForOwner(map, client);
+            if (client.Player?.MapChannel == map)
+            {
+                ManifestationManager.CancelCombatActions(client);
+                client.Player.InvalidateAbilityLifetime();
+            }
             var memberships = map.MapCellInfo.Cells.Values.Where(cell => cell.ClientList.Contains(client)).ToArray();
             if (memberships.Length == 0)
                 return;

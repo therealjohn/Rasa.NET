@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.Linq;
 
 namespace Rasa.Packets.LootDispenser.Server
 {
@@ -14,7 +15,7 @@ namespace Rasa.Packets.LootDispenser.Server
         
         public LootInfoPacket(List<LootItem> lootItems)
         {
-            LootItems = lootItems;
+            LootItems = lootItems.Select(item => new LootItem(item)).ToList();
         }
         public override void Write(PythonWriter pw)
         {

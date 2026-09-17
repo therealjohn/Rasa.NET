@@ -1,138 +1,194 @@
-﻿namespace Rasa.Managers
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace Rasa.Managers
 {
+    using Data;
     using Game;
     using Packets.MapChannel.Server;
     using Structures;
 
     public class GameEffectManager
     {
-        private static GameEffectManager _instance;
-        private static readonly object InstanceLock = new object();
-        public static GameEffectManager Instance
-        {
-            get
-            {
-                // ReSharper disable once InvertIf
-                if (_instance == null)
-                {
-                    lock (InstanceLock)
-                    {
-                        if (_instance == null)
-                            _instance = new GameEffectManager();
-                    }
-                }
+        private static readonly GameEffectManager Singleton = new();
+        public static GameEffectManager Instance => Singleton;
 
-                return _instance;
-            }
-        }
+        private GameEffectManager() { }
 
-        private GameEffectManager()
-        {
-        }
-
-        public void AddToList(Actor actor, GameEffect gameEffect)
-        {
+        public void AddToList(Actor actor, GameEffect gameEffect) =>
             actor.ActiveEffects.Add(gameEffect.EffectId, gameEffect);
+
+        private static int NextId(MapChannel map)
+        {
+            lock (map.SprintEffects)
+                return ++map.CurrentEffectId;
         }
 
         public void AttachSprint(MapChannel mapChannel, Actor actor, uint effectLevel, int duration)
         {
-            mapChannel.CurrentEffectId++; // generate new effectId
-            var effectId = mapChannel.CurrentEffectId;
-            // effectId -> The id used to identify the effect when sending/receiving effect related data (similiar to entityId, just for effects)
-            // typeId -> The id used to lookup the effect class and animation
-            // level -> The sub id of the effect, some effects have multiple levels (especially the ones linked with player abilities)
-            // create effect struct
-            var gameEffect = new GameEffect
+            if (effectLevel < 1 || effectLevel > 5 || duration <= 0)
+                throw new ArgumentOutOfRangeException(nameof(effectLevel), "Timed Sprint requires rank 1-5 and a positive duration.");
+            var effect = new GameEffect
             {
-                // setup struct
-                Duration = duration, // 5 seconds (test)
-                EffectTime = 0, // reset timer
-                TypeId = 247,    // EFFECT_TYPE_SPRINT;
-                EffectId = effectId,
-                EffectLevel = effectLevel
+                Duration = duration, TypeId = HistoricalAbilities.SprintEffectType,
+                EffectId = NextId(mapChannel), EffectLevel = effectLevel
             };
-            // add to list
-            AddToList(actor, gameEffect);
-            CellManager.Instance.CellCallMethod(mapChannel, actor, new GameEffectAttachedPacket
-            {
-                EffectTypeId = gameEffect.TypeId,
-                EffectId = gameEffect.EffectId,
-                EffectLevel = gameEffect.EffectLevel,
-                SourceId = actor.EntityId,
-                Announced = true,
-                Duration = gameEffect.Duration,
-                DamageType = 0,
-                AttrId = 1,
-                IsActive = true,
-                IsBuff = true,
-                IsDebuff = false,
-                IsNegativeEffect = false
-            });
-            // do ability specific work
+            AddToList(actor, effect);
+            CellManager.Instance.CellCallMethod(mapChannel, actor, AttachedPacket(actor, effect));
             UpdateMovementMod(mapChannel, actor);
+        }
+
+        internal void StartSprint(Client client, int rank, Func<long> clock, Func<bool> isLearned)
+        {
+            var player = client.Player;
+            var map = player.MapChannel;
+            var effect = new GameEffect
+            {
+                TypeId = HistoricalAbilities.SprintEffectType, EffectId = NextId(map),
+                EffectLevel = (uint)rank, IsToggle = true
+            };
+            var sprint = new SprintEffect(client, player, map, effect, clock, isLearned) { LastUpdate = clock() };
+            player.Sprint = sprint;
+            AddToList(player, effect);
+            lock (map.SprintEffects)
+                map.SprintEffects.Add(sprint);
+            CellManager.Instance.CellCallMethod(map, player, AttachedPacket(player, effect));
+            UpdateMovementMod(map, player);
+        }
+
+        internal void CancelSprint(Client client)
+        {
+            if (client?.Player == null)
+                return;
+            lock (client.SyncRoot)
+            {
+                var sprint = client.Player.Sprint;
+                if (sprint == null)
+                    return;
+                UpdateSprint(sprint);
+                StopSprint(sprint);
+            }
+        }
+
+        private void StopSprint(SprintEffect sprint)
+        {
+            lock (sprint.Map.SprintEffects)
+                sprint.Map.SprintEffects.Remove(sprint);
+            var wasActive = ReferenceEquals(sprint.Player.Sprint, sprint);
+            var hadEffect = sprint.Player.ActiveEffects.ContainsKey(sprint.Effect.EffectId);
+            if (ReferenceEquals(sprint.Player.Sprint, sprint))
+                sprint.Player.Sprint = null;
+            DettachEffect(sprint.Map, sprint.Player, sprint.Effect);
+            if (wasActive && !hadEffect)
+                UpdateMovementMod(sprint.Map, sprint.Player);
         }
 
         public void DettachEffect(MapChannel mapChannel, Actor actor, GameEffect gameEffect)
         {
-            // inform clients (Recv_GameEffectDetached 75)
+            if (actor is Manifestation player && player.Sprint is { } sprint &&
+                ReferenceEquals(sprint.Effect, gameEffect))
+            {
+                if (!ReferenceEquals(sprint.Map, mapChannel))
+                {
+                    Logger.WriteLog(LogType.Error, "Rejected Sprint detachment from a different map.");
+                    return;
+                }
+                UpdateSprint(sprint);
+                lock (sprint.Map.SprintEffects)
+                    sprint.Map.SprintEffects.Remove(sprint);
+                player.Sprint = null;
+            }
+            if (!actor.ActiveEffects.Remove(gameEffect.EffectId))
+                return;
             CellManager.Instance.CellCallMethod(mapChannel, actor, new GameEffectDetachedPacket { EffectId = gameEffect.EffectId });
-            // remove from list
-            RemoveFromList(actor, gameEffect);
-            // do ability specific work
-            if (gameEffect.TypeId == 247)
+            if (gameEffect.TypeId == HistoricalAbilities.SprintEffectType)
                 UpdateMovementMod(mapChannel, actor);
-            // more todo..
         }
 
         public void DoWork(MapChannel mapChannel, long passedTime)
         {
-            foreach (var client in mapChannel.ClientList)
+            SprintEffect[] sprints;
+            lock (mapChannel.SprintEffects)
+                sprints = mapChannel.SprintEffects.ToArray();
+            foreach (var sprint in sprints)
+                lock (sprint.Client.SyncRoot)
+                    UpdateSprint(sprint);
+
+            if (passedTime <= 0)
+                return;
+            foreach (var client in mapChannel.ClientList.ToArray())
             {
-                if (client.Player == null)
-                    continue;
-
-                var actor = client.Player;
-                var gameEffect = actor.ActiveEffects;
-
-                // This need future work
-                foreach (var t in gameEffect)
+                lock (client.SyncRoot)
                 {
-                    var effect = t.Value;
-                    effect.EffectTime += (int)passedTime;
-                    // stop effect if too old
-                    if (effect.EffectTime >= effect.Duration)
+                    if (client.Player == null || client.Player.MapChannel != mapChannel)
+                        continue;
+                    foreach (var effect in client.Player.ActiveEffects.Values.Where(effect => !effect.IsToggle).ToArray())
                     {
-                        DettachEffect(mapChannel, actor, effect);
-                        break;
+                        effect.EffectTime += Math.Min(passedTime, long.MaxValue - effect.EffectTime);
+                        if (effect.EffectTime >= effect.Duration)
+                            DettachEffect(mapChannel, client.Player, effect);
                     }
                 }
             }
         }
-        
 
-        public void RemoveFromList(Actor actor, GameEffect gameEffect)
+        private void UpdateSprint(SprintEffect sprint)
         {
-            actor.ActiveEffects.Remove(gameEffect.EffectId);
+            var player = sprint.Player;
+            if (!ReferenceEquals(sprint.Client.Player, player) || !ReferenceEquals(player.MapChannel, sprint.Map) ||
+                player.ActionLifetime != sprint.PlayerLifetime ||
+                !ReferenceEquals(player.Sprint, sprint) || !player.ActiveEffects.ContainsKey(sprint.Effect.EffectId) ||
+                !AbilityManager.CanAct(sprint.Client) || !sprint.IsLearned() ||
+                !player.Attributes.TryGetValue(Attributes.Chi, out var chi) || chi.Current <= 0 ||
+                chi.CurrentMax <= 0 || chi.Current > chi.CurrentMax)
+            {
+                StopSprint(sprint);
+                return;
+            }
+            var now = sprint.Clock();
+            if (now <= sprint.LastUpdate)
+                return;
+            var elapsed = (decimal)now - sprint.LastUpdate;
+            sprint.LastUpdate = now;
+            var drain = player.SprintDrainRemainder +
+                elapsed / 1000m * chi.CurrentMax *
+                HistoricalAbilities.Sprint((int)sprint.Effect.EffectLevel).MaximumAdrenalinePerSecond;
+            var spent = drain >= chi.Current ? chi.Current : (int)decimal.Floor(drain);
+            chi.Current -= spent;
+            player.SprintDrainRemainder = chi.Current == 0 ? 0 : drain - spent;
+            if (spent > 0)
+                sprint.Client.CallMethod(player.EntityId, new UpdateChiPacket(chi, 0));
+            if (chi.Current == 0)
+                StopSprint(sprint);
         }
+
+        public void RemoveFromList(Actor actor, GameEffect gameEffect) =>
+            actor.ActiveEffects.Remove(gameEffect.EffectId);
 
         public void UpdateMovementMod(MapChannel mapChannel, Actor actor)
         {
-            var movementMod = 1.0d;
-            // check for sprint
-            foreach (var t in actor.ActiveEffects)
-            {
-                var efect = t.Value;
-                if (efect.TypeId == 247) // ToDO curently hardcoded EFFECT_TYPE_SPRINT
-                {
-                    // apply sprint bonus
-                    movementMod += 1.0d;
-                    movementMod += efect.EffectLevel * 0.10d;
-                    break;
-                }
-            }
-            // todo: other modificators?
+            var sprint = actor.ActiveEffects.Values.FirstOrDefault(effect => effect.TypeId == HistoricalAbilities.SprintEffectType);
+            var movementMod = 1d + (sprint == null ? 0d : HistoricalAbilities.Sprint((int)sprint.EffectLevel).SpeedBonus);
+            actor.MovementSpeed = movementMod;
             CellManager.Instance.CellCallMethod(mapChannel, actor, new MovementModChangePacket(movementMod));
+        }
+
+        internal static GameEffectAttachedPacket AttachedPacket(Actor actor, GameEffect effect, bool announce = true) => new()
+        {
+            EffectTypeId = effect.TypeId, EffectId = effect.EffectId, EffectLevel = effect.EffectLevel,
+            SourceId = actor.EntityId, Announced = announce,
+            Duration = effect.IsToggle ? null : effect.Duration,
+            DamageType = 0, AttrId = (int)Attributes.Speed,
+            IsActive = true, IsBuff = true
+        };
+
+        internal static IEnumerable<GameEffectAttachedPacket> SnapshotEffects(Client client)
+        {
+            lock (client.SyncRoot)
+                return client.Player.ActiveEffects.Values
+                    .Where(effect => effect.TypeId == HistoricalAbilities.SprintEffectType)
+                    .Select(effect => AttachedPacket(client.Player, effect, false)).ToArray();
         }
     }
 }

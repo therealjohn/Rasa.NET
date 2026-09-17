@@ -8,21 +8,22 @@
     {
         public override GameOpcode Opcode { get; } = GameOpcode.UpdatePower;
 
-        public ActorAttributes Power { get; set; }
-        public int WhoId { get; set; }
+        private readonly ActorAttributes _power;
+        public ActorAttributes Power => _power.Snapshot();
+        public int WhoId { get; }
 
         public UpdatePowerPacket(ActorAttributes power, int whoId)
         {
-            Power = power;
+            _power = power.Snapshot();
             WhoId = whoId;
         }
 
         public override void Write(PythonWriter pw)
         {
             pw.WriteTuple(4);
-            pw.WriteInt(Power.Current);
-            pw.WriteInt(Power.CurrentMax);
-            pw.WriteInt(Power.RefreshAmount);
+            pw.WriteInt(_power.Current);
+            pw.WriteInt(_power.CurrentMax);
+            pw.WriteInt(_power.RefreshAmount);
             pw.WriteInt(WhoId);
         }
     }

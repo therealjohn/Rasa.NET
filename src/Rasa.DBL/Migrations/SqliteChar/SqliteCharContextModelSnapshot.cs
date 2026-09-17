@@ -6,6 +6,8 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Rasa.Context.Char;
 
+#nullable disable
+
 namespace Rasa.Migrations.SqliteChar
 {
     [DbContext(typeof(SqliteCharContext))]
@@ -14,8 +16,7 @@ namespace Rasa.Migrations.SqliteChar
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder
-                .HasAnnotation("ProductVersion", "5.0.1");
+            modelBuilder.HasAnnotation("ProductVersion", "9.0.20");
 
             modelBuilder.Entity("Rasa.Structures.Char.CensorWordsEntry", b =>
                 {
@@ -137,6 +138,10 @@ namespace Rasa.Migrations.SqliteChar
                         .HasDefaultValue((byte)0)
                         .HasColumnName("crouch_state");
 
+                    b.Property<byte>("CurrentAbilitySlot")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("current_ability_slot");
+
                     b.Property<uint>("Experience")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int(11)")
@@ -147,8 +152,7 @@ namespace Rasa.Migrations.SqliteChar
                         .HasColumnType("bit")
                         .HasColumnName("gender");
 
-                    b.Property<DateTime?>("LastLogin")
-                        .IsRequired()
+                    b.Property<DateTime>("LastLogin")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT")
                         .HasColumnName("last_login")

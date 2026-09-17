@@ -11,7 +11,8 @@
 
         public override void Read(PythonReader pr)
         {
-            pr.ReadTuple();
+            if (pr.ReadTuple() != 1)
+                throw new System.IO.InvalidDataException("Drawer selection requires one slot.");
             AbilityDrawerSlot = pr.ReadInt();
         }
     }

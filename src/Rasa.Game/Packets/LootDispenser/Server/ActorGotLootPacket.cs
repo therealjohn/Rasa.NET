@@ -14,7 +14,7 @@ namespace Rasa.Packets.LootDispenser.Server
 
         public ActorGotLootPacket(LootDispenser loot)
         {
-            Loot = loot;
+            Loot = new Structures.LootDispenser(loot);
         }
         public override void Write(PythonWriter pw)
         {

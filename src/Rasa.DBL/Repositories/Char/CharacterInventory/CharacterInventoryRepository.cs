@@ -29,6 +29,7 @@ namespace Rasa.Repositories.Char.CharacterInventory
             {
                 Logger.WriteLog(LogType.Error, "Error creating item:");
                 Logger.WriteLog(LogType.Error, e);
+                throw;
             }
         }
 

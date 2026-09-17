@@ -8,6 +8,8 @@ namespace Rasa.Structures
     using World;
     public class Creature : Actor, ICloneable
     {
+        internal const long CorpseLifetimeMilliseconds = 20000;
+        internal bool LootCreated { get; set; }
         public uint DbId { get; set; }
         // npc data (only if creature is a NPC)
         public Npc Npc { get; set; }

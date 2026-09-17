@@ -1,4 +1,4 @@
-﻿using System;
+﻿using System.Linq;
 
 namespace Rasa.Managers
 {
@@ -12,6 +12,7 @@ namespace Rasa.Managers
         private static ActorActionManager _instance;
         private static readonly object InstanceLock = new object();
         public readonly Timer Timer = new Timer();
+        private readonly ManifestationManager _manifestation;
         public static ActorActionManager Instance
         {
             get
@@ -31,7 +32,13 @@ namespace Rasa.Managers
         }
 
         private ActorActionManager()
+            : this(ManifestationManager.Instance)
         {
+        }
+
+        internal ActorActionManager(ManifestationManager manifestation)
+        {
+            _manifestation = manifestation;
         }
 
         public bool HasActiveAction(Actor actor)
@@ -49,13 +56,18 @@ namespace Rasa.Managers
                 if (mapChannel.PerformRecovery.Count > 1)
                     Logger.WriteLog(LogType.Debug, $"PerformRecovery count = { mapChannel.PerformRecovery.Count}");
 
-                // iterate backwards through list
-                for (var i = mapChannel.PerformRecovery.Count - 1; i >= 0; i--)
+                foreach (var action in mapChannel.PerformRecovery.ToArray().Reverse())
                 {
-                    var action = mapChannel.PerformRecovery[i];
+                    if (!mapChannel.PerformRecovery.Contains(action))
+                        continue;
+                    if (action.Ability != null)
+                    {
+                        _manifestation.Abilities.Recover(mapChannel, action);
+                        continue;
+                    }
 
                     // skip if client is busy
-                    if (HasActiveAction(action.Actor))
+                    if (HasActiveAction(action.Actor) && !(action.WeaponClient != null && action.IsInrerrupted))
                         continue;
 
                     // if action is interrupted recover immediately
@@ -77,13 +89,13 @@ namespace Rasa.Managers
 
         public void PerformRecovery(MapChannel mapChannel, ActionData action)
         {
+            if (action.WeaponClient != null && !ReferenceEquals(action.WeaponMap, mapChannel))
+                return;
             switch (action.ActionId)
             {
                 case ActionId.AaRecruitLightning:
-                    MissileManager.Instance.MissileLaunch(mapChannel, action, new Random().Next(233, 311 + 1));
-                    break;
                 case ActionId.AaRecruitSprint:
-                    GameEffectManager.Instance.AttachSprint(mapChannel, action.Actor, action.ActionArgId, 500);
+                    _manifestation.Abilities.Recover(mapChannel, action);
                     break;
                 case ActionId.UseObject:
                     CellManager.Instance.CellCallMethod(mapChannel, action.Actor, new PerformRecoveryPacket(PerformType.TwoArgs, action.ActionId, action.ActionArgId));
@@ -111,15 +123,13 @@ namespace Rasa.Managers
                     */
                     break;
                 case ActionId.WeaponDraw:
-                    CellManager.Instance.CellCallMethod(mapChannel, action.Actor, new PerformRecoveryPacket(PerformType.TwoArgs, action.ActionId, action.ActionArgId));
-                    action.Actor.WeaponReady = true;
+                    _manifestation.RecoverWeaponReady(action);
                     break;
                 case ActionId.WeaponReload:
-                    ManifestationManager.Instance.WeaponReload(action);
+                    _manifestation.WeaponReload(action);
                     break;
                 case ActionId.WeaponStow:
-                    CellManager.Instance.CellCallMethod(mapChannel, action.Actor, new PerformRecoveryPacket(PerformType.TwoArgs, action.ActionId, action.ActionArgId));
-                    action.Actor.WeaponReady = false;
+                    _manifestation.RecoverWeaponReady(action);
                     break;
                 default:
                     Logger.WriteLog(LogType.Error, $"PerformAction: unsuported {action.ActionId}");

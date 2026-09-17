@@ -18,9 +18,11 @@ namespace Rasa.Repositories.Char.Character
         void UpdateCharacterCloneCredits(uint id, uint cloneCredits);
         void UpdateCharacterCredits(uint id, int credits);
         void UpdateCharacterExpirience(uint id, uint experience);
+        void UpdateCharacterProgression(uint id, uint experience, byte level);
         void UpdateCharacterLevel(uint id, byte level);
         void UpdateCharacterLogin(uint id, uint totalTimePlayed, uint numLogins);
         void UpdateCharacterPosition(uint id, double x, double y, double z, double rotation, uint mapContextId);
         void UpdateCharacterActiveWeapon(uint id, byte activeWeapon);
+        void UpdateCharacterAbilitySlot(uint id, byte slot);
     }
 }

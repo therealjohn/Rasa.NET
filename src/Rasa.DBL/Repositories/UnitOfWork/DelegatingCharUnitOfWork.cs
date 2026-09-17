@@ -36,6 +36,8 @@ namespace Rasa.Repositories.UnitOfWork
 
         public ICensoredWordRepository CensoredWords => _parent.CensoredWords;
 
+        public void ExecuteTransaction(System.Action operation) => _parent.ExecuteTransaction(operation);
+
         public ICharacterRepository Characters => _parent.Characters;
 
         public ICharacterAbilityDrawerRepository CharacterAbilityDrawers => _parent.CharacterAbilityDrawers;

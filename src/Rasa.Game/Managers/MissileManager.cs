@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Linq;
 
 namespace Rasa.Managers
 {
@@ -37,6 +38,37 @@ namespace Rasa.Managers
 
         private MissileManager()
         {
+        }
+
+        internal static bool IsActorInMap(MapChannel map, Actor actor)
+        {
+            if (map?.MapInfo == null || actor == null || actor.MapContextId != map.MapInfo.MapContextId ||
+                actor.State == CharacterState.Dead || actor.State == CharacterState.Dying)
+                return false;
+            if (actor is Manifestation player)
+                return EntityManager.Instance.Players.TryGetValue(actor.EntityId, out var registeredPlayer) &&
+                    ReferenceEquals(player, registeredPlayer) &&
+                    map.ClientList.Any(client => ReferenceEquals(client.Player, player) &&
+                        ReferenceEquals(player.MapChannel, map) && ManifestationManager.CanUseWeapons(client));
+            if (actor is Creature creature)
+                return EntityManager.Instance.Creatures.TryGetValue(actor.EntityId, out var registeredCreature) &&
+                    ReferenceEquals(creature, registeredCreature) &&
+                    map.MapCellInfo.Cells.Values.Any(cell => cell.CreatureList.Contains(creature));
+            return false;
+        }
+
+        internal static bool TryGetTarget(MapChannel map, ulong entityId, out Actor target)
+        {
+            target = null;
+            if (entityId == 0)
+                return true;
+            if (EntityManager.Instance.GetEntityType(entityId) == EntityType.Creature &&
+                EntityManager.Instance.Creatures.TryGetValue(entityId, out var creature))
+                target = creature;
+            else if (EntityManager.Instance.GetEntityType(entityId) == EntityType.Character &&
+                EntityManager.Instance.Players.TryGetValue(entityId, out var player))
+                target = player;
+            return IsActorInMap(map, target);
         }
 
         private void DoDamageToCreature(MapChannel mapChannel, Missile missile)
@@ -171,50 +203,27 @@ namespace Rasa.Managers
         }
 
         public void MissileLaunch(MapChannel mapChannel, ActionData action, int damage)
+            => MissileLaunch(mapChannel, action, damage, null);
+
+        internal void MissileLaunch(MapChannel mapChannel, ActionData action, int damage, LightningArc arc)
         {
+            if (!IsActorInMap(mapChannel, action?.Actor) || !TryGetTarget(mapChannel, action.TargetId, out var targetActor))
+                return;
             var missile = new Missile
             {
                 DamageA = damage,
-                Source = action.Actor
+                Source = action.Actor,
+                SourceLifetime = action.Actor.ActionLifetime,
+                TargetLifetime = targetActor?.ActionLifetime ?? 0,
+                Arc = arc
             };
 
             // get distance between actors
-            Actor targetActor = null;
             var triggerTime = 0; // time between windup and recovery
 
             if (action.TargetId != 0)
             {
-                // target on entity
-                var targetType = EntityManager.Instance.GetEntityType(action.TargetId);
-
-                if (targetType == 0)
-                {
-                    Logger.WriteLog(LogType.Error, $"The missile target doesnt exist: {action.TargetId}");
-                    // entity does not exist
-                    return;
-                }
-                switch (targetType)
-                {
-                    case EntityType.Creature:
-                        {
-                            targetActor = EntityManager.Instance.GetCreature(action.TargetId);
-                            missile.TargetEntityId = action.TargetId;
-                        }
-                        break;
-                    case EntityType.Character:
-                        {
-                            targetActor = EntityManager.Instance.GetPlayer(action.TargetId);
-                            missile.TargetEntityId = action.TargetId;
-                        }
-                        break;
-                    default:
-                        Logger.WriteLog(LogType.Error, $"Can't shoot that object");
-                        return;
-                };
-
-                if (targetActor.State == CharacterState.Dead)
-                    return; // actor is dead, cannot be shot at
-
+                missile.TargetEntityId = action.TargetId;
                 var distance = Vector3.Distance(targetActor.Position, action.Actor.Position);
                 triggerTime = (int)(distance * 0.5f);
             }
@@ -253,12 +262,19 @@ namespace Rasa.Managers
 
         public void MissileTrigger(MapChannel mapChannel, Missile missile)
         {
+            if (!IsActorInMap(mapChannel, missile?.Source) ||
+                missile.Source.ActionLifetime != missile.SourceLifetime ||
+                !TryGetTarget(mapChannel, missile.TargetEntityId, out var target) ||
+                !ReferenceEquals(target, missile.TargetActor) ||
+                (target != null && target.ActionLifetime != missile.TargetLifetime) || !missile.TryTrigger())
+                return;
             // ToDo: Some weapons can hit multiple targets
             var targetType = EntityManager.Instance.GetEntityType(missile.TargetEntityId);
             var hitData = new HitData
             {
                 FinalAmt = missile.DamageA,
-                EntityId = missile.TargetEntityId
+                EntityId = missile.TargetEntityId,
+                DamageType = missile.ActionId == ActionId.AaRecruitLightning ? DamageType.Electrical : DamageType.Physical
             };
 
             missile.Args.HitEntities.Add(missile.TargetEntityId);
@@ -288,6 +304,7 @@ namespace Rasa.Managers
                 //else if (missile->actionId == 174)
                 //    missile_ActionRecoveryHandler_WeaponMelee(mapChannel, missile);
                 case ActionId.AaRecruitLightning:
+                    ApplyLightningArc(mapChannel, missile, hitData);
                     CellManager.Instance.CellCallMethod(mapChannel, missile.Source, new LightningRecovery(missile));
                     break;
                 //else if (missile->actionId == 203)
@@ -301,6 +318,27 @@ namespace Rasa.Managers
                     CellManager.Instance.CellCallMethod(mapChannel, missile.Source, new WeaponAttackRecovery(missile));
                     break;
             }
+        }
+
+        private void ApplyLightningArc(MapChannel map, Missile missile, HitData primary)
+        {
+            var arc = missile.Arc;
+            if (arc == null || missile.ActionArgId != 2 || missile.Source is not Manifestation player ||
+                !IsActorInMap(map, player) || player.ActionLifetime != missile.SourceLifetime ||
+                !AbilityManager.CanAct(map.ClientList.Find(client => ReferenceEquals(client?.Player, player))) ||
+                arc.Target.EntityId != arc.EntityId || arc.Target.ActionLifetime != arc.TargetLifetime ||
+                !AbilityManager.IsLightningArcTarget(player, missile.TargetActor, arc.Target,
+                    HistoricalAbilities.Lightning(2).ArcRadius))
+                return;
+
+            DoDamageToCreature(map, new Missile
+            {
+                Source = player, TargetEntityId = arc.EntityId, TargetActor = arc.Target, DamageA = arc.Damage
+            });
+            primary.LightningArcs.Add(new HitData
+            {
+                EntityId = arc.EntityId, DamageType = DamageType.Electrical, FinalAmt = arc.Damage
+            });
         }
     }
 }

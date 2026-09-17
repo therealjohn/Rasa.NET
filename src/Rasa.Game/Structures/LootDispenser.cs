@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.Linq;
 
 namespace Rasa.Structures
 {
@@ -8,7 +9,8 @@ namespace Rasa.Structures
     {
         public LootDispenser()
         {
-            EntityId = EntityManager.Instance.GetEntityId;
+            // Requests carry only this ID, so delayed claims must never target a new corpse.
+            EntityId = EntityManager.Instance.AllocateUnrecycledEntityId();
             EntityClassId = (Data.EntityClasses)10000035;
         }
 
@@ -21,5 +23,26 @@ namespace Rasa.Structures
         public bool FullyLooted { get; set; }
         public bool IsLootable { get; set; }
         public LootQuality LootQuality { get; set; }
+        internal Game.Client OwnerClient { get; set; }
+        internal Manifestation Player { get; set; }
+        internal MapChannel Map { get; set; }
+        internal Creature Corpse { get; set; }
+        internal long PlayerLifetime { get; set; }
+        internal long CorpseLifetime { get; set; }
+        internal uint CharacterId { get; set; }
+        internal uint AccountId { get; set; }
+
+        internal LootDispenser(LootDispenser source)
+        {
+            EntityId = source.EntityId;
+            EntityClassId = source.EntityClassId;
+            AttachedTo = source.AttachedTo;
+            Owner = source.Owner;
+            Credits = source.Credits;
+            IsLootable = source.IsLootable;
+            FullyLooted = source.FullyLooted;
+            LootQuality = source.LootQuality;
+            LootItems = source.LootItems.Select(item => new LootItem(item)).ToList();
+        }
     }
 }

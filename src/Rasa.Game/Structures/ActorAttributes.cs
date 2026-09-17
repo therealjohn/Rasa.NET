@@ -20,5 +20,7 @@
             RefreshAmount = refreshAmmount;
             RefreshPeriod = refreshPeriod;
         }
+
+        public ActorAttributes Snapshot() => new(AttributeId, NormalMax, CurrentMax, Current, RefreshAmount, RefreshPeriod);
     }
 }

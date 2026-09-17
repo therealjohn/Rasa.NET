@@ -7,6 +7,7 @@
         public int EffectId { get; set; } // effect id
         public uint EffectLevel { get; set; }
         public int Duration { get; set; }
-        public int EffectTime { get; set; }
+        public long EffectTime { get; set; }
+        internal bool IsToggle { get; set; }
     }
 }

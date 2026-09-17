@@ -710,6 +710,7 @@ namespace Rasa.Managers
                     Deadline = checked(_clock() + timeout * 1000L),
                     IsDropship = isDropship
                 };
+                ManifestationManager.CancelCombatActions(client);
                 client.PendingTransfer = transfer;
                 client.CallMethod(SysEntity.ClientMethodId, new RequestMovementBlockPacket());
 

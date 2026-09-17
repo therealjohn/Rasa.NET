@@ -21,7 +21,7 @@ namespace Rasa.Test.Database
 
     [TestClass]
     [TestCategory("MySql")]
-    public class MySqlCompatibilityTests
+    public partial class MySqlCompatibilityTests
     {
         [TestMethod]
         [DataRow(typeof(MySqlAuthContext), 45)]

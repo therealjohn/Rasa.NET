@@ -14,7 +14,7 @@
         public ulong SourceId { get; set; }
         public bool Announced { get; set; }
         // tooltip
-        public int Duration { get; set; }
+        public int? Duration { get; set; }
         public int DamageType { get; set; }
         public int AttrId { get; set; }
         public bool IsActive { get; set; }
@@ -30,9 +30,12 @@
             pw.WriteUInt(EffectLevel);       //level
             pw.WriteULong(SourceId);          //sourceId
             pw.WriteBool(Announced);        //announce
-            pw.WriteDictionary(7);          //tooltipDict
-            pw.WriteString("duration"); // 'duration'
-            pw.WriteInt(Duration);
+            pw.WriteDictionary(Duration.HasValue ? 7 : 6); // tooltipDict; toggles have no duration.
+            if (Duration.HasValue)
+            {
+                pw.WriteString("duration");
+                pw.WriteInt(Duration.Value);
+            }
             pw.WriteString("damageType");// 'damageType'
             pw.WriteInt(DamageType);
             pw.WriteString("attrId");   // 'attrId'

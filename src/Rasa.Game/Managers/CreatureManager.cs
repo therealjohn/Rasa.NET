@@ -29,6 +29,7 @@ namespace Rasa.Managers
         public const long CreatureLocationUpdateTime = 1500;
         public Dictionary<uint, Creature> LoadedCreatures = new();
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
+        private readonly ManifestationManager _manifestationManager;
         public static CreatureManager Instance
         {
             get
@@ -47,9 +48,15 @@ namespace Rasa.Managers
             }
         }
 
-        private CreatureManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory)
+        internal CreatureManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory)
+            : this(gameUnitOfWorkFactory, null)
+        {
+        }
+
+        internal CreatureManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory, ManifestationManager manifestationManager)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
+            _manifestationManager = manifestationManager;
         }
 
         // 1 creature to n client's
@@ -104,49 +111,60 @@ namespace Rasa.Managers
 
         internal void HandleCreatureKill(MapChannel mapChannel, Creature creature, Actor killedBy)
         {
-            if (creature.State == CharacterState.Dead)
-                return; // creature already dead
+            if (mapChannel == null || creature == null)
+                return;
 
-            // kill creature
-            var stateIds = new List<CharacterState> { CharacterState.Dead };
-
-            creature.State = CharacterState.Dead;
-            CellManager.Instance.CellCallMethod(mapChannel, creature, new StateChangePacket(stateIds));
-
-            // tell spawnpool if set
-            if (creature.SpawnPool != null)
+            lock (creature)
             {
-                SpawnPoolManager.Instance.DecreaseAliveCreatureCount(mapChannel, creature.SpawnPool);
-                SpawnPoolManager.Instance.IncreaseDeadCreatureCount(creature.SpawnPool);
+                if (creature.State == CharacterState.Dead || creature.Cells == null ||
+                    creature.MapContextId != mapChannel.MapInfo.MapContextId ||
+                    !EntityManager.Instance.Creatures.TryGetValue(creature.EntityId, out var registeredCreature) ||
+                    registeredCreature != creature ||
+                    !mapChannel.MapCellInfo.Cells.TryGetValue(creature.Cells[2, 2], out var creatureCell) ||
+                    !creatureCell.CreatureList.Contains(creature))
+                    return;
+
+                creature.State = CharacterState.Dead;
+                if (creature.SpawnPool != null)
+                {
+                    SpawnPoolManager.Instance.DecreaseAliveCreatureCount(mapChannel, creature.SpawnPool);
+                    SpawnPoolManager.Instance.IncreaseDeadCreatureCount(creature.SpawnPool);
+                }
             }
 
-            // todo: How were credits and experience calculated when multiple players attacked the same creature? Did only the player with the first strike get experience?
+            CellManager.Instance.CellCallMethod(mapChannel, creature,
+                new StateChangePacket(new List<CharacterState> { CharacterState.Dead }));
 
-            Client client = null;
+            if (killedBy is not Manifestation)
+                return;
 
-            // get client if it's killed by player
-            foreach (var cellSeed in killedBy.Cells)
-                foreach (var tempClient in mapChannel.MapCellInfo.Cells[cellSeed].ClientList)
-                    if (tempClient.Player == killedBy)
-                    {
-                        client = tempClient;
-                        break;
-                    }
+            var client = mapChannel.ClientList.Find(candidate => candidate?.Player == killedBy);
+            if (client == null)
+                return;
 
-            if (client != null)
+            lock (client.SyncRoot)
             {
-                // give experience
-                var experience = creature.Level * 100; // base experience
-                var experienceRange = creature.Level * 10;
-                experience += (uint)(new Random().Next() % (experienceRange * 2 + 1)) - experienceRange;
+                var player = client.Player;
+                if (player != killedBy || player.MapChannel != mapChannel ||
+                    player.MapContextId != mapChannel.MapInfo.MapContextId ||
+                    creature.MapContextId != mapChannel.MapInfo.MapContextId ||
+                    client.State != ClientState.Ingame || client.PendingTransfer != null ||
+                    player.Disconected || player.RemoveFromMap || !CellManager.Instance.IsInWorld(client) ||
+                    !EntityManager.Instance.Players.TryGetValue(player.EntityId, out var registered) || registered != player)
+                    return;
 
-                // todo: Depending on level difference reduce experience
-                ManifestationManager.Instance.GainExperience(client, experience);
-            }
+                var experienceRange = creature.Level * 10L;
+                var experience = creature.Level * 100L + Random.Shared.Next() % (experienceRange * 2 + 1) - experienceRange;
+                if (experience > uint.MaxValue)
+                    Logger.WriteLog(LogType.Error, $"Rejected experience overflow from creature {creature.EntityId} at level {creature.Level}.");
+                else
+                    (_manifestationManager ?? ManifestationManager.Instance).GainExperience(client, (uint)experience);
 
-            // spawn loot
-            if (killedBy != null && client != null)
+                if (client.State == ClientState.Disconnected)
+                    return;
+
                 LootDispenserManager.Instance.Loot(client, creature);
+            }
         }
 
         public Creature CreateCreature(uint dbId, SpawnPool spawnPool)

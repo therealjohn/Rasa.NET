@@ -12,7 +12,7 @@
 
         public GotLootPacket(LootDispenser loot)
         {
-            Loot = loot;
+            Loot = new LootDispenser(loot);
         }
 
         public override void Write(PythonWriter pw)

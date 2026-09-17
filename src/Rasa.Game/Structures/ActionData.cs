@@ -15,6 +15,12 @@
 
         public bool IsInrerrupted = false;
         public ulong SourceId { get; set; }
+        internal Game.Client WeaponClient { get; set; }
+        internal MapChannel WeaponMap { get; set; }
+        internal Item Weapon { get; set; }
+        internal long WeaponActorLifetime { get; set; }
+        internal bool WeaponActionCompleted { get; set; }
+        internal PendingAbility Ability { get; set; }
 
         public ActionData(Actor actor, ActionId actionId, uint actionArgId, long waitTime)
         {

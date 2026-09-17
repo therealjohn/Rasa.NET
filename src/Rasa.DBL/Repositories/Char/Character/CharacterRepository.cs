@@ -119,14 +119,12 @@ namespace Rasa.Repositories.Char.Character
 
         public void UpdateCharacterAttributes(uint id, int spentBody, int spentMind, int spentSpirit)
         {
-            var query = _charContext.CreateNoTrackingQuery(_charContext.CharacterEntries);
-            var entry = query.Where(e => e.Id == id).FirstOrDefault();
+            var entry = _charContext.GetWritableEnsuring(_charContext.CharacterEntries, id);
 
             entry.Body = spentBody;
             entry.Mind = spentMind;
             entry.Spirit = spentSpirit;
 
-            _charContext.CharacterEntries.Update(entry);
             _charContext.SaveChanges();
         }
 
@@ -171,6 +169,14 @@ namespace Rasa.Repositories.Char.Character
             entry.Experience = experience;
 
             _charContext.CharacterEntries.Update(entry);
+            _charContext.SaveChanges();
+        }
+
+        public void UpdateCharacterProgression(uint id, uint experience, byte level)
+        {
+            var entry = _charContext.GetWritableEnsuring(_charContext.CharacterEntries, id);
+            entry.Experience = experience;
+            entry.Level = level;
             _charContext.SaveChanges();
         }
 
@@ -221,6 +227,13 @@ namespace Rasa.Repositories.Char.Character
             entry.ActiveWeapon = activeWeapon;
 
             _charContext.CharacterEntries.Update(entry);
+            _charContext.SaveChanges();
+        }
+
+        public void UpdateCharacterAbilitySlot(uint id, byte slot)
+        {
+            var entry = _charContext.GetWritableEnsuring(_charContext.CharacterEntries, id);
+            entry.CurrentAbilitySlot = slot;
             _charContext.SaveChanges();
         }
     }

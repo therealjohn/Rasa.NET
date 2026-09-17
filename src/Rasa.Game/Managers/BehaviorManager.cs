@@ -140,11 +140,14 @@ namespace Rasa.Managers
 
             if (creature.Attributes[Attributes.Health].Current <= 0)
             {
-                creature.Controller.DeadTime += delta;
-                if (creature.Controller.DeadTime >= 20000)
+                lock (mapChannel.LootSyncRoot)
                 {
-                    // disappear after 20 seconds
-                    needDeletion = true;
+                    creature.Controller.DeadTime += delta;
+                    if (creature.Controller.DeadTime >= Creature.CorpseLifetimeMilliseconds)
+                    {
+                        // disappear after 20 seconds
+                        needDeletion = true;
+                    }
                 }
                 return; // creature dead
             }
@@ -677,16 +680,6 @@ namespace Rasa.Managers
 
                 for (var f = 0; f < creatureCount; f++)
                 {
-                    // did the creature have an active loot dispenser?
-                    if (creatureList[f].LootDispenserObjectEntityId != 0)
-                    {
-                        var lootDispenserObject = EntityManager.Instance.GetObject(creatureList[f].LootDispenserObjectEntityId);
-
-                        if (lootDispenserObject != null)
-                            DynamicObjectManager.Instance.DynamicObjectDestroy(mapChannel, lootDispenserObject);
-
-                        creatureList[f].LootDispenserObjectEntityId = 0;
-                    }
                     // remove creature from world
                     CellManager.Instance.RemoveCreatureFromWorld(mapChannel, creatureList[f]);
                 }

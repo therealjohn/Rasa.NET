@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.Linq;
 
 namespace Rasa.Packets.LootDispenser.Server
 {
@@ -16,7 +17,7 @@ namespace Rasa.Packets.LootDispenser.Server
         public CanLootItemsPacket(bool canLootItems, List<LootItem> lootItems)
         {
             CanLootItems = canLootItems;
-            LootItems = lootItems;
+            LootItems = lootItems.Select(item => new LootItem(item)).ToList();
         }
         public override void Write(PythonWriter pw)
         {

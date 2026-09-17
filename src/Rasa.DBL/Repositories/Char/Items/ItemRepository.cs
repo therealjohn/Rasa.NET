@@ -30,7 +30,7 @@ namespace Rasa.Repositories.Char.Items
             {
                 Logger.WriteLog(LogType.Error, "Error creating item:");
                 Logger.WriteLog(LogType.Error, e);
-                return 0;
+                throw;
             }
         }
 

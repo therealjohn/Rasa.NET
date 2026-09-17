@@ -117,7 +117,6 @@ namespace Rasa.Managers
             Timer.Add("AutoFire", 100, true, null);
             Timer.Add("CheckForLogingClients", 1000, true, null);
             Timer.Add("CheckForObjects", 1000, true, null);
-            Timer.Add("ClientEffectUpdate", 500, true, null);
             Timer.Add("CellUpdateVisibility", 1000, true, null);
             Timer.Add("CheckForMapTriggers", 1000, true, null);
         }
@@ -131,6 +130,7 @@ namespace Rasa.Managers
                 var mapChannel = t.Value;
 
                 mapChannel.MapChannelElapsed += delta;
+                GameEffectManager.Instance.DoWork(mapChannel, delta);
 
                 if (Timer.IsTriggered("CheckForLogingClients"))
                     PruneQueuedClients(mapChannel);
@@ -159,10 +159,6 @@ namespace Rasa.Managers
                     // check for mapTriggers
                     if (Timer.IsTriggered("CheckForMapTriggers"))
                         MapTriggerManager.Instance.TriggersProximityWorker(mapChannel);
-
-                    // check for effects (buffs)
-                    if (Timer.IsTriggered("ClientEffectUpdate"))
-                        GameEffectManager.Instance.DoWork(mapChannel, delta);
 
                     // chack for player LogOut
                     foreach (var client in mapChannel.ClientList)
@@ -198,6 +194,11 @@ namespace Rasa.Managers
                 Logger.WriteLog(LogType.Network, "Ignored MapLoaded for a mismatched map.");
                 return;
             }
+            if (!ManifestationManager.Instance.ValidateProgressionForClient(client))
+                return;
+            if (!ManifestationManager.Instance.ValidateAbilityLoadoutForClient(client))
+                return;
+
             RemoveQueuedClient(client.Player.MapChannel, client);
             if (client.State == ClientState.Teleporting)
             {

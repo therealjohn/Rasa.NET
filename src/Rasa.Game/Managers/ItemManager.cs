@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 
 namespace Rasa.Managers
 {
@@ -7,7 +8,7 @@ namespace Rasa.Managers
     using Packets.Game.Server;
     using Packets.MapChannel.Server;
     using Packets.MapChannel.Client;
-    using Repositories.Char.Items;
+    using Repositories.Char;
     using Repositories.UnitOfWork;
     using Structures;
 
@@ -75,17 +76,20 @@ namespace Rasa.Managers
             using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
 
             // create physical copy of item
-            var item = new Item
-            {
-                ItemTemplate = itemTemplate,
-                ItemTemplateId = itemTemplate.ItemTemplateId,
-                StackSize = stackSize,
-                Crafter = crafter,
-                Color = 2139062144,     // ToDo we will have to find color in game client files
-                CurrentHitPoints = classInfo.ItemClassInfo.MaxHitPoints
-            };
+            var item = StageItem(itemTemplate, stackSize, crafter);
             //create item in db
-            var itemId = unitOfWork.Items.CreateItem(item);
+            uint itemId;
+            try
+            {
+                itemId = unitOfWork.Items.CreateItem(item);
+                if (itemId == 0)
+                    throw new InvalidOperationException("Item creation returned an invalid durable identity.");
+            }
+            catch
+            {
+                EntityManager.Instance.FreeEntity(item.EntityId);
+                throw;
+            }
 
             item.Id = itemId;
 
@@ -95,6 +99,16 @@ namespace Rasa.Managers
 
             return item;
         }
+
+        internal static Item StageItem(ItemTemplate template, uint stackSize, string crafter) => new Item
+        {
+            ItemTemplate = template,
+            ItemTemplateId = template.ItemTemplateId,
+            StackSize = stackSize,
+            Crafter = crafter,
+            Color = 2139062144, // Existing item-creation default; no historical color data is inferred here.
+            CurrentHitPoints = EntityClassManager.Instance.GetClassInfo(template.Class).ItemClassInfo.MaxHitPoints
+        };
 
         public Item CreateVendorItem(Client client, uint itemTemplateId)
         {
@@ -279,10 +293,12 @@ namespace Rasa.Managers
             client.CallMethod(item.EntityId, new SetStackCountPacket(item.StackSize));
         }
 
-        internal void UpdateItemCurrentAmmo(IItemChange item)
+        internal static void SaveWeaponAmmo(ICharUnitOfWork unitOfWork, Item weapon, uint ammo)
         {
-            using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
-            unitOfWork.Items.UpdateAmmo(item);
+            var saved = unitOfWork.Items.GetItem(weapon.Id);
+            if (saved == null || saved.ItemTemplateId != weapon.ItemTemplate.ItemTemplateId || saved.AmmoCount != weapon.CurrentAmmo)
+                throw new GameplayRejectionException($"Persisted weapon {weapon.Id} no longer matches its runtime ammunition.");
+            unitOfWork.Items.UpdateAmmo(new Item(0, 0, 0, 0) { Id = weapon.Id, CurrentAmmo = ammo });
         }
     }
 }

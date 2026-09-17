@@ -77,6 +77,184 @@ recovery cannot be promised while the database is unavailable. Departure
 cancels owned auto-fire timers and completes clan cleanup before discarding
 runtime inventory.
 
+## Weapon ammunition and HUD packets
+
+Run the focused gameplay checks with:
+
+```powershell
+dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~Rasa.Test.Gameplay.WeaponAmmoTests"
+```
+
+Weapon commands require an active, living owner and a valid weapon in the
+selected drawer slot. Shots use the loaded template's ammunition consumption
+and refire interval. Manual requests and auto-fire share the same deadline.
+Reloads accumulate matching reserve stacks, retain ammunition already loaded,
+and recheck inventory when their template-defined delay ends. Switching weapons,
+interruption and departure invalidate pending work. Reload/draw/stow capture
+their owner's combat revision at admission; missiles capture source and target
+revisions at launch. Recovery and impact reject changed revisions even if the
+same objects have returned to the map or revived. This includes shots left
+queued while a map has no clients. A valid shot pays for ammunition at launch;
+invalidating its later impact neither spends another round nor refunds that shot.
+Auto-fire also captures the owner's combat revision and cannot resume after
+death/revival.
+
+Shots and reloads persist before changing runtime ammunition or sending success
+packets. `ICharUnitOfWork.ExecuteTransaction(Action)` wraps one character context
+in an EF relational transaction. Participating repository calls may save inside
+the callback, but must use that same unit of work and propagate errors. The
+callback must not publish gameplay state or packets. The operation commits after
+the callback and any remaining changes; failure rolls back and clears tracking.
+It does not nest transactions or retry an operation automatically.
+
+Transaction completion explicitly detects a lost connection before commit.
+Rollback skips an already-ended connection; a rollback error is logged without
+replacing the original exception. The transaction boundary still rethrows.
+Gameplay catches only explicit planning/stale-state rejection, repository
+missing-record, database/update, checked-overflow and capability errors.
+Unexpected null dereferences and unrelated `InvalidOperationException`s remain
+observable with their identity and stack. Expected failures publish no grant
+and allow a later request to retry from durable state.
+
+The SQLite fixtures reopen item and inventory rows after successful operations,
+injected save failures and retries. They also check drawer selection on relog,
+equipment/ammunition packet pairing, and launch/impact rejection of stale or
+cross-map targets. These checks do not establish native crosshair or HUD
+acceptance. MySQL uses the same EF transaction API but requires separate live
+provider verification.
+
+The cross-feature regression suites exercise real gameplay entry points and
+SQLite query/save boundaries:
+
+```powershell
+dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~Rasa.Test.Gameplay.GameplayPersistenceTests|FullyQualifiedName~Rasa.Test.Gameplay.GameplayTravelTests"
+```
+
+Successful local/dropship admission uses the same combat-cancellation hook as
+world departure, before the transfer becomes pending or the position changes.
+It cancels Lightning, reload/draw/stow, Sprint and auto-fire, and advances the
+combat revision for queued missiles. Same-map selection and acknowledgement
+need no intervening worker tick. Rejected travel does not cancel combat.
+The separate corpse-eligibility revision does not change for local travel;
+loot remains subject to its original ownership, lifetime and current distance.
+
+## Owner-only corpse loot
+
+Run the focused checks with:
+
+```powershell
+dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~Rasa.Test.Gameplay.LootTests"
+```
+
+The default maximum corpse-looting distance is **2 metres**, measured in finite
+3D world coordinates, including height. This is an approved server rule, not
+a reconstructed historical client value. Configure it in Game's settings:
+
+```json
+{
+  "GameConfig": {
+    "CorpseLootDistance": 2
+  }
+}
+```
+
+A configured limit must be finite and greater than zero. Invalid limits reject
+both opening and claiming; they do not silently fall back to a different range.
+Both requests recheck the living, active owner, account/character identity,
+registered player and corpse, current map/cell membership, corpse attachment and
+original lifetimes. Logging out, departure/re-entry, expired/removed corpses,
+foreign ownership and non-finite or out-of-range positions cannot grant loot.
+No obstacle, collision or group-distribution data is inferred.
+
+Supported requests use the existing layouts:
+
+- `RequestCorpseLooting` (opcode 650): `(dispenserEntityId,)`. It refreshes
+  `AttachInfo`, `LootInfo`, `OverallQuality` and `CanLootItems`. It does not grant
+  items or credits, and does not send an invented window-opening payload.
+- `RequestLootAllFromCorpse` (opcode 651):
+  `(dispenserEntityId, autoLootOnly)`. Both manual and automatic requests attempt
+  the entire batch and can succeed without a preceding open request. This
+  preserves the existing take-all behavior by explicit user decision.
+  `SetAutoLootThreshold` remains unimplemented; threshold filtering is tracked
+  in [InfiniteRasa/Rasa.NET#93](https://github.com/InfiniteRasa/Rasa.NET/issues/93).
+  Automatic requests retain the same ownership, range, capacity, transaction
+  and duplicate-grant checks as manual requests.
+
+Malformed tuple arities are rejected. Gameplay rejections return failure and
+log the reason without grants or success packets; no new wire error layout is
+assumed. Cancel/per-item requests are not implemented by this slice.
+
+The planner uses loaded template categories, the existing five 50-slot personal
+inventory categories and class stack maxima. It merges and splits the complete
+batch before writing, and validates current durable character ownership, credits,
+item identities/counts and inventory slots. A batch that does not fit grants
+nothing, including credits.
+
+Stack updates, new item rows, inventory rows and credits share one
+`ICharUnitOfWork.ExecuteTransaction(Action)` operation. Immediate-save repository
+methods propagate failures. No participating operation opens another unit of
+work. Runtime inventory, credits and success packets are published only after
+commit; rollback frees staged item identities and leaves the corpse available
+for a new attempt. The fixtures use migrated SQLite repositories and reopen
+state after failures before/after each write, connection loss before commit,
+successful retries and inventory relog.
+
+Claims serialize with owner departure and corpse removal. After commit, item
+and credit updates precede `ActorGotLoot`, `TakenInfo`, disabled `CanLootItems`,
+`GotLoot` and dispenser destruction. Queued loot packets snapshot their values
+before runtime loot is cleared. Consumption is terminal even for empty or
+credit-only loot. The dispenser is removed, its item identities reclaimed, and
+the corpse attachment cleared. Dispenser request IDs are not recycled, so a
+delayed claim cannot address a later corpse. Expiry uses the existing 20-second
+corpse timer and disables/destroys the dispenser before destroying the corpse.
+Loot tables and random template, quantity, credit and quality selection are
+unchanged. Mission rewards and party distribution remain separate work.
+
+Native 1.16.5.0 corpse/window interaction is **not verified**. The repo has no
+established `LootCorpse`/`Use` opening payload, and the packet snapshots only
+preserve existing server layouts. Verify opening, item display, manual take-all,
+receipt/inventory updates and closure in the native client before declaring the
+UI complete. Auto-loot filtering also remains unsupported. Separate live MySQL
+tests cover the shared transaction and migration paths, and the offline suite
+also runs in Linux. The loot slice adds no provider-specific SQL, schema or
+dependencies. Loss of a database commit
+acknowledgement is still ambiguous; there is no durable distributed exactly-once
+claim ledger. Subsequent stale inventory/credit snapshots fail closed.
+
+## Abilities, learned state and tray
+
+The [ability reference](abilities.md) records the approved historical tables,
+explicit engine policies, transactions, lifecycle guards and native acceptance
+limits. Sprint ranks 1-5 and Lightning ranks 1-2 are executable. Rank 2 uses
+[Blumster's supplied arc layout](https://github.com/InfiniteRasa/Rasa.NET/issues/92#issuecomment-5716373212).
+Lightning ranks 3-5 still fail explicitly because the additional Sonic, stun
+and storm contracts are not established; they do not run as incomplete ranks.
+
+Run `AbilityTests`, `AbilityTrayTests`, `HudStateTests`, `LightningArcTests` and
+`LightningRecoveryTests` together for learned
+rank/cost validation, real migrated tray persistence, rollback, resource
+snapshots, interruption/replay and elapsed upkeep. Selection adds one
+server-owned character column through both SQLite and MySQL migrations.
+Effects now receive actual elapsed time on every map tick.
+
+## MySQL persistence checks
+
+The opt-in `MySqlCompatibilityTests.P3.cs` cases exercise the real additive
+selection migration, XP/level writes, training/tray persistence, and shared
+item/inventory/credit/ammunition transactions. A forced server-side constraint
+failure after earlier saves must roll back the whole batch and allow a retry.
+
+Set `RASA_TEST_MYSQL_CONNECTION` to an isolated local test server, then run:
+
+```powershell
+dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-build --no-restore --filter "TestCategory=MySql"
+```
+
+The fixture rejects the default MySQL port and an existing database in the
+connection string. It creates and removes its own random schemas; do not point
+it at a developer or production database. Without an explicit endpoint these
+tests report inconclusive rather than using a default database.
+
 ## Spawn timing and lifecycle
 
 Seeded `RespawnTime` values are interpreted as **seconds**, converted once to

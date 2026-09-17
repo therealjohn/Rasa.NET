@@ -146,6 +146,10 @@ namespace Rasa.Migrations.MySqlChar
                         .HasDefaultValue((byte)0)
                         .HasColumnName("crouch_state");
 
+                    b.Property<byte>("CurrentAbilitySlot")
+                        .HasColumnType("tinyint unsigned")
+                        .HasColumnName("current_ability_slot");
+
                     b.Property<uint>("Experience")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int(11) unsigned")

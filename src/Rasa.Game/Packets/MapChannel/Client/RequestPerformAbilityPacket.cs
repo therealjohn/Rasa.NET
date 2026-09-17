@@ -14,14 +14,18 @@
 
         public override void Read(PythonReader pr)
         {
-            pr.ReadTuple();
+            if (pr.ReadTuple() != 4)
+                throw new System.IO.InvalidDataException("Ability requests require action, rank, target and item fields.");
             ActionId = (ActionId)pr.ReadInt();
             ActionArgId = pr.ReadInt();
-            Target = (uint)pr.ReadLong();
+            Target = unchecked((ulong)pr.ReadLong());
             if (pr.PeekType() == PythonType.Int)
                 ItemId = pr.ReadInt();
             else
+            {
                 pr.ReadNoneStruct();
+                ItemId = 0;
+            }
         }
     }
 }

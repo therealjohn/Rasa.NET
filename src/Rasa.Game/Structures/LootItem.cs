@@ -15,6 +15,16 @@ namespace Rasa.Structures
         public ulong ActorId { get; set; }
         public uint PartyId { get; set; }
 
+        internal LootItem(LootItem source)
+        {
+            EntityId = source.EntityId;
+            ItemTemplateId = source.ItemTemplateId;
+            ItemClassId = source.ItemClassId;
+            ItemQuantity = source.ItemQuantity;
+            ActorId = source.ActorId;
+            PartyId = source.PartyId;
+        }
+
         public LootItem(uint itemTemplateId, uint itemClassId, uint itemQuantity, ulong actorId, uint partyId)
         {
             EntityId = EntityManager.Instance.GetEntityId;

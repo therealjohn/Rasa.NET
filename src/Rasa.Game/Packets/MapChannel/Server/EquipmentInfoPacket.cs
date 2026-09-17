@@ -14,7 +14,7 @@ namespace Rasa.Packets.MapChannel.Server
 
         public EquipmentInfoPacket(List<ulong> equipmentInfo)
         {
-            EquipmentInfo = equipmentInfo;
+            EquipmentInfo = new List<ulong>(equipmentInfo);
         }
 
         public override void Write(PythonWriter pw)

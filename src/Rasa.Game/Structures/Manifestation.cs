@@ -43,6 +43,11 @@ namespace Rasa.Structures
         public List<uint> Logos = new();
         public ulong TrackingTargetEntityId { get; set; }
         public byte ActiveWeapon { get; set; }
+        internal ActionData PendingWeaponAction { get; set; }
+        internal PendingAbility PendingAbility { get; set; }
+        internal long NextLightningTime { get; set; }
+        internal SprintEffect Sprint { get; set; }
+        internal decimal SprintDrainRemainder { get; set; }
         public List<CharacterTeleporterEntry> GainedWaypoints = new();
         public bool IsAFK { get; set; }
 
@@ -56,7 +61,17 @@ namespace Rasa.Structures
         // Social
         internal List<uint> Friends = new();
         internal List<uint> IgnoredPlayers = new();
-        public MapChannel MapChannel { get; set; }
+        private MapChannel _mapChannel;
+        public MapChannel MapChannel
+        {
+            get => _mapChannel;
+            set
+            {
+                if (!ReferenceEquals(_mapChannel, value))
+                    InvalidateAbilityLifetime();
+                _mapChannel = value;
+            }
+        }
         public bool Disconected { get; set; }
         public bool LogoutActive { get; set; }
         public bool RemoveFromMap { get; set; }
@@ -87,6 +102,7 @@ namespace Rasa.Structures
             Credits.Add(CurencyType.Credits, character.Credit);
             Credits.Add(CurencyType.Prestige, character.Prestige);
             ActiveWeapon = character.ActiveWeapon;
+            CurrentAbilityDrawer = character.CurrentAbilitySlot;
             NumLogins = character.NumLogins + 1;
             TotalTimePlayed = character.TotalTimePlayed;
             TimeSinceLastPlayed = character.LastLogin;

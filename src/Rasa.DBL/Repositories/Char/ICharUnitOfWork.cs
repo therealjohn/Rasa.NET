@@ -24,6 +24,10 @@
 
     public interface ICharUnitOfWork : IUnitOfWork
     {
+        // The callback shares this context. Publish runtime state only after ExecuteTransaction returns successfully.
+        void ExecuteTransaction(System.Action operation) =>
+            throw new System.NotSupportedException("This character unit of work does not support transactions.");
+
         ICensoredWordRepository CensoredWords { get; }
         ICharacterRepository Characters { get; }
         ICharacterAbilityDrawerRepository CharacterAbilityDrawers { get; }

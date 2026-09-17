@@ -12,7 +12,8 @@
 
         public override void Read(PythonReader pr)
         {
-            pr.ReadTuple();
+            if (pr.ReadTuple() != 2)
+                throw new System.IO.InvalidDataException("RequestLootAllFromCorpse requires an entity ID and auto-loot flag.");
             EntityId = pr.ReadULong();
             AutoLootOnly = pr.ReadBool();
         }
