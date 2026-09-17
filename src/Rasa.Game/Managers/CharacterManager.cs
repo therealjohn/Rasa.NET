@@ -399,7 +399,6 @@ namespace Rasa.Managers
             var appearanceData = new Dictionary<EquipmentData, AppearanceData>();
             var lockboxInfo = unitOfWork.CharacterLockboxes.Get(client.AccountEntry.Id);
             var missions = unitOfWork.CharacterMissions.Get(character.Id);
-            var missionData = new Dictionary<int, MissionLog>();
             var clan = unitOfWork.Clans.GetClanByCharacterId(character.Id);
             var logos = unitOfWork.CharacterLogoses.GetLogos(character.Id);
 
@@ -416,10 +415,10 @@ namespace Rasa.Managers
                 Skills = MapChannelManager.Instance.GetPlayerSkills(character.Id),
                 Titles = unitOfWork.CharacterTitles.Get(character.Id),
                 Abilities = MapChannelManager.Instance.GetPlayerAbilities(character.Id),
-                Missions = missionData,
                 LoginTime = DateTime.Now,
                 Logos = logos
             };
+            MissionManager.Instance.Hydrate(newCharacter, missions);
 
             return newCharacter;
         }

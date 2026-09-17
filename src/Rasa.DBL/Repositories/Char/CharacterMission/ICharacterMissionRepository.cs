@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using JetBrains.Annotations;
 
 namespace Rasa.Repositories.Char.CharacterMission
 {
@@ -7,6 +8,7 @@ namespace Rasa.Repositories.Char.CharacterMission
     public interface ICharacterMissionRepository
     {
         IReadOnlyList<CharacterMissionEntry> Get(uint characterId);
+        [CanBeNull]
         CharacterMissionEntry Get(uint characterId, uint missionId);
         void Add(CharacterMissionEntry entry);
         void SetCompletable(uint characterId, uint missionId, bool value);

@@ -529,6 +529,7 @@ namespace Rasa.Managers
             SocialManager.Instance.SetSocialContactList(client);
 
             client.CallMethod(player.EntityId, new ActorInfoPacket(player));
+            MissionManager.Instance.PublishInitialState(client);
 
             client.CallMethod(player.EntityId, new UpdateRegionsPacket { RegionIdList = client.Player.MapChannel.MapInfo.BaseRegionId });  // ToDo this should be list of regions? or just curent region wher player is
 

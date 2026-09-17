@@ -1,5 +1,6 @@
 ﻿using System.Collections.Generic;
 using System.Linq;
+using JetBrains.Annotations;
 
 namespace Rasa.Repositories.Char.CharacterMission
 {
@@ -20,6 +21,7 @@ namespace Rasa.Repositories.Char.CharacterMission
             return query.Where(entry => entry.CharacterId == characterId).ToList();
         }
 
+        [CanBeNull]
         public CharacterMissionEntry Get(uint characterId, uint missionId)
         {
             return _charContext.CharacterMissionEntries.SingleOrDefault(

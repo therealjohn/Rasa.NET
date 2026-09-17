@@ -59,15 +59,7 @@ namespace Rasa.Managers
 
         public void AssignNPCMission(Client client, AssignNPCMissionPacket packet)
         {
-            var mission = MissionManager.Instance.LoadedMissions[packet.MissionId];
-
-            if (client.Player.Missions.Count > 30)
-            {
-                CommunicatorManager.Instance.SystemMessage(client, "Mission log is full.");
-                return;
-            }
-
-            client.CallMethod(client.Player.EntityId, new MissionGainedPacket(packet.MissionId, mission));
+            MissionManager.Instance.TryAcceptNpcMission(client, packet.NpcEntityId, packet.MissionId);
         }
 
         public void CompleteNPCMission(Client client, CompleteNPCMissionPacket packet)
@@ -98,13 +90,18 @@ namespace Rasa.Managers
 
                     foreach (var missionId in creature.Npc.NpcMissionIds)
                     {
-                        var mission = MissionManager.Instance.LoadedMissions[missionId];
+                        if (!MissionManager.Instance.LoadedMissions.TryGetValue(missionId, out var mission))
+                            continue;
 
                         if (mission.MissionGiver == creature.DbId)
-                            dispensableMissions.Add(mission.MissionId, mission);
+                            dispensableMissions.Add(
+                                mission.MissionId,
+                                mission.CreateInfo(MissionState.Active, false));
 
                         if (mission.MissionReciver == creature.DbId)
-                            completeableMissions.Add(mission.MissionId, mission.MissionConstantData.RewardInfo);
+                            completeableMissions.Add(
+                                mission.MissionId,
+                                mission.CreateInfo(MissionState.Active, false).MissionConstantData.RewardInfo);
                     }
 
                     // insert data into convoDataDict
@@ -248,7 +245,8 @@ namespace Rasa.Managers
 
                 foreach (var missionId in npc.NpcMissionIds)
                 {
-                    var mission = MissionManager.Instance.LoadedMissions[missionId];
+                    if (!MissionManager.Instance.LoadedMissions.TryGetValue(missionId, out var mission))
+                        continue;
 
                     if (mission.MissionReciver == creature.DbId)
                         completeMission.Add(missionId);

@@ -38,7 +38,7 @@ namespace Rasa.Structures
         public List<uint> Titles { get; set; } = new List<uint>();
         public uint CurrentTitle { get; set; }
         public int CurrentAbilityDrawer { get; set; }
-        public Dictionary<int, MissionLog> Missions { get; set; } = new();
+        public Dictionary<uint, MissionLog> Missions { get; set; } = new();
         public DateTime LoginTime { get; set; }
         public List<uint> Logos = new();
         public ulong TrackingTargetEntityId { get; set; }
