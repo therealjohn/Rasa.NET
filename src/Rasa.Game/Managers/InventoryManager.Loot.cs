@@ -16,7 +16,45 @@ namespace Rasa.Managers
         internal const int PersonalCategorySize = 50;
         internal const int PersonalCategoryCount = 5;
 
+        internal readonly struct InventoryItemGrant
+        {
+            internal uint ItemTemplateId { get; }
+            internal uint Quantity { get; }
+
+            internal InventoryItemGrant(uint itemTemplateId, uint quantity)
+            {
+                ItemTemplateId = itemTemplateId;
+                Quantity = quantity;
+            }
+        }
+
         internal sealed class LootGrant : IDisposable
+        {
+            private readonly InventoryGrant _inventory = new();
+
+            internal void PlanAndSave(Client client, IReadOnlyList<LootItem> loot, ICharUnitOfWork unitOfWork)
+            {
+                var grants = new List<InventoryItemGrant>(loot.Count);
+                var lootIds = new HashSet<ulong>();
+                foreach (var entry in loot)
+                {
+                    if (entry == null || entry.EntityId == 0 || !lootIds.Add(entry.EntityId) ||
+                        entry.ItemQuantity == 0 || entry.ActorId != client.Player.EntityId || entry.PartyId != 0)
+                        throw new GameplayRejectionException("Invalid owner-only loot entry.");
+                    if (!ItemManager.Instance.ItemTemplateItemClass.TryGetValue(entry.ItemTemplateId, out var classId) ||
+                        (uint)classId != entry.ItemClassId)
+                        throw new GameplayRejectionException("Loot class does not match its template.");
+                    grants.Add(new InventoryItemGrant(entry.ItemTemplateId, entry.ItemQuantity));
+                }
+                _inventory.PlanAndSave(client, grants, unitOfWork);
+            }
+
+            internal void Publish(Client client) => _inventory.Publish(client);
+
+            public void Dispose() => _inventory.Dispose();
+        }
+
+        internal sealed class InventoryGrant : IDisposable
         {
             private sealed class Slot
             {
@@ -31,7 +69,10 @@ namespace Rasa.Managers
             private readonly Slot[] _slots = new Slot[PersonalCategorySize * PersonalCategoryCount];
             private bool _published;
 
-            internal void PlanAndSave(Client client, IReadOnlyList<LootItem> loot, ICharUnitOfWork unitOfWork)
+            internal void PlanAndSave(
+                Client client,
+                IReadOnlyList<InventoryItemGrant> grants,
+                ICharUnitOfWork unitOfWork)
             {
                 var player = client.Player;
                 var inventory = player.Inventory.PersonalInventory;
@@ -75,18 +116,14 @@ namespace Rasa.Managers
                     };
                 }
 
-                var lootIds = new HashSet<ulong>();
-                foreach (var entry in loot)
+                foreach (var entry in grants)
                 {
-                    if (entry == null || entry.EntityId == 0 || !lootIds.Add(entry.EntityId) ||
-                        entry.ItemQuantity == 0 || entry.ActorId != player.EntityId || entry.PartyId != 0)
-                        throw new GameplayRejectionException("Invalid owner-only loot entry.");
+                    if (entry.ItemTemplateId == 0 || entry.Quantity == 0)
+                        throw new GameplayRejectionException("Invalid inventory item grant.");
                     var template = RequireTemplate(entry.ItemTemplateId);
-                    if ((uint)template.Class != entry.ItemClassId)
-                        throw new GameplayRejectionException("Loot class does not match its template.");
                     var maximum = EntityClassManager.Instance.LoadedEntityClasses[template.Class].ItemClassInfo.StackSize;
                     var start = ((int)template.InventoryCategory - 1) * PersonalCategorySize;
-                    var remaining = entry.ItemQuantity;
+                    var remaining = entry.Quantity;
                     for (var index = start; index < start + PersonalCategorySize && remaining > 0; index++)
                     {
                         var slot = _slots[index];

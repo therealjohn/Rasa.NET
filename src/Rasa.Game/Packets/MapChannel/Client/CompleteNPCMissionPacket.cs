@@ -9,6 +9,7 @@
         
         public ulong EntityId { get; set; }          // npcId
         public uint MissionId { get; set; }         // missionId
+        // The client encoding is not yet proven to be an integer. This value must not select rewards.
         public bool SelectionIdx { get; set; }      // selectionIdx
         public bool Rating { get; set; }            // rating
 

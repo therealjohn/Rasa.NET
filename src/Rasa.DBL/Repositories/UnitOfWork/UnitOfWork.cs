@@ -32,6 +32,14 @@ namespace Rasa.Repositories.UnitOfWork
                 RequireOpenTransaction();
                 transaction.Commit();
             }
+            catch (System.InvalidOperationException error) when (
+                transaction.GetDbTransaction().Connection?.State != ConnectionState.Open &&
+                error.Message.Contains("transaction object is not associated with the same connection object",
+                    System.StringComparison.OrdinalIgnoreCase))
+            {
+                _dbContext.ChangeTracker.Clear();
+                throw new DbUpdateException("Transaction connection was lost before commit.", error);
+            }
             catch
             {
                 try

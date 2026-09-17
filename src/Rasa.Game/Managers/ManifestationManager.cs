@@ -689,6 +689,92 @@ namespace Rasa.Managers
             return entityData;
         }
 
+        internal sealed class ProgressionGrant
+        {
+            internal bool HasChanges { get; init; }
+            internal uint ExperienceAward { get; init; }
+            internal uint TotalExperience { get; init; }
+            internal byte PreviousLevel { get; init; }
+            internal byte FinalLevel { get; init; }
+        }
+
+        internal ProgressionGrant PlanExperience(
+            Client client,
+            uint experience,
+            CharacterEntry durableCharacter,
+            Repositories.Char.ICharUnitOfWork unitOfWork)
+        {
+            var player = client.Player;
+            if (player.Level >= MaxPlayerLevel)
+                return new ProgressionGrant();
+            EnsureValidProgressionLevel(player);
+            if (durableCharacter.Id != player.Id ||
+                durableCharacter.Experience != player.Experience ||
+                durableCharacter.Level != player.Level)
+                throw new GameplayRejectionException("Runtime progression no longer matches durable character state.");
+
+            var totalExperience = checked(durableCharacter.Experience + experience);
+            var previousLevel = durableCharacter.Level;
+            var finalLevel = previousLevel;
+            while (finalLevel < MaxPlayerLevel)
+            {
+                var requiredExperience = GetLevelNeededExperience(finalLevel);
+                if (requiredExperience < 0 || totalExperience < requiredExperience)
+                    break;
+                finalLevel++;
+            }
+
+            unitOfWork.Characters.UpdateCharacterProgression(player.Id, totalExperience, finalLevel);
+            return new ProgressionGrant
+            {
+                HasChanges = true,
+                ExperienceAward = experience,
+                TotalExperience = totalExperience,
+                PreviousLevel = previousLevel,
+                FinalLevel = finalLevel
+            };
+        }
+
+        internal void PublishExperience(Client client, ProgressionGrant grant)
+        {
+            if (grant == null || !grant.HasChanges)
+                return;
+
+            var player = client.Player;
+            player.Experience = grant.TotalExperience;
+            player.Level = grant.FinalLevel;
+            client.CallMethod(player.EntityId, new ExperienceChangedPacket(
+                new XPInfo(grant.TotalExperience, grant.ExperienceAward, grant.ExperienceAward)));
+            if (grant.FinalLevel == grant.PreviousLevel)
+                return;
+
+            for (var level = grant.PreviousLevel + 1; level <= grant.FinalLevel; level++)
+            {
+                client.CallMethod(player.EntityId, new LevelUpPacket((byte)level));
+                var message = new Dictionary<string, string>
+                {
+                    { "level", level.ToString() },
+                    { "attributePts", "3" },
+                    { "skillPts", (GetSkillPointsForLevel(level) - GetSkillPointsForLevel(level - 1)).ToString() }
+                };
+                client.CallMethod(SysEntity.CommunicatorId,
+                    new DisplayClientMessagePacket(PlayerMessage.PmLevelIncreased, message, MsgFilterId.LeveledUp));
+            }
+
+            UpdateStatsValues(client, true);
+            var attributes = CreateAttributeInfoSnapshot(player);
+            client.CallMethod(player.EntityId, attributes);
+            SendAvailableAllocationPoints(client);
+
+            foreach (var observer in CellManager.Instance.GetClientsInCells(player.MapChannel, player.Cells, client))
+            {
+                if (!IsActiveWorldClient(observer))
+                    continue;
+                observer.CallMethod(player.EntityId, new LevelPacket(grant.FinalLevel));
+                observer.CallMethod(player.EntityId, attributes);
+            }
+        }
+
         internal void GainExperience(Client client, uint experience)
         {
             if (client == null)
@@ -707,70 +793,35 @@ namespace Rasa.Managers
                     return;
                 if (player.Level >= MaxPlayerLevel)
                     return; // cannot gain xp over level 50
-
-                uint totalExperience;
                 try
                 {
-                    totalExperience = checked(player.Experience + experience);
+                    _ = checked(player.Experience + experience);
                 }
                 catch (OverflowException)
                 {
-                    Logger.WriteLog(LogType.Error, $"Rejected experience overflow for character {player.Id}: {player.Experience} + {experience}.");
+                    Logger.WriteLog(LogType.Error,
+                        $"Rejected experience overflow for character {player.Id}: {player.Experience} + {experience}.");
                     return;
                 }
 
-                var previousLevel = player.Level;
-                var finalLevel = previousLevel;
-                while (finalLevel < MaxPlayerLevel)
-                {
-                    var requiredExperience = GetLevelNeededExperience(finalLevel);
-                    if (requiredExperience < 0 || totalExperience < requiredExperience)
-                        break;
-                    finalLevel++;
-                }
-
+                ProgressionGrant grant = null;
                 try
                 {
                     using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
-                    unitOfWork.Characters.UpdateCharacterProgression(player.Id, totalExperience, finalLevel);
-                }
-                catch (Exception error) when (error is DbUpdateException || error is DbException)
-                {
-                    Logger.WriteLog(LogType.Error, $"Unable to save experience for character {player.Id}: {error.Message}");
-                    return;
-                }
-
-                player.Experience = totalExperience;
-                player.Level = finalLevel;
-                client.CallMethod(player.EntityId, new ExperienceChangedPacket(new XPInfo(totalExperience, experience, experience)));
-                if (finalLevel == previousLevel)
-                    return;
-
-                for (var level = previousLevel + 1; level <= finalLevel; level++)
-                {
-                    client.CallMethod(player.EntityId, new LevelUpPacket((byte)level));
-                    var message = new Dictionary<string, string>
+                    unitOfWork.ExecuteTransaction(() =>
                     {
-                        { "level", level.ToString() },
-                        { "attributePts", "3" },
-                        { "skillPts", (GetSkillPointsForLevel(level) - GetSkillPointsForLevel(level - 1)).ToString() }
-                    };
-                    client.CallMethod(SysEntity.CommunicatorId,
-                        new DisplayClientMessagePacket(PlayerMessage.PmLevelIncreased, message, MsgFilterId.LeveledUp));
+                        var durableCharacter = unitOfWork.Characters.Get(player.Id);
+                        grant = PlanExperience(client, experience, durableCharacter, unitOfWork);
+                    });
                 }
-
-                UpdateStatsValues(client, true);
-                var attributes = CreateAttributeInfoSnapshot(player);
-                client.CallMethod(player.EntityId, attributes);
-                SendAvailableAllocationPoints(client);
-
-                foreach (var observer in CellManager.Instance.GetClientsInCells(player.MapChannel, player.Cells, client))
+                catch (Exception error) when (GameplayRejectionException.IsExpected(error))
                 {
-                    if (!IsActiveWorldClient(observer))
-                        continue;
-                    observer.CallMethod(player.EntityId, new LevelPacket(finalLevel));
-                    observer.CallMethod(player.EntityId, attributes);
+                    Logger.WriteLog(LogType.Error,
+                        $"Unable to save experience for character {player.Id}: {error.Message}");
+                    return;
                 }
+
+                PublishExperience(client, grant);
             }
         }
 

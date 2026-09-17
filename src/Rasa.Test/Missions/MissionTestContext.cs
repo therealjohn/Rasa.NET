@@ -5,6 +5,7 @@ using System.Linq;
 using System.Numerics;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Options;
 
 namespace Rasa.Test.Missions
@@ -20,7 +21,10 @@ namespace Rasa.Test.Missions
     using Rasa.Packets;
     using Rasa.Packets.Protocol;
     using Rasa.Repositories.Char;
+    using Rasa.Repositories.Char.Character;
+    using Rasa.Repositories.Char.CharacterInventory;
     using Rasa.Repositories.Char.CharacterMission;
+    using Rasa.Repositories.Char.Items;
     using Rasa.Repositories.UnitOfWork;
     using Rasa.Repositories.World;
     using Rasa.Services.DbContext;
@@ -35,12 +39,19 @@ namespace Rasa.Test.Missions
             AppContext.BaseDirectory, "TestDatabases", Guid.NewGuid().ToString("N"));
         private readonly WorldTestContext _world;
         private readonly List<Creature> _npcs = new();
+        private readonly HashSet<ulong> _originalItems = EntityManager.Instance.Items.Keys.ToHashSet();
+        private readonly List<uint> _addedTemplates = new();
         private string Database => Path.Combine(_directory, "missions");
 
+        internal int SaveAttempts { get; private set; }
         internal Action<SqliteCharContext> BeforeSave { get; set; }
+        internal Action<SqliteCharContext> AfterSave { get; set; }
+        internal Action BeforeQuery { get; set; }
         internal Client Client { get; }
         internal MapChannel Map => _world.Map;
         internal MissionManager Manager { get; }
+        internal Creature Receiver { get; private set; }
+        internal MissionRewardDefinition Reward { get; private set; }
 
         internal MissionTestContext()
         {
@@ -49,21 +60,32 @@ namespace Rasa.Test.Missions
             context.Database.Migrate();
         }
 
-        private MissionTestContext(IReadOnlyDictionary<uint, Mission> definitions) : this()
+        private MissionTestContext(
+            IReadOnlyDictionary<uint, Mission> definitions,
+            IReadOnlyDictionary<uint, MissionRewardDefinition> rewards = null) : this()
         {
             SeedCharacter(1, 0, 1);
             _world = new WorldTestContext();
             Client = _world.CreateClient(factory: this);
             Client.Player.Id = 1;
+            Client.Player.Level = 1;
+            Client.Player.Experience = 0;
+            Client.Player.Credits[CurencyType.Credits] = 100;
+            Client.Player.Credits[CurencyType.Prestige] = 50;
+            Client.Player.Inventory.PersonalInventory = Enumerable.Repeat(0UL, 250).ToList();
             typeof(Client).GetProperty(nameof(Client.AccountEntry))!.SetValue(Client,
                 new GameAccountEntry { Id = 1, SelectedSlot = 0 });
             CellManager.Instance.AddToWorld(Client);
             Drain();
-            Manager = new MissionManager(this, definitions);
+            Manager = new MissionManager(this, definitions, rewards ?? new Dictionary<uint, MissionRewardDefinition>(),
+                new ManifestationManager(this));
         }
 
         internal static MissionTestContext WithDefinitions(params uint[] missionIds) =>
-            new(missionIds.ToDictionary(
+            new(CreateDefinitions(missionIds));
+
+        private static IReadOnlyDictionary<uint, Mission> CreateDefinitions(params uint[] missionIds) =>
+            missionIds.ToDictionary(
                 id => id,
                 id => new Mission(new NpcMissionEntry
                 {
@@ -76,7 +98,35 @@ namespace Rasa.Test.Missions
                     Shareable = true,
                     RadioCompleteable = false,
                     Comment = "fixture"
-                })));
+                }));
+
+        internal static MissionTestContext WithCompletableMission(uint missionId)
+        {
+            var reward = new MissionRewardDefinition(
+                experience: 100,
+                currencies: new Dictionary<CurencyType, int>
+                {
+                    [CurencyType.Credits] = 7,
+                    [CurencyType.Prestige] = 3
+                },
+                fixedItems: new[] { new MissionRewardItem(28, 3) },
+                selectableItems: new[]
+                {
+                    new MissionRewardItem(29, 2),
+                    new MissionRewardItem(29, 4)
+                });
+            var context = new MissionTestContext(
+                CreateDefinitions(missionId),
+                new Dictionary<uint, MissionRewardDefinition> { [missionId] = reward });
+            context.Reward = reward;
+            context.AddRewardTemplate(28, 3147);
+            context.AddRewardTemplate(29, 3147);
+            context.SeedMission(context.Client.Player.Id, missionId, (uint)MissionState.Active, true);
+            context.ReloadPlayerMissions();
+            context.Receiver = context.AddNpc(88);
+            context.Drain();
+            return context;
+        }
 
         internal void SeedCharacter(uint accountId, byte slot, uint characterId)
         {
@@ -102,7 +152,9 @@ namespace Rasa.Test.Missions
                 Slot = slot,
                 Name = $"Character {characterId}",
                 Scale = 1,
-                Level = 1
+                Level = 1,
+                Credit = 100,
+                Prestige = 50
             });
             context.SaveChanges();
         }
@@ -121,6 +173,61 @@ namespace Rasa.Test.Missions
         {
             using var unit = CreateChar();
             Manager.Hydrate(Client.Player, unit.CharacterMissions.Get(Client.Player.Id));
+        }
+
+        internal CharacterMissionEntry ReadMission(uint missionId)
+        {
+            using var context = Open();
+            return context.CharacterMissionEntries.AsNoTracking().Single(entry =>
+                entry.CharacterId == Client.Player.Id && entry.MissionId == missionId);
+        }
+
+        internal RewardTotals ReadRewardTotals()
+        {
+            using var context = Open();
+            var character = context.CharacterEntries.AsNoTracking().Single(entry => entry.Id == Client.Player.Id);
+            var itemCount = (from inventory in context.CharacterInventoryEntries.AsNoTracking()
+                join item in context.ItemEntries.AsNoTracking() on inventory.ItemId equals item.ItemId
+                where inventory.CharacterId == Client.Player.Id &&
+                    inventory.InventoryType == (uint)InventoryType.Personal
+                select item.StackSize).Sum(value => (long)value);
+            return new RewardTotals(character.Experience, character.Credit, character.Prestige, itemCount);
+        }
+
+        internal void FillRewardCategory()
+        {
+            var template = EntityClassManager.Instance.LoadedEntityClasses[(EntityClasses)3147].ItemTemplates[28];
+            for (uint slot = 50; slot < 100; slot++)
+            {
+                var item = ItemManager.StageItem(template, 50000, "");
+                item.OwnerId = Client.Player.Id;
+                item.OwnerSlotId = slot;
+                using (var context = Open())
+                {
+                    item.Id = new ItemRepository(context).CreateItem(item);
+                    new CharacterInventoryRepository(context).AddInvItem(
+                        Client.AccountEntry.Id, Client.Player.Id, (uint)InventoryType.Personal, slot, item.Id);
+                }
+                EntityManager.Instance.RegisterEntity(item.EntityId, EntityType.Item);
+                EntityManager.Instance.RegisterItem(item.EntityId, item);
+                Client.Player.Inventory.PersonalInventory[(int)slot] = item.EntityId;
+            }
+        }
+
+        private void AddRewardTemplate(uint templateId, uint classId)
+        {
+            var entityClass = (EntityClasses)classId;
+            _world.AddClass(entityClass);
+            var classInfo = EntityClassManager.Instance.LoadedEntityClasses[entityClass];
+            classInfo.ItemClassInfo ??= new ItemClassInfo(new ItemClassEntry { StackSize = 50000 });
+            var template = new ItemTemplate(new ItemTemplateItemClassEntry
+            {
+                ItemTemplateId = templateId,
+                ItemClass = classId
+            }) { InventoryCategory = (InventoryCategory)2 };
+            ItemManager.Instance.ItemTemplateItemClass[templateId] = entityClass;
+            classInfo.ItemTemplates[templateId] = template;
+            _addedTemplates.Add(templateId);
         }
 
         internal Creature AddNpc(uint dbId, MapChannel map = null)
@@ -158,16 +265,22 @@ namespace Rasa.Test.Missions
 
         public ICharUnitOfWork CreateChar()
         {
-            var context = Open();
-            context.SavingChanges += (_, _) => BeforeSave?.Invoke(context);
+            var context = OpenWithHooks();
+            context.SavingChanges += (_, _) =>
+            {
+                SaveAttempts++;
+                BeforeSave?.Invoke(context);
+            };
+            context.SavedChanges += (_, _) => AfterSave?.Invoke(context);
             return new CharUnitOfWork(context,
-                gameAccounts: null, censoredWords: null, characters: null,
-                characterAbilityDrawers: null, characterAppearances: null, characterInventories: null,
+                gameAccounts: null, censoredWords: null, characters: new CharacterRepository(context),
+                characterAbilityDrawers: null, characterAppearances: null,
+                characterInventories: new CharacterInventoryRepository(context),
                 characterLockboxes: null, characterLogoses: null,
                 characterMissions: new CharacterMissionRepository(context), characterOptions: null,
                 characterSkills: null, characterTeleporters: null, characterTitles: null,
                 clans: null, clanInventories: null, clanMembers: null, friends: null,
-                ignoreds: null, items: null, userOptions: null);
+                ignoreds: null, items: new ItemRepository(context), userOptions: null);
         }
 
         public IWorldUnitOfWork CreateWorld() =>
@@ -183,6 +296,38 @@ namespace Rasa.Test.Missions
                 new SqliteDbContextConfigurationService(new SqliteConnectionStringFactory()),
                 new SqliteDbContextPropertyModifier());
 
+        private SqliteCharContext OpenWithHooks() =>
+            new(
+                Options.Create(new DatabaseConfiguration
+                {
+                    Provider = "Sqlite",
+                    Char = new DatabaseConnectionConfiguration { Database = Database }
+                }),
+                new QueryConfiguration(this),
+                new SqliteDbContextPropertyModifier());
+
+        private sealed class QueryConfiguration(MissionTestContext owner) : IDbContextConfigurationService
+        {
+            public void Configure(DbContextOptionsBuilder builder, DatabaseConnectionConfiguration configuration)
+            {
+                new SqliteDbContextConfigurationService(new SqliteConnectionStringFactory())
+                    .Configure(builder, configuration);
+                builder.AddInterceptors(new QueryInterceptor(owner));
+            }
+        }
+
+        private sealed class QueryInterceptor(MissionTestContext owner) : DbCommandInterceptor
+        {
+            public override InterceptionResult<System.Data.Common.DbDataReader> ReaderExecuting(
+                System.Data.Common.DbCommand command,
+                Microsoft.EntityFrameworkCore.Diagnostics.CommandEventData eventData,
+                InterceptionResult<System.Data.Common.DbDataReader> result)
+            {
+                owner.BeforeQuery?.Invoke();
+                return result;
+            }
+        }
+
         public void Dispose()
         {
             foreach (var npc in _npcs)
@@ -191,9 +336,34 @@ namespace Rasa.Test.Missions
                 EntityManager.Instance.UnregisterCreature(npc.EntityId);
                 EntityManager.Instance.FreeEntity(npc.EntityId);
             }
+            foreach (var id in EntityManager.Instance.Items.Keys.Except(_originalItems).ToArray())
+                EntityManager.Instance.ReleaseEntity(id, EntityType.Item);
+            foreach (var templateId in _addedTemplates)
+            {
+                if (ItemManager.Instance.ItemTemplateItemClass.TryGetValue(templateId, out var classId) &&
+                    EntityClassManager.Instance.LoadedEntityClasses.TryGetValue(classId, out var entityClass))
+                    entityClass.ItemTemplates.Remove(templateId);
+                ItemManager.Instance.ItemTemplateItemClass.Remove(templateId);
+            }
             _world?.Dispose();
             SqliteConnection.ClearAllPools();
             Directory.Delete(_directory, true);
+        }
+
+        internal readonly struct RewardTotals
+        {
+            internal uint Experience { get; }
+            internal int Credits { get; }
+            internal int Prestige { get; }
+            internal long ItemCount { get; }
+
+            internal RewardTotals(uint experience, int credits, int prestige, long itemCount)
+            {
+                Experience = experience;
+                Credits = credits;
+                Prestige = prestige;
+                ItemCount = itemCount;
+            }
         }
     }
 }

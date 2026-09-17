@@ -8,10 +8,150 @@ namespace Rasa.Managers
 {
     using Data;
     using Game;
+    using Packets.MapChannel.Server;
     using Packets.Mission.Server;
+    using Repositories.Char;
     using Repositories.UnitOfWork;
     using Structures;
     using Structures.Char;
+
+    internal readonly struct MissionRewardItem
+    {
+        internal uint ItemTemplateId { get; }
+        internal uint Quantity { get; }
+
+        internal MissionRewardItem(uint itemTemplateId, uint quantity)
+        {
+            ItemTemplateId = itemTemplateId;
+            Quantity = quantity;
+        }
+    }
+
+    internal sealed class MissionRewardDefinition
+    {
+        internal uint Experience { get; }
+        internal IReadOnlyDictionary<CurencyType, int> Currencies { get; }
+        internal IReadOnlyList<MissionRewardItem> FixedItems { get; }
+        internal IReadOnlyList<MissionRewardItem> SelectableItems { get; }
+
+        internal MissionRewardDefinition(
+            uint experience,
+            IReadOnlyDictionary<CurencyType, int> currencies,
+            IReadOnlyList<MissionRewardItem> fixedItems,
+            IReadOnlyList<MissionRewardItem> selectableItems)
+        {
+            Experience = experience;
+            Currencies = new Dictionary<CurencyType, int>(
+                currencies ?? new Dictionary<CurencyType, int>());
+            FixedItems = (fixedItems ?? Array.Empty<MissionRewardItem>()).ToArray();
+            SelectableItems = (selectableItems ?? Array.Empty<MissionRewardItem>()).ToArray();
+        }
+
+        internal MissionRewardGrant CreateGrant(int selectionIndex)
+        {
+            if (Currencies.Any(entry =>
+                    entry.Value < 0 ||
+                    entry.Key is not CurencyType.Credits and not CurencyType.Prestige))
+                throw new GameplayRejectionException("Mission reward contains an unsupported currency.");
+            if (FixedItems.Any(item => item.ItemTemplateId == 0 || item.Quantity == 0) ||
+                SelectableItems.Any(item => item.ItemTemplateId == 0 || item.Quantity == 0))
+                throw new GameplayRejectionException("Mission reward contains an invalid item.");
+            if (SelectableItems.Count == 0)
+            {
+                if (selectionIndex != 0)
+                    throw new GameplayRejectionException("Mission reward selection is invalid.");
+                return new MissionRewardGrant(Experience, Currencies, FixedItems);
+            }
+            if (selectionIndex < 0 || selectionIndex >= SelectableItems.Count)
+                throw new GameplayRejectionException("Mission reward selection is invalid.");
+
+            return new MissionRewardGrant(
+                Experience,
+                Currencies,
+                FixedItems.Concat(new[] { SelectableItems[selectionIndex] }).ToArray());
+        }
+    }
+
+    internal sealed class MissionRewardGrant : IDisposable
+    {
+        private readonly uint _experience;
+        private readonly IReadOnlyDictionary<CurencyType, int> _currencies;
+        private readonly InventoryManager.InventoryGrant _inventory = new();
+        private readonly IReadOnlyList<InventoryManager.InventoryItemGrant> _items;
+        private ManifestationManager.ProgressionGrant _progression;
+        private int _credits;
+        private int _prestige;
+
+        internal MissionRewardGrant(
+            uint experience,
+            IReadOnlyDictionary<CurencyType, int> currencies,
+            IReadOnlyList<MissionRewardItem> items)
+        {
+            _experience = experience;
+            _currencies = currencies;
+            _items = items.Select(item =>
+                new InventoryManager.InventoryItemGrant(item.ItemTemplateId, item.Quantity)).ToArray();
+        }
+
+        internal void PlanAndSave(
+            Client client,
+            CharacterEntry durableCharacter,
+            ICharUnitOfWork unitOfWork,
+            ManifestationManager manifestationManager)
+        {
+            var player = client.Player;
+            if (!player.Credits.TryGetValue(CurencyType.Credits, out var runtimeCredits) ||
+                !player.Credits.TryGetValue(CurencyType.Prestige, out var runtimePrestige) ||
+                durableCharacter.Credit != runtimeCredits ||
+                durableCharacter.Prestige != runtimePrestige)
+                throw new GameplayRejectionException("Runtime currencies no longer match durable character state.");
+
+            _credits = durableCharacter.Credit;
+            _prestige = durableCharacter.Prestige;
+            foreach (var currency in _currencies)
+            {
+                switch (currency.Key)
+                {
+                    case CurencyType.Credits:
+                        _credits = checked(_credits + currency.Value);
+                        break;
+                    case CurencyType.Prestige:
+                        _prestige = checked(_prestige + currency.Value);
+                        break;
+                    default:
+                        throw new GameplayRejectionException("Mission reward contains an unsupported currency.");
+                }
+            }
+
+            if (_items.Count > 0)
+                _inventory.PlanAndSave(client, _items, unitOfWork);
+            if (_experience > 0)
+                _progression = manifestationManager.PlanExperience(
+                    client, _experience, durableCharacter, unitOfWork);
+            if (_credits != durableCharacter.Credit || _prestige != durableCharacter.Prestige)
+                unitOfWork.Characters.UpdateCharacterCurrencies(player.Id, _credits, _prestige);
+        }
+
+        internal void Publish(Client client, ManifestationManager manifestationManager)
+        {
+            _inventory.Publish(client);
+            manifestationManager.PublishExperience(client, _progression);
+            PublishCurrency(CurencyType.Credits, _credits);
+            PublishCurrency(CurencyType.Prestige, _prestige);
+
+            void PublishCurrency(CurencyType type, int total)
+            {
+                var previous = client.Player.Credits[type];
+                if (total == previous)
+                    return;
+                client.Player.Credits[type] = total;
+                client.CallMethod(client.Player.EntityId,
+                    new UpdateCreditsPacket(type, total, checked((uint)(total - previous))));
+            }
+        }
+
+        public void Dispose() => _inventory.Dispose();
+    }
 
     public class MissionManager
     {
@@ -20,6 +160,8 @@ namespace Rasa.Managers
         private static readonly object InstanceLock = new();
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
         private readonly Dictionary<uint, Mission> _loadedMissions;
+        private readonly IReadOnlyDictionary<uint, MissionRewardDefinition> _rewardDefinitions;
+        private readonly ManifestationManager _manifestationManager;
 
         public IReadOnlyDictionary<uint, Mission> LoadedMissions => _loadedMissions;
 
@@ -48,9 +190,25 @@ namespace Rasa.Managers
         public MissionManager(
             IGameUnitOfWorkFactory gameUnitOfWorkFactory,
             IReadOnlyDictionary<uint, Mission> definitions)
+            : this(
+                gameUnitOfWorkFactory,
+                definitions,
+                new Dictionary<uint, MissionRewardDefinition>(),
+                new ManifestationManager(gameUnitOfWorkFactory))
+        {
+        }
+
+        internal MissionManager(
+            IGameUnitOfWorkFactory gameUnitOfWorkFactory,
+            IReadOnlyDictionary<uint, Mission> definitions,
+            IReadOnlyDictionary<uint, MissionRewardDefinition> rewardDefinitions,
+            ManifestationManager manifestationManager)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
             _loadedMissions = definitions.ToDictionary(entry => entry.Key, entry => entry.Value);
+            _rewardDefinitions = new Dictionary<uint, MissionRewardDefinition>(
+                rewardDefinitions ?? new Dictionary<uint, MissionRewardDefinition>());
+            _manifestationManager = manifestationManager;
         }
 
         public void LoadMissions()
@@ -131,6 +289,7 @@ namespace Rasa.Managers
                     CommunicatorManager.Instance.SystemMessage(client, "Mission log is full.");
                     return false;
                 }
+
                 if (client.Player.Missions.ContainsKey(missionId))
                     return Reject($"Rejected mission {missionId}: character {client.Player.Id} already has it.");
 
@@ -156,6 +315,77 @@ namespace Rasa.Managers
                     client.Player.EntityId,
                     new MissionGainedPacket(missionId, definition.CreateInfo(log.State, log.Completeable)));
                 return true;
+            }
+        }
+
+        public bool TryCompleteNpcMission(Client client, ulong npcEntityId, uint missionId, int selectionIndex)
+        {
+            if (client == null)
+                return false;
+
+            lock (client.SyncRoot)
+            {
+                if (!IsActivePlayer(client))
+                    return Reject($"Rejected mission {missionId} turn-in: character is not active in the world.");
+                if (!_loadedMissions.TryGetValue(missionId, out var definition))
+                    return Reject($"Rejected mission {missionId} turn-in: definition is not loaded.");
+                if (!_rewardDefinitions.TryGetValue(missionId, out var rewardDefinition))
+                    return Reject($"Rejected mission {missionId} turn-in: no approved reward definition is loaded.");
+                if (!TryGetNpcOnPlayerMap(client.Player, npcEntityId, out var npc))
+                    return Reject($"Rejected mission {missionId} turn-in: NPC entity {npcEntityId} is not in the current map instance.");
+                if (npc.Npc == null || npc.DbId != definition.MissionReciver)
+                    return Reject($"Rejected mission {missionId} turn-in: NPC {npc.DbId} is not its authoritative receiver.");
+                if (!client.Player.Missions.TryGetValue(missionId, out var runtimeMission) ||
+                    runtimeMission.State != MissionState.Active ||
+                    !runtimeMission.Completeable)
+                    return Reject($"Rejected mission {missionId} turn-in: runtime mission is not completable.");
+                if (!_manifestationManager.ValidateProgressionForClient(client))
+                    return false;
+
+                MissionRewardGrant grant = null;
+                try
+                {
+                    try
+                    {
+                        using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+                        unitOfWork.ExecuteTransaction(() =>
+                        {
+                            var character = unitOfWork.Characters.Get(client.Player.Id);
+                            var mission = unitOfWork.CharacterMissions.Get(client.Player.Id, missionId);
+                            if (client.AccountEntry == null ||
+                                character.AccountId != client.AccountEntry.Id)
+                                throw new GameplayRejectionException("Durable character owner changed.");
+                            if (mission == null ||
+                                mission.MissionState != (uint)MissionState.Active ||
+                                !mission.Completeable)
+                                throw new GameplayRejectionException("Durable mission is not completable.");
+
+                            grant = rewardDefinition.CreateGrant(selectionIndex);
+                            grant.PlanAndSave(client, character, unitOfWork, _manifestationManager);
+                            mission.MissionState = (uint)MissionState.Completed;
+                            mission.Completeable = false;
+                        });
+                    }
+                    catch (Exception error) when (GameplayRejectionException.IsExpected(error))
+                    {
+                        Logger.WriteLog(LogType.Error,
+                            $"Unable to complete mission {missionId} for character {client.Player.Id}: {error}");
+                        return false;
+                    }
+
+                    grant.Publish(client, _manifestationManager);
+                    client.Player.Missions[missionId] =
+                        new MissionLog(missionId, MissionState.Completed, false);
+                    client.CallMethod(client.Player.EntityId,
+                        new MissionCompleteablePacket(missionId, false));
+                    client.CallMethod(client.Player.EntityId, new MissionCompletedPacket(missionId));
+                    client.CallMethod(client.Player.EntityId, new MissionRewardedPacket(missionId));
+                    return true;
+                }
+                finally
+                {
+                    grant?.Dispose();
+                }
             }
         }
 

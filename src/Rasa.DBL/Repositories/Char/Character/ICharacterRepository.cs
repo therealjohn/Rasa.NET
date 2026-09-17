@@ -17,6 +17,7 @@ namespace Rasa.Repositories.Char.Character
         void UpdateCharacterClass(uint id, uint classId);
         void UpdateCharacterCloneCredits(uint id, uint cloneCredits);
         void UpdateCharacterCredits(uint id, int credits);
+        void UpdateCharacterCurrencies(uint id, int credits, int prestige);
         void UpdateCharacterExpirience(uint id, uint experience);
         void UpdateCharacterProgression(uint id, uint experience, byte level);
         void UpdateCharacterLevel(uint id, byte level);

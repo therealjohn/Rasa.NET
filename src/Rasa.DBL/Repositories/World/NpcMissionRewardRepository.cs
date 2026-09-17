@@ -8,7 +8,7 @@ namespace Rasa.Repositories.World
 
     public interface INpcMissionRewardRepository
     {
-        List<NpcMissionRewardEntry> Get(uint missionId);
+        IReadOnlyList<NpcMissionRewardEntry> Get(uint missionId);
     }
 
     public class NpcMissionRewardRepository : INpcMissionRewardRepository
@@ -19,12 +19,14 @@ namespace Rasa.Repositories.World
         {
             _worldContext = worldContext;
         }
-        public List<NpcMissionRewardEntry> Get(uint missionId)
+        public IReadOnlyList<NpcMissionRewardEntry> Get(uint missionId)
         {
             var query = _worldContext.CreateNoTrackingQuery(_worldContext.NpcMissionRewardEntries);
-            var entryes = query.Where(e => e.Id == missionId).ToList();
-
-            return entryes;
+            return query.Where(entry => entry.Id == missionId)
+                .OrderBy(entry => entry.Type)
+                .ThenBy(entry => entry.ItemTemplateId)
+                .ThenBy(entry => entry.Quantity)
+                .ToList();
         }
     }
 }

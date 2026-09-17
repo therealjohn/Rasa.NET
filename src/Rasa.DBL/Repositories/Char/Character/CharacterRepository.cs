@@ -161,6 +161,14 @@ namespace Rasa.Repositories.Char.Character
             _charContext.SaveChanges();
         }
 
+        public void UpdateCharacterCurrencies(uint id, int credits, int prestige)
+        {
+            var entry = _charContext.GetWritableEnsuring(_charContext.CharacterEntries, id);
+            entry.Credit = credits;
+            entry.Prestige = prestige;
+            _charContext.SaveChanges();
+        }
+
         public void UpdateCharacterExpirience(uint id, uint experience)
         {
             var query = _charContext.CreateNoTrackingQuery(_charContext.CharacterEntries);

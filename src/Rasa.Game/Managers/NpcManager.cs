@@ -64,7 +64,10 @@ namespace Rasa.Managers
 
         public void CompleteNPCMission(Client client, CompleteNPCMissionPacket packet)
         {
-            Logger.WriteLog(LogType.Debug, $"ToDo: CompleteNPCMission");
+            // SelectionIdx is still decoded from an unverified boolean wire field. Do not grant rewards
+            // until source/client evidence establishes the integer selection encoding.
+            Logger.WriteLog(LogType.Network,
+                $"Rejected mission {packet?.MissionId ?? 0} turn-in: reward selection wire encoding is unverified.");
         }
 
         public void RequestNpcConverse(Client client, RequestNPCConversePacket packet)
