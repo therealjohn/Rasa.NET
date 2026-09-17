@@ -237,12 +237,68 @@ snapshots, interruption/replay and elapsed upkeep. Selection adds one
 server-owned character column through both SQLite and MySQL migrations.
 Effects now receive actual elapsed time on every map tick.
 
+## Mission persistence and lifecycle
+
+Run the focused mission checks with:
+
+```powershell
+dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~Rasa.Test.Missions"
+```
+
+Mission attempts are scoped by persistent character ID. The character database
+uses `(character_id, mission_id)` as the key, so accounts and character slots do
+not share mission state and one character can hold multiple attempts. Existing
+rows survive the additive SQLite and MySQL migration. Character deletion removes
+mission rows in the same transaction before deleting the character; the foreign
+key remains restrictive.
+
+World mission definitions are immutable and inactive by default. Incomplete
+database definitions are not hydrated, advertised by NPCs, accepted, tracked or
+completed. Test definitions must opt in explicitly. This keeps the existing
+partial mission rows, and any newly recovered client metadata, from appearing as
+playable content before their authoritative objective and reward contracts are
+known.
+
+The implemented state mapping is:
+
+- Active attempt: `MissionState.Active` with `Completeable = false`.
+- Completable attempt: `MissionState.Active` with `Completeable = true`.
+- Completed attempt: `MissionState.Completed` with `Completeable = false`.
+- Failed attempt: the existing `MissionState.Failded` wire value.
+- Abandoned attempt: the active durable row is removed and `MissionDiscarded`
+  is sent.
+
+Login sends one `MissionStatusInfo` snapshot from durable state. Acceptance
+validates the active client, registered NPC, persistent giver identity, current
+map instance, duplicate state and the durable 30-mission capacity. Abandonment
+reloads the durable attempt and cannot remove completed history from a stale
+client.
+
+Turn-in infrastructure reloads the character and mission inside one serializable
+character transaction. Inventory, XP, supported currencies and completion state
+commit together. Runtime state and packets are published only afterward.
+Sequential, reconnect and competing-client retries grant at most once. Staged
+item entity IDs are released if planning or publication fails. Live MySQL tests
+exercise the migration and competing reward transactions in addition to the
+SQLite fixtures.
+
+Player-facing mission completion remains disabled. The current inbound
+`CompleteNPCMission` packet exposes a boolean field whose reward-selection
+meaning is not verified, so it cannot invoke the internal integer-selection
+turn-in path. The recovered opening Wilderness metadata identifies missions
+`1449` (Wilderness Targets of Opportunity), `1407` (Too Close For Comfort) and
+`1069` (Receptive Reception), but their complete server objective, counter,
+reward, prerequisite and transition contracts are not established. These
+missions remain inactive. Native 1.16.5.0 tracker, conversation and turn-in
+acceptance, and the first playable-zone gate, remain open.
+
 ## MySQL persistence checks
 
 The opt-in `MySqlCompatibilityTests.P3.cs` cases exercise the real additive
-selection migration, XP/level writes, training/tray persistence, and shared
-item/inventory/credit/ammunition transactions. A forced server-side constraint
-failure after earlier saves must roll back the whole batch and allow a retry.
+selection and mission migrations, XP/level writes, training/tray persistence,
+shared item/inventory/credit/ammunition transactions, and competing mission
+reward transactions. A forced server-side constraint failure after earlier
+saves must roll back the whole batch and allow a retry.
 
 Set `RASA_TEST_MYSQL_CONNECTION` to an isolated local test server, then run:
 
