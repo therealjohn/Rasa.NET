@@ -398,7 +398,7 @@ namespace Rasa.Managers
             var characterAppearances = unitOfWork.CharacterAppearances.GetByCharacterId(character.Id);
             var appearanceData = new Dictionary<EquipmentData, AppearanceData>();
             var lockboxInfo = unitOfWork.CharacterLockboxes.Get(client.AccountEntry.Id);
-            var missions = unitOfWork.CharacterMissions.Get(client.AccountEntry.Id, client.AccountEntry.SelectedSlot);
+            var missions = unitOfWork.CharacterMissions.Get(character.Id);
             var missionData = new Dictionary<int, MissionLog>();
             var clan = unitOfWork.Clans.GetClanByCharacterId(character.Id);
             var logos = unitOfWork.CharacterLogoses.GetLogos(character.Id);

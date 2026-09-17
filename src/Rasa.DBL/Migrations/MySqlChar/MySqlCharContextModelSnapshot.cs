@@ -308,21 +308,24 @@ namespace Rasa.Migrations.MySqlChar
             modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionEntry", b =>
                 {
                     b.Property<uint>("CharacterId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int unsigned")
+                        .HasColumnType("int(11) unsigned")
                         .HasColumnName("character_id");
-
-                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("CharacterId"));
 
                     b.Property<uint>("MissionId")
                         .HasColumnType("int unsigned")
                         .HasColumnName("mission_id");
 
+                    b.Property<bool>("Completeable")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("tinyint(1)")
+                        .HasDefaultValue(false)
+                        .HasColumnName("completeable");
+
                     b.Property<uint>("MissionState")
                         .HasColumnType("int unsigned")
                         .HasColumnName("mission_state");
 
-                    b.HasKey("CharacterId");
+                    b.HasKey("CharacterId", "MissionId");
 
                     b.ToTable("character_mission");
                 });
@@ -705,6 +708,15 @@ namespace Rasa.Migrations.MySqlChar
                         .IsRequired();
 
                     b.Navigation("GameAccount");
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionEntry", b =>
+                {
+                    b.HasOne("Rasa.Structures.Char.CharacterEntry", null)
+                        .WithMany()
+                        .HasForeignKey("CharacterId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Rasa.Structures.Char.ClanMemberEntry", b =>

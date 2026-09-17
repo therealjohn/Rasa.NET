@@ -15,6 +15,7 @@ namespace Rasa.Test.Database
     using Rasa.Repositories.Char.Character;
     using Rasa.Repositories.Char.CharacterAbilityDrawer;
     using Rasa.Repositories.Char.CharacterInventory;
+    using Rasa.Repositories.Char.CharacterMission;
     using Rasa.Repositories.Char.CharacterSkills;
     using Rasa.Repositories.Char.Items;
     using Rasa.Structures.Char;
@@ -103,6 +104,41 @@ namespace Rasa.Test.Database
             CollectionAssert.AreEqual(new[] { (0, 194, 1U), (24, 401, 3U) },
                 drawer.Select(slot => (slot.AbilitySlot, slot.AbilityId, slot.AbilityLevel)).ToArray());
             Assert.AreEqual((byte)24, reopened.Characters.Get(123).CurrentAbilitySlot);
+        }
+
+        [TestMethod]
+        public void P4MissionRowsPersistForOneCharacter()
+        {
+            using var database = DisposableDatabase.Create(typeof(MySqlCharContext), 64);
+            using (var historical = database.CreateContext())
+            {
+                historical.GetService<IMigrator>().Migrate("20260917130734_AbilityTraySelection");
+                SeedP3Character(historical);
+                historical.Database.ExecuteSqlRaw(
+                    "INSERT INTO character_mission (character_id, mission_id, mission_state) VALUES (123, 321, 0)");
+            }
+            using (var upgraded = database.CreateContext())
+            {
+                upgraded.Database.Migrate();
+                Assert.AreEqual(0, upgraded.Database.SqlQueryRaw<int>(
+                    "SELECT completeable AS Value FROM character_mission " +
+                    "WHERE character_id = 123 AND mission_id = 321").Single());
+            }
+            using (var unit = CreateP3UnitOfWork(database))
+            {
+                unit.CharacterMissions.Add(new CharacterMissionEntry(123, 429, 4)
+                {
+                    Completeable = true
+                });
+            }
+
+            using var reopened = CreateP3UnitOfWork(database);
+            var missions = reopened.CharacterMissions.Get(123).OrderBy(mission => mission.MissionId).ToArray();
+            Assert.AreEqual(2, missions.Length);
+            Assert.AreEqual((321U, 0U, false),
+                (missions[0].MissionId, missions[0].MissionState, missions[0].Completeable));
+            Assert.AreEqual((429U, 4U, true),
+                (missions[1].MissionId, missions[1].MissionState, missions[1].Completeable));
         }
 
         [TestMethod]
@@ -231,7 +267,7 @@ namespace Rasa.Test.Database
                 gameAccounts: null, censoredWords: null, characters: new CharacterRepository(context),
                 characterAbilityDrawers: new CharacterAbilityDrawerRepository(context), characterAppearances: null,
                 characterInventories: new CharacterInventoryRepository(context), characterLockboxes: null,
-                characterLogoses: null, characterMissions: null, characterOptions: null,
+                characterLogoses: null, characterMissions: new CharacterMissionRepository(context), characterOptions: null,
                 characterSkills: new CharacterSkillsRepository(context), characterTeleporters: null,
                 characterTitles: null, clans: null, clanInventories: null, clanMembers: null,
                 friends: null, ignoreds: null, items: new ItemRepository(context), userOptions: null);

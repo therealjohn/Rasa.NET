@@ -100,6 +100,38 @@ namespace Rasa.Test.Database
         }
 
         [TestMethod]
+        public void MySqlMissionMigrationRemovesIdentityBeforeChangingThePrimaryKey()
+        {
+            using var context = CreateContext(typeof(MySqlCharContext), "unused");
+            var assembly = context.GetService<IMigrationsAssembly>();
+            var migration = assembly.Migrations.Values
+                .Select(type => assembly.CreateMigration(type, context.Database.ProviderName))
+                .Single(candidate => candidate.GetType().Name == "MissionCharacterState");
+
+            var alterUp = migration.UpOperations
+                .Select((operation, index) => (operation, index))
+                .Single(item => item.operation is AlterColumnOperation column &&
+                    column.Table == "character_mission" && column.Name == "character_id").index;
+            var dropPrimaryKeyUp = migration.UpOperations
+                .Select((operation, index) => (operation, index))
+                .Single(item => item.operation is DropPrimaryKeyOperation primaryKey &&
+                    primaryKey.Table == "character_mission").index;
+            Assert.IsTrue(alterUp < dropPrimaryKeyUp,
+                "MySQL requires AUTO_INCREMENT to be removed while character_id is still indexed.");
+
+            var addPrimaryKeyDown = migration.DownOperations
+                .Select((operation, index) => (operation, index))
+                .Single(item => item.operation is AddPrimaryKeyOperation primaryKey &&
+                    primaryKey.Table == "character_mission").index;
+            var alterDown = migration.DownOperations
+                .Select((operation, index) => (operation, index))
+                .Single(item => item.operation is AlterColumnOperation column &&
+                    column.Table == "character_mission" && column.Name == "character_id").index;
+            Assert.IsTrue(addPrimaryKeyDown < alterDown,
+                "MySQL requires character_id to be indexed before restoring AUTO_INCREMENT.");
+        }
+
+        [TestMethod]
         [DataRow(typeof(SqliteAuthContext), "20201211023733_Initial",
             "INSERT INTO account (email, username, password, salt) VALUES ('p0@example.invalid', 'p0_user', 'p0_hash', 'p0_salt')",
             "SELECT username AS Value FROM account WHERE email = 'p0@example.invalid'", "p0_user")]
@@ -122,6 +154,40 @@ namespace Rasa.Test.Database
 
                 Assert.AreEqual(expected, context.Database.SqlQueryRaw<string>(select).Single());
                 CollectionAssert.IsSubsetOf(applied, context.Database.GetAppliedMigrations().ToArray());
+                Assert.IsFalse(context.Database.GetPendingMigrations().Any());
+            });
+        }
+
+        [TestMethod]
+        public void SqliteMissionUpgradePreservesHistoricalRowAndAddsCharacterState()
+        {
+            WithDisposableSqlite(typeof(SqliteCharContext), (context, database) =>
+            {
+                context.GetService<IMigrator>().Migrate("20260917130621_AbilityTraySelection");
+                context.Database.ExecuteSqlRaw(
+                    "INSERT INTO account (id, email, name, family_name) " +
+                    "VALUES (17, 'p4@example.invalid', 'P4Account', 'P4Family')");
+                context.Database.ExecuteSqlRaw(
+                    "INSERT INTO character (id, account_id, slot, name, race, class, gender, scale, experience, level, " +
+                    "credit, body, mind, spirit, map_context_id, coord_x, coord_y, coord_z, rotation) " +
+                    "VALUES (123, 17, 1, 'P4Preserved', 1, 1, 0, 1, 0, 1, 0, 0, 0, 0, 1220, 1, 2, 3, 0)");
+                context.Database.ExecuteSqlRaw(
+                    "INSERT INTO character_mission (character_id, mission_id, mission_state) VALUES (123, 321, 4)");
+
+                context.Database.Migrate();
+
+                var row = context.Database.SqlQueryRaw<MissionUpgradeRow>(
+                    "SELECT character_id AS CharacterId, mission_id AS MissionId, " +
+                    "mission_state AS MissionState, completeable AS Completeable " +
+                    "FROM character_mission WHERE character_id = 123").Single();
+                Assert.AreEqual(123L, row.CharacterId);
+                Assert.AreEqual(321L, row.MissionId);
+                Assert.AreEqual(4L, row.MissionState);
+                Assert.AreEqual(0L, row.Completeable);
+                context.Database.ExecuteSqlRaw(
+                    "INSERT INTO character_mission (character_id, mission_id, mission_state) VALUES (123, 429, 0)");
+                Assert.AreEqual(2, context.Database.SqlQueryRaw<int>(
+                    "SELECT COUNT(*) AS Value FROM character_mission WHERE character_id = 123").Single());
                 Assert.IsFalse(context.Database.GetPendingMigrations().Any());
             });
         }
@@ -221,6 +287,14 @@ namespace Rasa.Test.Database
                 // Model checks never connect to MySQL or use a developer's configuration.
                 builder.UseMySql("Server=127.0.0.1;Database=unused", new MySqlServerVersion(new Version(8, 4, 0)));
             }
+        }
+
+        private sealed class MissionUpgradeRow
+        {
+            public long CharacterId { get; set; }
+            public long MissionId { get; set; }
+            public long MissionState { get; set; }
+            public long Completeable { get; set; }
         }
     }
 }
