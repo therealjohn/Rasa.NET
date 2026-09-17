@@ -106,6 +106,7 @@ namespace Rasa.Game
         public void MainLoop(long delta)
         {
             Timer.Update(delta);
+            RemoveDisconnectedClients();
 
             if (Clients.Count == 0)
                 return;
@@ -115,18 +116,25 @@ namespace Rasa.Game
             lock (Clients)
             {
                 foreach (var client in Clients)
-                    client.Update(delta);
-
-                if (_clientsToRemove.Count > 0)
                 {
-                    lock (_clientsToRemove)
-                    {
-                        foreach (var client in _clientsToRemove)
-                            Clients.Remove(client);
-
-                        _clientsToRemove.Clear();
-                    }
+                    client.Update(delta);
+                    DynamicObjectManager.Instance.CheckTransferTimeout(client);
                 }
+            }
+            RemoveDisconnectedClients();
+        }
+
+        private void RemoveDisconnectedClients()
+        {
+            lock (Clients)
+            lock (_clientsToRemove)
+            {
+                foreach (var client in _clientsToRemove.Distinct())
+                {
+                    MapChannelManager.Instance.CleanupDisconnected(client);
+                    Clients.Remove(client);
+                }
+                _clientsToRemove.Clear();
             }
         }
 

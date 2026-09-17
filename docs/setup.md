@@ -244,6 +244,10 @@ Use `osx-x64` or `linux-x64` for the other deployment targets.
 
 The default test run checks all six provider models, generates MySQL migration SQL, and creates disposable SQLite databases to verify fresh migrations, upgrades and account persistence. SQLite test files are created under the test output directory and removed afterward. Protocol tests cover large compressed messages, premature EOF, and pooled-buffer cleanup.
 
+The [world regression guide](world-testing.md) covers movement, visibility,
+waypoint discovery, map transfers and spawn lifecycle checks, including the
+configurable transfer deadline and the native-client/navigation acceptance still pending.
+
 Live MySQL tests are opt-in. Provision a disposable local MySQL 8.0/8.4 instance on an ephemeral host port, then set `RASA_TEST_MYSQL_CONNECTION` to its connection string (server, port, user and password, with no database). The test account needs permission to create and drop databases. Never use an existing developer instance.
 
 ```powershell

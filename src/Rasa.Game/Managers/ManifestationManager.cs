@@ -192,6 +192,11 @@ namespace Rasa.Managers
 
         public bool PlayerTryFireWeapon(Client client)
         {
+            if (!IsActiveWorldClient(client))
+            {
+                Logger.WriteLog(LogType.Network, "Ignored weapon fire outside the active world state.");
+                return false;
+            }
             // ToDo: isOverheated, isJammed, and some other checks
             if (!client.Player.WeaponReady)
             {
@@ -341,18 +346,19 @@ namespace Rasa.Managers
         public void StopAutoFire(Client client)
         {
             ActorManager.Instance.RequestVisualCombatMode(client, false);
+            CancelAutoFire(client);
+        }
 
-            // go backwards through list
-            for (var i = AutoFire.Count - 1; i >= 0; i--)
-            {
-                var timer = AutoFire[i];
+        internal void CancelAutoFire(Client client)
+        {
+            AutoFire.RemoveAll(timer => timer.Client == client);
+        }
 
-                if (timer.Client == client)
-                {
-                    AutoFire.RemoveAt(i);
-                    break;
-                }
-            }
+        private static bool IsActiveWorldClient(Client client)
+        {
+            return client?.State == ClientState.Ingame && client.PendingTransfer == null &&
+                client.Player?.MapChannel != null && !client.Player.Disconected &&
+                !client.Player.RemoveFromMap && CellManager.Instance.IsInWorld(client);
         }
 
         #endregion
@@ -435,6 +441,11 @@ namespace Rasa.Managers
             for (var i = AutoFire.Count - 1; i >= 0; i--)
             {
                 var timer = AutoFire[i];
+                if (!IsActiveWorldClient(timer.Client))
+                {
+                    AutoFire.RemoveAt(i);
+                    continue;
+                }
                 // we dont want to server keep fireing if client crash 
                 timer.MaxAliveTime -= delta;
 
@@ -758,7 +769,7 @@ namespace Rasa.Managers
 
         public void RemovePlayerCharacter(Client client)
         {
-            // ToDo do we need remove something, or it's done already 
+            CancelAutoFire(client);
         }
 
         public void RemoveAppearanceItem(Client client, EquipmentData equipmentSlotId)

@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 
 namespace Rasa.Managers
@@ -13,6 +14,8 @@ namespace Rasa.Managers
     {
         private static MapTriggerManager _instance;
         private static readonly object InstanceLock = new object();
+        private readonly DynamicObjectManager _objects;
+        private DynamicObjectManager Objects => _objects ?? DynamicObjectManager.Instance;
         public static MapTriggerManager Instance
         {
             get
@@ -31,8 +34,9 @@ namespace Rasa.Managers
             }
         }
 
-        public MapTriggerManager()
+        public MapTriggerManager(DynamicObjectManager objects = null)
         {
+            _objects = objects;
         }
 
         internal void MapTriggerInit()
@@ -41,44 +45,49 @@ namespace Rasa.Managers
 
         internal void PlayerEnterTriggerRange(Client client, MapTrigger mapTrigger)
         {
-            if (client.Player.IsNear5m(mapTrigger))
+            if (client.State == ClientState.Ingame && client.PendingTransfer == null &&
+                client.Player?.MapChannel?.MapInfo.MapContextId == mapTrigger.MapContextId &&
+                client.Player.IsNear5m(mapTrigger))
             {
                 if (mapTrigger.TriggeredBy.Contains(client))
                     return;
 
+                if (!Objects.Teleporters.TryGetValue(mapTrigger.TriggerId, out var station) ||
+                    station.ObjectData is not WaypointInfo waypoint || waypoint.WaypointType != WaypointType.Dropship)
+                {
+                    Logger.WriteLog(LogType.Error, $"Missing dropship definition for trigger {mapTrigger.TriggerId}.");
+                    return;
+                }
+                Objects.CheckPlayerWaypoint(client, waypoint);
                 mapTrigger.TriggeredBy.Add(client);
+                var dropshipInfoList = Objects.CreateListOfDropships(client);
 
-                var dropshipInfoList = DynamicObjectManager.Instance.CreateListOfDropships();
-
-                client.CallMethod(SysEntity.ClientMethodId, new EnteredWaypointPacket(mapTrigger.MapContextId, mapTrigger.MapContextId, dropshipInfoList, WaypointType.Dropship, mapTrigger.TriggerId));
+                client.CallMethod(SysEntity.ClientMethodId, new EnteredWaypointPacket(client.Player.MapChannel.InstanceId, mapTrigger.MapContextId, dropshipInfoList, WaypointType.Dropship, mapTrigger.TriggerId));
             }
         }
         internal void PlayerExitTriggerRange(Client client, MapTrigger mapTrigger)
         {
-            if (!client.Player.IsNear5m(mapTrigger))
+            if (client.State != ClientState.Ingame || client.Player?.MapChannel?.MapInfo.MapContextId != mapTrigger.MapContextId ||
+                !client.Player.IsNear5m(mapTrigger))
                 if (mapTrigger.TriggeredBy.Contains(client))
                 {
                     mapTrigger.TriggeredBy.Remove(client);
-                    client.CallMethod(SysEntity.ClientMethodId, new ExitedWaypointPacket());
+                    if (client.State != ClientState.Disconnected)
+                        client.CallMethod(SysEntity.ClientMethodId, new ExitedWaypointPacket());
                 }
         }
 
         internal void TriggersProximityWorker(MapChannel mapChannel)
         {
-            foreach (var client in mapChannel.ClientList)
+            var triggers = mapChannel.MapCellInfo.Cells.Values.SelectMany(cell => cell.MapTriggers).Distinct().ToArray();
+            foreach (var trigger in triggers)
             {
-                if (client.Player.Disconected || client.Player == null || client.State == ClientState.Loading)
-                    continue;
-
-                var cell = mapChannel.MapCellInfo.Cells[client.Player.Cells[2, 2]];
-
-                foreach (var mapTrigger in cell.MapTriggers)
+                foreach (var previous in trigger.TriggeredBy.ToArray())
+                    PlayerExitTriggerRange(previous, trigger);
+                foreach (var client in mapChannel.ClientList.ToArray())
                 {
-                    // check for players that enter range
-                    PlayerEnterTriggerRange(client, mapTrigger);
-
-                    // check for players that leave range
-                    PlayerExitTriggerRange(client, mapTrigger);
+                    if (client?.Player != null && !client.Player.Disconected)
+                        PlayerEnterTriggerRange(client, trigger);
                 }
             }
         }

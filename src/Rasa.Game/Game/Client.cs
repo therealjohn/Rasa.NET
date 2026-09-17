@@ -1,7 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Data.Common;
 using System.Diagnostics;
 using System.Net.Sockets;
+using Microsoft.EntityFrameworkCore;
 
 namespace Rasa.Game
 {
@@ -41,6 +43,8 @@ namespace Rasa.Game
         public List<UserOptions> UserOptions = new();
 
         private readonly object _clientLock = new();
+        internal object SyncRoot => _clientLock;
+        internal PlayerTransfer PendingTransfer { get; set; }
         private readonly ClientPacketHandler _handler;
         private readonly PacketQueue _packetQueue = new();
         private readonly ProtocolPacketDecoder _incomingPackets = new();
@@ -95,8 +99,13 @@ namespace Rasa.Game
 
             IBasePacket packet;
 
-            while ((packet = _packetQueue.PopOutgoing()) != null)
+            while ((packet = DequeueOutgoingPacket()) != null)
                 SendPacket(packet);
+        }
+
+        internal IBasePacket DequeueOutgoingPacket()
+        {
+            return _packetQueue.PopOutgoing();
         }
 
         private void RejectProtocolInput(Exception error)
@@ -118,13 +127,19 @@ namespace Rasa.Game
                 Logger.WriteLog(LogType.Network, "*** Client disconnected! Ip: {0}", Socket.RemoteAddress);
 
                 State = ClientState.Disconnected;
+                RestoreTransferOrigin();
+                if (Player != null)
+                {
+                    Player.Disconected = true;
+                    Player.RemoveFromMap = true;
+                }
                 _incomingPackets.Dispose();
 
                 Socket.Close();
 
                 Server.Disconnect(this);
 
-                SaveCharacter();
+                SaveCharacterOnDisconnect();
             }
         }
 
@@ -146,47 +161,23 @@ namespace Rasa.Game
         // Cell Domain
         public void CellCallMethod(Client client, ulong entityId, PythonPacket packet)
         {
-           var clientList = new List<Client>();
-
-            foreach (var cellSeed in client.Player.Cells)
-                clientList.AddRange(client.Player.MapChannel.MapCellInfo.Cells[cellSeed].ClientList);
-
-            foreach (var tempClient in clientList)
+            foreach (var tempClient in CellManager.Instance.GetClientsInCells(client.Player.MapChannel, client.Player.Cells))
                 tempClient.CallMethod(entityId, packet);
         }
 
         // Cell Domain ignore self
         public void CellIgnoreSelfCallMethod(Client client, PythonPacket packet)
         {
-            var clientList = new List<Client>();
-
-            foreach (var cellSeed in client.Player.Cells)
-                clientList.AddRange(client.Player.MapChannel.MapCellInfo.Cells[cellSeed].ClientList);
-
-            foreach (var tempClient in clientList)
-            {
-                if (tempClient == client)
-                    continue;
-
+            foreach (var tempClient in CellManager.Instance.GetClientsInCells(client.Player.MapChannel, client.Player.Cells, client))
                 tempClient.CallMethod(client.Player.EntityId, packet);
-            }
         }
 
         // Cell send movement
         internal void CellMoveObject(Client client, MoveObjectMessage moveObjectMessage, bool ignoreSelf)
         {
-            var clientList = new List<Client>();
-
-            foreach (var cellSeed in client.Player.Cells)
-                clientList.AddRange(client.Player.MapChannel.MapCellInfo.Cells[cellSeed].ClientList);
-
-            foreach (var tempClient in clientList)
-            {
-                if (tempClient == client && ignoreSelf)
-                    continue;
-
+            foreach (var tempClient in CellManager.Instance.GetClientsInCells(client.Player.MapChannel,
+                         client.Player.Cells, ignoreSelf ? client : null))
                 tempClient.SendMessage(moveObjectMessage, false, 1);
-            }
         }
 
         public void SendMessage(IClientMessage message, bool compress = false, byte channel = 0, bool delay = true)
@@ -298,25 +289,8 @@ namespace Rasa.Game
                     break;
 
                 case ClientMessageOpcode.Move:
-                    if (Player == null)
-                    {
-                        return;
-                    }
-
                     var moveMessage = GetMessageAs<MoveMessage>(protocolPacket);
-                    if (moveMessage.Movement == null)
-                    {
-                        return;
-                    }
-
-                    Player.Position = moveMessage.Movement.Position;
-                    Player.Rotation = moveMessage.Movement.ViewDirection.X;
-                    Movement = moveMessage.Movement;
-
-                    // send your movement to other players in visibility range
-                    var moveObjectMessage = new MoveObjectMessage(Player.EntityId, moveMessage.Movement);
-                    CellMoveObject(this, moveObjectMessage, true);
-
+                    HandleMovement(moveMessage.Movement);
                     break;
 
                 case ClientMessageOpcode.CallServerMethod:
@@ -347,6 +321,56 @@ namespace Rasa.Game
                 return message;
             }
             throw new InvalidClientMessageException();
+        }
+
+        internal bool HandleMovement(Movement movement)
+        {
+            lock (_clientLock)
+                return ApplyMovement(movement);
+        }
+
+        private bool ApplyMovement(Movement movement)
+        {
+            if (State != ClientState.Ingame || Player?.MapChannel == null || Player.Id == 0 ||
+                PendingTransfer != null || Player.Disconected || Player.RemoveFromMap ||
+                !CellManager.Instance.IsInWorld(this))
+            {
+                Logger.WriteLog(LogType.Network, $"Ignored movement outside the active world state: {State}.");
+                return false;
+            }
+            if (movement == null || !CellManager.TryGetCellCoordinates(movement.Position, out _, out _) ||
+                !float.IsFinite(movement.Velocity) || movement.Velocity < 0 ||
+                !float.IsFinite(movement.ViewDirection.X) || !float.IsFinite(movement.ViewDirection.Y))
+            {
+                Logger.WriteLog(LogType.Network, "Rejected movement with invalid coordinates or motion values.");
+                return false;
+            }
+
+            Player.Position = movement.Position;
+            Player.Rotation = movement.ViewDirection.X;
+            Movement = movement;
+            CellManager.Instance.UpdateVisibility(this);
+            CellMoveObject(this, new MoveObjectMessage(Player.EntityId, movement), true);
+            return true;
+        }
+
+        internal void SetWorldPosition(Vector3 position, double rotation)
+        {
+            Player.Position = position;
+            Player.Rotation = rotation;
+            Movement = new Movement(position, new Vector2((float)rotation, 0));
+        }
+
+        internal void RestoreTransferOrigin()
+        {
+            var transfer = PendingTransfer;
+            if (transfer == null || Player == null)
+                return;
+            Player.MapChannel = transfer.OriginMap;
+            Player.MapContextId = transfer.OriginMap.MapInfo.MapContextId;
+            SetWorldPosition(transfer.OriginPosition, transfer.OriginRotation);
+            LoadingMap = transfer.OriginMap.MapInfo.MapContextId;
+            PendingTransfer = null;
         }
 
         public bool IsAuthenticated()
@@ -420,6 +444,20 @@ namespace Rasa.Game
             using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
             unitOfWork.Characters.SaveCharacter(player);
             unitOfWork.Complete();
+        }
+
+        internal bool SaveCharacterOnDisconnect()
+        {
+            try
+            {
+                SaveCharacter();
+                return true;
+            }
+            catch (Exception error) when (error is DbUpdateException || error is DbException)
+            {
+                Logger.WriteLog(LogType.Error, $"Unable to save character {Player?.Id} on disconnect: {error.Message}");
+                return false;
+            }
         }
 
         public void ReloadGameAccountEntry()

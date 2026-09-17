@@ -297,11 +297,14 @@ namespace Rasa.Managers
             CharacterManager.Instance.UpdateCharacter(client, CharacterUpdate.Position, null);
             // save player time
             CharacterManager.Instance.UpdateCharacter(client, CharacterUpdate.Login, null);
-            // remove client from all channels
+            LeaveMapChannels(client);
+        }
+
+        internal void LeaveMapChannels(Client client)
+        {
             for (var i = 0; i < client.Player.JoinedChannels; i++)
             {
-                var chatChannel = ChannelsBySeed[client.Player.ChannelHashes[i]];
-                if (chatChannel != null)
+                if (ChannelsBySeed.TryGetValue(client.Player.ChannelHashes[i], out var chatChannel) && chatChannel != null)
                 {
                     // remove client link from channel
                     var currentLink = chatChannel.FirstPlayer;
@@ -332,7 +335,8 @@ namespace Rasa.Managers
 
             client.Player.JoinedChannels = 0;
 
-            SocialManager.Instance.FriendLoggedOut(client);
+            if (client.AccountEntry != null)
+                SocialManager.Instance.FriendLoggedOut(client);
         }
 
         public void RadialChat(Client client, string textMsg)

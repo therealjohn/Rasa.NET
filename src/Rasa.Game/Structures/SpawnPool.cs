@@ -24,10 +24,12 @@ namespace Rasa.Structures
         public int QueuedCreatures { get; set; } // number of creatures that are spawning right now (i.e. delivered via dropship)
         public int AliveCreatures { get; set; } // number of spawned creatures that are alive
         public int DeadCreatures { get; set; }  // number of spawned creatures that are dead (either killed or spawned dead)
+        // Keep the selected wave until its dropship delivers it; never reroll a reserved payload.
+        internal List<Creature> QueuedCreatureList { get; set; }
 
-        // respawn lock
+        // Runtime milliseconds; the persisted RespawnTime is in seconds.
         public long UpdateTimer { get; set; }
-        public uint RespawnTime { get; set; }
+        public long RespawnTime { get; set; }
         
 
         // paths

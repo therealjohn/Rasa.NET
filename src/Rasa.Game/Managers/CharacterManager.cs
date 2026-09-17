@@ -338,6 +338,11 @@ namespace Rasa.Managers
 
         public void RequestSwitchToCharacterInSlot(Client client, RequestSwitchToCharacterInSlotPacket packet)
         {
+            if (client.State != ClientState.CharacterSelection || client.PendingTransfer != null)
+            {
+                Logger.WriteLog(LogType.Network, "Ignored character switch outside character selection.");
+                return;
+            }
             if (packet.SlotNum < 1 || packet.SlotNum > 16)
                 return;
 

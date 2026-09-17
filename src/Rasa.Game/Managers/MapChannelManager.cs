@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Rasa.Managers
 {
@@ -118,7 +119,6 @@ namespace Rasa.Managers
             Timer.Add("CheckForObjects", 1000, true, null);
             Timer.Add("ClientEffectUpdate", 500, true, null);
             Timer.Add("CellUpdateVisibility", 1000, true, null);
-            Timer.Add("CheckForCreatures", 1000, true, null);
             Timer.Add("CheckForMapTriggers", 1000, true, null);
         }
 
@@ -133,14 +133,7 @@ namespace Rasa.Managers
                 mapChannel.MapChannelElapsed += delta;
 
                 if (Timer.IsTriggered("CheckForLogingClients"))
-                    if (mapChannel.QueuedClients.Count > 0)
-                    {
-                        // create new mapClient
-                        var dequedClient = mapChannel.QueuedClients.Dequeue();
-
-                        // add it to list
-                        mapChannel.ClientList.Add(dequedClient);
-                    }
+                    PruneQueuedClients(mapChannel);
 
                 if (mapChannel.ClientList.Count > 0)
                 {
@@ -161,9 +154,7 @@ namespace Rasa.Managers
                     if (Timer.IsTriggered("CheckForObjects"))
                         DynamicObjectManager.Instance.DynamicObjectWorker(mapChannel, delta);
 
-                    // check for creatures
-                    if (Timer.IsTriggered("CheckForCreatures"))
-                        SpawnPoolManager.Instance.SpawnPoolWorker(mapChannel, delta);
+                    SpawnPoolManager.Instance.SpawnPoolWorker(mapChannel, delta);
 
                     // check for mapTriggers
                     if (Timer.IsTriggered("CheckForMapTriggers"))
@@ -187,6 +178,27 @@ namespace Rasa.Managers
 
         public void MapLoaded(Client client)
         {
+            lock (client.SyncRoot)
+                InitializeLoadedMap(client);
+        }
+
+        private void InitializeLoadedMap(Client client)
+        {
+            if (client.PendingTransfer != null && DynamicObjectManager.Instance.CheckTransferTimeout(client))
+                return;
+            if (client.Player?.MapChannel == null || client.Player.Id == 0 ||
+                (client.State != ClientState.Loading && !DynamicObjectManager.Instance.IsExpectedMapLoad(client)))
+            {
+                Logger.WriteLog(LogType.Network, $"Ignored unexpected MapLoaded in state {client.State}.");
+                return;
+            }
+            if (client.State == ClientState.Loading &&
+                client.LoadingMap != client.Player.MapChannel.MapInfo.MapContextId)
+            {
+                Logger.WriteLog(LogType.Network, "Ignored MapLoaded for a mismatched map.");
+                return;
+            }
+            RemoveQueuedClient(client.Player.MapChannel, client);
             if (client.State == ClientState.Teleporting)
             {
                 var dropship = new Dropship(Factions.AFS, DropshipType.Teleporter, client);
@@ -195,26 +207,30 @@ namespace Rasa.Managers
                 client.Player.MapChannel = mapChannel;
                 client.Player.MapContextId = dropship.Client.LoadingMap;
 
-                mapChannel.ClientList.Add(client);
+                if (!mapChannel.ClientList.Contains(client))
+                    mapChannel.ClientList.Add(client);
 
                 CellManager.Instance.AddToWorld(client.Player.MapChannel, dropship);
                 DynamicObjectManager.Instance.Dropships.Add(dropship.EntityId, dropship);
                 CommunicatorManager.Instance.LoginOk(dropship.Client);
 
-                InventoryManager.Instance.InitForClient(client);
+                InventoryManager.Instance.ResendForMap(client);
                 ManifestationManager.Instance.UpdateStatsValues(client, true);
 
                 CellManager.Instance.AddToWorld(dropship.Client); // will introduce the player to all clients, including the current owner
                 CellManager.Instance.CellCallMethod(dropship.Client.Player.MapChannel, dropship.Client.Player, new TeleportArrivalPacket());
                 client.CallMethod(SysEntity.ClientMethodId, new RequestMovementBlockPacket());
                 ManifestationManager.Instance.AssignPlayer(client);
-                CharacterManager.Instance.UpdateCharacter(client, CharacterUpdate.Position);
+                if (!DynamicObjectManager.Instance.CompleteMapLoadTransfer(client))
+                    return;
                 CommunicatorManager.Instance.PlayerEnterMap(dropship.Client);
 
                 return;
             }
 
             client.State = ClientState.Ingame;
+            if (!client.Player.MapChannel.ClientList.Contains(client))
+                client.Player.MapChannel.ClientList.Add(client);
             InventoryManager.Instance.InitForClient(client);
             ManifestationManager.Instance.UpdateStatsValues(client, true);
 
@@ -249,19 +265,77 @@ namespace Rasa.Managers
         public void PassClientToMapInstance(Client client)
         {
             var mapInstance = client.Player.MapChannel;
+            if (client.State == ClientState.Loading && mapInstance.QueuedClients.Contains(client))
+            {
+                Logger.WriteLog(LogType.Network, "Ignored duplicate map-load request.");
+                return;
+            }
+            client.LoadingMap = mapInstance.MapInfo.MapContextId;
             client.CallMethod(SysEntity.ClientMethodId, new PreWonkavatePacket());
             client.CallMethod(SysEntity.CurrentInputStateId, new WonkavatePacket
                (
                    mapInstance.MapInfo.MapContextId,
-                   1,           // InstanceId
+                   mapInstance.InstanceId,
                    mapInstance.MapInfo.MapVersion,
                     client.Player.Position,
                    (float)client.Player.Rotation
                ));
 
             client.State = ClientState.Loading;
-            client.State = ClientState.Loading;
             client.Player.MapChannel.QueuedClients.Enqueue(client);
+        }
+
+        internal static void RemoveQueuedClient(MapChannel map, Client client)
+        {
+            var count = map.QueuedClients.Count;
+            for (var i = 0; i < count; i++)
+            {
+                var queued = map.QueuedClients.Dequeue();
+                if (queued != client)
+                    map.QueuedClients.Enqueue(queued);
+            }
+        }
+
+        internal static void PruneQueuedClients(MapChannel map)
+        {
+            var count = map.QueuedClients.Count;
+            var retained = new HashSet<Client>();
+            for (var i = 0; i < count; i++)
+            {
+                var queued = map.QueuedClients.Dequeue();
+                if (queued?.State == ClientState.Loading && queued.Player?.MapChannel == map && retained.Add(queued))
+                    map.QueuedClients.Enqueue(queued);
+            }
+        }
+
+        internal void CleanupDisconnected(Client client)
+        {
+            var player = client.Player;
+            if (player == null)
+                return;
+            ManifestationManager.Instance.RemovePlayerCharacter(client);
+            if (player.ClanId != 0)
+                ClanManager.Instance.RemovePlayer(client);
+            DynamicObjectManager.Instance.CleanupClientDropships(client);
+            CommunicatorManager.Instance.LeaveMapChannels(client);
+            foreach (var map in MapChannelArray.Values)
+            {
+                CellManager.Instance.DetachClient(map, client);
+                map.ClientList.RemoveAll(member => member == client);
+                RemoveQueuedClient(map, client);
+            }
+            var inventoryIds = player.Inventory.PersonalInventory.Concat(player.Inventory.HomeInventory)
+                .Concat(player.Inventory.EquippedInventory).Concat(player.Inventory.WeaponDrawer).Distinct();
+            foreach (var id in inventoryIds.Where(id => id != 0))
+                if (EntityManager.Instance.Items.ContainsKey(id))
+                    EntityManager.Instance.ReleaseEntity(id, EntityType.Item);
+            player.Inventory = new Inventory();
+            if (EntityManager.Instance.Players.TryGetValue(player.EntityId, out var registered) && registered == player)
+                EntityManager.Instance.ReleaseEntity(player.EntityId, EntityType.Character);
+            player.Cells = new uint[5, 5];
+            player.MapChannel = null;
+            player.RemoveFromMap = false;
+            player.Disconected = true;
         }
 
         public void Ping(Client client, double ping)
@@ -271,6 +345,9 @@ namespace Rasa.Managers
 
         public void RemovePlayer(Client client, bool logout)
         {
+            ManifestationManager.Instance.RemovePlayerCharacter(client);
+            client.RestoreTransferOrigin();
+            DynamicObjectManager.Instance.CleanupClientDropships(client);
             // unregister Communicator
             CommunicatorManager.Instance.PlayerExitMap(client);
             // unregister mapChannelClient
@@ -294,10 +371,9 @@ namespace Rasa.Managers
             foreach (var entityId in client.Player.Inventory.WeaponDrawer)
                 if (entityId != 0)
                     EntityManager.Instance.DestroyPhysicalEntity(client, entityId, EntityType.Item);
-
             CellManager.Instance.RemoveFromWorld(client);
-            ManifestationManager.Instance.RemovePlayerCharacter(client);
             ClanManager.Instance.RemovePlayer(client);
+            client.Player.Inventory = new Inventory();
 
             if (logout)
                 if (client.Player.Disconected == false)
@@ -321,6 +397,11 @@ namespace Rasa.Managers
 
         public void RequestLogout(Client client)
         {
+            if (client.State != ClientState.Ingame || client.PendingTransfer != null)
+            {
+                Logger.WriteLog(LogType.Network, "Ignored logout outside the active world state.");
+                return;
+            }
             client.CallMethod(SysEntity.ClientMethodId, new LogoutTimeRemainingPacket());
             client.Player.LogoutActive = true;
         }

@@ -50,13 +50,20 @@ namespace Rasa.Managers
         public void DestroyPhysicalEntity(Client client, ulong entityId, EntityType entityType)
         {
             client.CallMethod(SysEntity.ClientMethodId, new DestroyPhysicalEntityPacket(entityId));
-            //free entity
+            ReleaseEntity(entityId, entityType);
+        }
+
+        internal void ReleaseEntity(ulong entityId, EntityType entityType)
+        {
+            if (!RegisteredEntities.TryGetValue(entityId, out var registeredType) || registeredType != entityType)
+                return;
             switch (entityType)
             {
                 case EntityType.Character:
                     FreeEntity(entityId);
                     UnregisterEntity(entityId);
                     UnregisterPlayer(entityId);
+                    UnregisterActor(entityId);
                     break;
                 case EntityType.Npc:
                     break;
@@ -64,6 +71,7 @@ namespace Rasa.Managers
                     FreeEntity(entityId);
                     UnregisterEntity(entityId);
                     UnregisterCreature(entityId);
+                    UnregisterActor(entityId);
                     break;
                 case EntityType.Item:
                     FreeEntity(entityId);

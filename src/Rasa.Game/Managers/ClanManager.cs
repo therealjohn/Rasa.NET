@@ -1,7 +1,9 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Data.Common;
 using System.Linq;
+using Microsoft.EntityFrameworkCore;
 
 namespace Rasa.Managers
 {
@@ -328,7 +330,7 @@ namespace Rasa.Managers
 
         internal void CleanupClan(Client client)
         {
-            for (int i = 0; i < 500; i++)
+            for (int i = 0; i < client.Player.Inventory.ClanInventory.Count; i++)
                 client.Player.Inventory.ClanInventory[i] = 0;
 
             client.Player.ClanId = 0;
@@ -545,12 +547,28 @@ namespace Rasa.Managers
         internal void RemovePlayer(Client client)
         {
             var clanId = client.Player.ClanId;
-            if (clanId > 0)
-            {
-                ClanMemberEntry member = GetClanMember(clanId, client.Player.Id);
-                UnregisterClanMember(member);
+            if (clanId == 0)
+                return;
 
+            CleanupClan(client);
+            if (ClanMembers.TryGetValue(clanId, out var cachedMembers) && cachedMembers.IsValueCreated)
+                cachedMembers.Value?.RemoveAll(member => member.CharacterId == client.Player.Id);
+
+            if (!Server.Clients.Any(other => other != client && other.State != ClientState.Disconnected &&
+                    other.Player?.ClanId == clanId))
+                return;
+            if (!Clans.ContainsKey(clanId) || !ClanMembers.ContainsKey(clanId))
+            {
+                Logger.WriteLog(LogType.Error, $"Clan {clanId} metadata is unavailable for roster refresh after departure.");
+                return;
+            }
+            try
+            {
                 SetMemberDataForOnlineMembers(clanId, client.Player.Id);
+            }
+            catch (Exception error) when (error is DbException || error is DbUpdateException)
+            {
+                Logger.WriteLog(LogType.Error, $"Unable to refresh clan {clanId} roster after departure: {error.Message}");
             }
         }
 
@@ -633,11 +651,10 @@ namespace Rasa.Managers
         {
             Manifestation player = client.Player;
 
-            client.CallMethod(SysEntity.ClientClanManagerId, new ClanMembersRosterBeginPacket(clanData.Id));
-
             using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
 
             List<ClanMemberEntry> clanMemberEntries = unitOfWork.ClanMembers.GetAllClanMembersByClanId(clanData.Id);
+            var roster = new List<ClanMemberData>();
 
             foreach (ClanMemberEntry member in clanMemberEntries)
             {
@@ -651,9 +668,12 @@ namespace Rasa.Managers
                     clanMemberData.CharacterId = player.Id;
                 }
 
-                client.CallMethod(SysEntity.ClientClanManagerId, new SetClanMemberDataPacket(SetClanMemberDataPacket.NameKey, clanMemberData));
+                roster.Add(clanMemberData);
             }
 
+            client.CallMethod(SysEntity.ClientClanManagerId, new ClanMembersRosterBeginPacket(clanData.Id));
+            foreach (var member in roster)
+                client.CallMethod(SysEntity.ClientClanManagerId, new SetClanMemberDataPacket(SetClanMemberDataPacket.NameKey, member));
             client.CallMethod(SysEntity.ClientClanManagerId, new ClanMembersRosterEndPacket(clanData.Id));
         }
         private void SetClanData(Client client, ClanData clanData)

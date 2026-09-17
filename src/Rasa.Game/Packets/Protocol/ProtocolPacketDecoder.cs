@@ -12,6 +12,7 @@ namespace Rasa.Packets.Protocol
         private readonly NonContiguousMemoryStream _input = new();
         private readonly object _sync = new();
         private bool _disposed;
+        private readonly bool[] _receivedSequence = new bool[256];
 
         internal uint[] ReceiveSequence { get; } = new uint[256];
 
@@ -50,9 +51,11 @@ namespace Rasa.Packets.Protocol
 
                     if (packet.Channel != 0)
                     {
-                        if (packet.SequenceNumber < ReceiveSequence[packet.Channel])
+                        if (_receivedSequence[packet.Channel] &&
+                            unchecked((int)(packet.SequenceNumber - ReceiveSequence[packet.Channel])) <= 0)
                             continue;
 
+                        _receivedSequence[packet.Channel] = true;
                         ReceiveSequence[packet.Channel] = packet.SequenceNumber;
                     }
 
