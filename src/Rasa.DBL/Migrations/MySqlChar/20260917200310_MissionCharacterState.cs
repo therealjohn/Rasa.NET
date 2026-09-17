@@ -48,6 +48,7 @@ namespace Rasa.Migrations.MySqlChar
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            // Downgrade requires at most one mission row per character; duplicate rows intentionally fail.
             migrationBuilder.DropForeignKey(
                 name: "FK_character_mission_character_character_id",
                 table: "character_mission");

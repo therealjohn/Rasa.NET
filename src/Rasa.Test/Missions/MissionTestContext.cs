@@ -23,8 +23,10 @@ namespace Rasa.Test.Missions
     using Rasa.Packets.Protocol;
     using Rasa.Repositories.Char;
     using Rasa.Repositories.Char.Character;
+    using Rasa.Repositories.Char.CharacterAppearance;
     using Rasa.Repositories.Char.CharacterInventory;
     using Rasa.Repositories.Char.CharacterMission;
+    using Rasa.Repositories.Char.GameAccount;
     using Rasa.Repositories.Char.Items;
     using Rasa.Repositories.UnitOfWork;
     using Rasa.Repositories.World;
@@ -77,7 +79,15 @@ namespace Rasa.Test.Missions
             Client.Player.Credits[CurencyType.Prestige] = 50;
             Client.Player.Inventory.PersonalInventory = Enumerable.Repeat(0UL, 250).ToList();
             typeof(Client).GetProperty(nameof(Client.AccountEntry))!.SetValue(Client,
-                new GameAccountEntry { Id = 1, SelectedSlot = 0 });
+                new GameAccountEntry
+                {
+                    Id = 1,
+                    SelectedSlot = 0,
+                    Characters = new List<CharacterEntry>
+                    {
+                        new() { Id = 1, AccountId = 1, Slot = 0, Name = "Character 1", Scale = 1 }
+                    }
+                });
             CellManager.Instance.AddToWorld(Client);
             Drain();
             Manager = new MissionManager(this, definitions, rewards ?? new Dictionary<uint, MissionRewardDefinition>(),
@@ -85,9 +95,14 @@ namespace Rasa.Test.Missions
         }
 
         internal static MissionTestContext WithDefinitions(params uint[] missionIds) =>
-            new(CreateDefinitions(missionIds));
+            new(CreateDefinitions(true, missionIds));
 
-        private static IReadOnlyDictionary<uint, Mission> CreateDefinitions(params uint[] missionIds) =>
+        internal static MissionTestContext WithDatabaseDefinitions(params uint[] missionIds) =>
+            new(CreateDefinitions(false, missionIds));
+
+        private static IReadOnlyDictionary<uint, Mission> CreateDefinitions(
+            bool isOperational,
+            params uint[] missionIds) =>
             missionIds.ToDictionary(
                 id => id,
                 id => new Mission(new NpcMissionEntry
@@ -101,7 +116,7 @@ namespace Rasa.Test.Missions
                     Shareable = true,
                     RadioCompleteable = false,
                     Comment = "fixture"
-                }));
+                }, isOperational: isOperational));
 
         internal static MissionTestContext WithCompletableMission(uint missionId)
         {
@@ -119,7 +134,7 @@ namespace Rasa.Test.Missions
                     new MissionRewardItem(29, 4)
                 });
             var context = new MissionTestContext(
-                CreateDefinitions(missionId),
+                CreateDefinitions(true, missionId),
                 new Dictionary<uint, MissionRewardDefinition> { [missionId] = reward });
             context.Reward = reward;
             context.AddRewardTemplate(28, 3147);
@@ -264,7 +279,8 @@ namespace Rasa.Test.Missions
         internal Client CreateCompetingClient()
         {
             foreach (var cell in Map.MapCellInfo.Cells.Values)
-                cell.CreatureList.Remove(Receiver);
+                foreach (var npc in _npcs)
+                    cell.CreatureList.Remove(npc);
             var client = _world.CreateClient(factory: this);
             client.Player.Id = Client.Player.Id;
             client.Player.Level = Client.Player.Level;
@@ -280,8 +296,11 @@ namespace Rasa.Test.Missions
             }
             finally
             {
-                var seed = CellManager.Instance.GetCellSeed(Receiver.Position);
-                CellManager.Instance.GetCell(Map, seed & 0xFFFF, seed >> 16).CreatureList.Add(Receiver);
+                foreach (var npc in _npcs)
+                {
+                    var seed = CellManager.Instance.GetCellSeed(npc.Position);
+                    CellManager.Instance.GetCell(Map, seed & 0xFFFF, seed >> 16).CreatureList.Add(npc);
+                }
             }
             using var unit = CreateChar();
             Manager.Hydrate(client.Player, unit.CharacterMissions.Get(client.Player.Id));
@@ -317,8 +336,10 @@ namespace Rasa.Test.Missions
             };
             context.SavedChanges += (_, _) => AfterSave?.Invoke(context);
             return new CharUnitOfWork(context,
-                gameAccounts: null, censoredWords: null, characters: new CharacterRepository(context),
-                characterAbilityDrawers: null, characterAppearances: null,
+                gameAccounts: new GameAccountRepository(context), censoredWords: null,
+                characters: new CharacterRepository(context),
+                characterAbilityDrawers: null,
+                characterAppearances: new CharacterAppearanceRepository(context),
                 characterInventories: new CharacterInventoryRepository(context),
                 characterLockboxes: null, characterLogoses: null,
                 characterMissions: new CharacterMissionRepository(context), characterOptions: null,

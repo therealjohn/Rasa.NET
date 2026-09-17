@@ -93,7 +93,7 @@ namespace Rasa.Managers
 
                     foreach (var missionId in creature.Npc.NpcMissionIds)
                     {
-                        if (!MissionManager.Instance.LoadedMissions.TryGetValue(missionId, out var mission))
+                        if (!MissionManager.Instance.TryGetOperationalMission(missionId, out var mission))
                             continue;
 
                         if (mission.MissionGiver == creature.DbId)
@@ -248,7 +248,7 @@ namespace Rasa.Managers
 
                 foreach (var missionId in npc.NpcMissionIds)
                 {
-                    if (!MissionManager.Instance.LoadedMissions.TryGetValue(missionId, out var mission))
+                    if (!MissionManager.Instance.TryGetOperationalMission(missionId, out var mission))
                         continue;
 
                     if (mission.MissionReciver == creature.DbId)
@@ -260,11 +260,15 @@ namespace Rasa.Managers
 
                 // if we have completable mission send it, else send available missions
                 if (completeMission.Count > 0)
+                {
                     client.CallMethod(creature.EntityId, new NPCConversationStatusPacket(ConversationStatus.ObjectivComplete, completeMission));  // complete mission
-                else
+                    statusSet = true;
+                }
+                else if (availableMissions.Count > 0)
+                {
                     client.CallMethod(creature.EntityId, new NPCConversationStatusPacket(ConversationStatus.Available, availableMissions));       // available missions
-
-                statusSet = true;
+                    statusSet = true;
+                }
             }
 
             /*

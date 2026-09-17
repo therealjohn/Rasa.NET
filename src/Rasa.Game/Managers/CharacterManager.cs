@@ -318,10 +318,13 @@ namespace Rasa.Managers
 
                 using (var unitOfWork = _gameUnitOfWorkFactory.CreateChar())
                 {
-                    unitOfWork.CharacterAppearances.DeleteForChar(charactersBySlot.Id);
-                    // TODO delete ClanMember entry
-                    unitOfWork.Characters.Delete(charactersBySlot.Id);
-                    unitOfWork.Complete();
+                    unitOfWork.ExecuteTransaction(() =>
+                    {
+                        unitOfWork.CharacterAppearances.DeleteForChar(charactersBySlot.Id);
+                        unitOfWork.CharacterMissions.RemoveAll(charactersBySlot.Id);
+                        // TODO delete ClanMember entry
+                        unitOfWork.Characters.Delete(charactersBySlot.Id);
+                    });
                 }
 
                 client.ReloadGameAccountEntry();

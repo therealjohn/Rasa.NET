@@ -349,21 +349,22 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
-        public void TransientExecutionStrategyFailurePublishesNothingAndAllowsRetry()
+        public void SyntheticTransientExecutionStrategyLookalikePreservesIdentityAndStack()
         {
             using var context = MissionTestContext.WithCompletableMission(429);
             var before = context.ReadRewardTotals();
-            context.AfterSave = _ => ThrowAtPersistenceBoundary(new InvalidOperationException(
+            var expected = new InvalidOperationException(
                 "Injected execution strategy wrapper.",
-                new DbUpdateException("Injected transient update failure.", new TestDbException(true))));
+                new DbUpdateException("Injected transient update failure.", new TestDbException(true)));
+            context.AfterSave = _ => ThrowAtPersistenceBoundary(expected);
 
-            Assert.IsFalse(context.Manager.TryCompleteNpcMission(
-                context.Client, context.Receiver.EntityId, 429, 0));
+            var actual = Assert.ThrowsExactly<InvalidOperationException>(() =>
+                context.Manager.TryCompleteNpcMission(
+                    context.Client, context.Receiver.EntityId, 429, 0));
 
+            Assert.AreSame(expected, actual);
+            StringAssert.Contains(actual.StackTrace, nameof(ThrowAtPersistenceBoundary));
             AssertUnchanged(context, before);
-            context.AfterSave = null;
-            Assert.IsTrue(context.Manager.TryCompleteNpcMission(
-                context.Client, context.Receiver.EntityId, 429, 0));
         }
 
         [TestMethod]

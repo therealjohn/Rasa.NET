@@ -21,6 +21,9 @@ namespace Rasa.Repositories.Char.CharacterMission
             return query.Where(entry => entry.CharacterId == characterId).ToList();
         }
 
+        public int Count(uint characterId) =>
+            _charContext.CharacterMissionEntries.Count(entry => entry.CharacterId == characterId);
+
         [CanBeNull]
         public CharacterMissionEntry Get(uint characterId, uint missionId)
         {
@@ -56,6 +59,13 @@ namespace Rasa.Repositories.Char.CharacterMission
 
             _charContext.CharacterMissionEntries.Remove(mission);
             _charContext.SaveChanges();
+        }
+
+        public void RemoveAll(uint characterId)
+        {
+            var missions = _charContext.CharacterMissionEntries
+                .Where(entry => entry.CharacterId == characterId);
+            _charContext.CharacterMissionEntries.RemoveRange(missions);
         }
     }
 }

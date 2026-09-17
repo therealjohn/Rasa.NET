@@ -223,10 +223,10 @@ namespace Rasa.Managers
             var hydrated = new Dictionary<uint, MissionLog>();
             foreach (var row in rows)
             {
-                if (!_loadedMissions.ContainsKey(row.MissionId))
+                if (!TryGetOperationalMission(row.MissionId, out _))
                 {
                     Logger.WriteLog(LogType.Error,
-                        $"Skipped mission {row.MissionId} for character {player.Id}: definition is not loaded.");
+                        $"Skipped mission {row.MissionId} for character {player.Id}: definition is not operational.");
                     continue;
                 }
 
@@ -252,7 +252,7 @@ namespace Rasa.Managers
             var snapshot = new Dictionary<uint, MissionInfo>();
             foreach (var entry in player.Missions)
             {
-                if (!_loadedMissions.TryGetValue(entry.Key, out var definition) ||
+                if (!TryGetOperationalMission(entry.Key, out var definition) ||
                     !IsPublishedState(entry.Value.State))
                     continue;
 
@@ -278,30 +278,37 @@ namespace Rasa.Managers
             {
                 if (!IsActivePlayer(client))
                     return Reject($"Rejected mission {missionId}: character is not active in the world.");
-                if (!_loadedMissions.TryGetValue(missionId, out var definition))
-                    return Reject($"Rejected mission {missionId}: definition is not loaded.");
+                if (!TryGetOperationalMission(missionId, out var definition))
+                    return Reject($"Rejected mission {missionId}: definition is not operational.");
                 if (!TryGetNpcOnPlayerMap(client.Player, npcEntityId, out var npc))
                     return Reject($"Rejected mission {missionId}: NPC entity {npcEntityId} is not in the current map instance.");
                 if (npc.Npc == null || npc.DbId != definition.MissionGiver)
                     return Reject($"Rejected mission {missionId}: NPC {npc.DbId} is not its authoritative giver.");
-                if (client.Player.Missions.Count >= MissionLogCapacity)
-                {
-                    CommunicatorManager.Instance.SystemMessage(client, "Mission log is full.");
-                    return false;
-                }
-
                 if (client.Player.Missions.ContainsKey(missionId))
                     return Reject($"Rejected mission {missionId}: character {client.Player.Id} already has it.");
 
                 var log = new MissionLog(missionId, MissionState.Active, false);
+                var accepted = false;
+                var durableLogFull = false;
                 try
                 {
                     using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
                     unitOfWork.ExecuteTransaction(() =>
+                    {
+                        if (unitOfWork.CharacterMissions.Count(client.Player.Id) >= MissionLogCapacity)
+                        {
+                            durableLogFull = true;
+                            return;
+                        }
+                        if (unitOfWork.CharacterMissions.Get(client.Player.Id, missionId) != null)
+                            return;
+
                         unitOfWork.CharacterMissions.Add(new CharacterMissionEntry(
                             client.Player.Id,
                             missionId,
-                            (uint)MissionState.Active)));
+                            (uint)MissionState.Active));
+                        accepted = true;
+                    });
                 }
                 catch (Exception error) when (error is DbUpdateException || error is DbException)
                 {
@@ -309,6 +316,14 @@ namespace Rasa.Managers
                         $"Unable to accept mission {missionId} for character {client.Player.Id}: {error.Message}");
                     return false;
                 }
+
+                if (durableLogFull)
+                {
+                    CommunicatorManager.Instance.SystemMessage(client, "Mission log is full.");
+                    return false;
+                }
+                if (!accepted)
+                    return Reject($"Rejected mission {missionId}: character {client.Player.Id} already has it.");
 
                 client.Player.Missions.Add(missionId, log);
                 client.CallMethod(
@@ -327,8 +342,8 @@ namespace Rasa.Managers
             {
                 if (!IsActivePlayer(client))
                     return Reject($"Rejected mission {missionId} turn-in: character is not active in the world.");
-                if (!_loadedMissions.TryGetValue(missionId, out var definition))
-                    return Reject($"Rejected mission {missionId} turn-in: definition is not loaded.");
+                if (!TryGetOperationalMission(missionId, out var definition))
+                    return Reject($"Rejected mission {missionId} turn-in: definition is not operational.");
                 if (!_rewardDefinitions.TryGetValue(missionId, out var rewardDefinition))
                     return Reject($"Rejected mission {missionId} turn-in: no approved reward definition is loaded.");
                 if (!TryGetNpcOnPlayerMap(client.Player, npcEntityId, out var npc))
@@ -411,8 +426,18 @@ namespace Rasa.Managers
                 try
                 {
                     using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+                    var removed = false;
                     unitOfWork.ExecuteTransaction(() =>
-                        unitOfWork.CharacterMissions.Remove(client.Player.Id, missionId));
+                    {
+                        var durableMission = unitOfWork.CharacterMissions.Get(client.Player.Id, missionId);
+                        if (durableMission?.MissionState != (uint)MissionState.Active)
+                            return;
+
+                        unitOfWork.CharacterMissions.Remove(client.Player.Id, missionId);
+                        removed = true;
+                    });
+                    if (!removed)
+                        return false;
                 }
                 catch (Exception error) when (error is DbUpdateException || error is DbException)
                 {
@@ -431,6 +456,15 @@ namespace Rasa.Managers
             state == MissionState.Active ||
             state == MissionState.Failded ||
             state == MissionState.Completed;
+
+        internal bool TryGetOperationalMission(uint missionId, out Mission mission)
+        {
+            if (_loadedMissions.TryGetValue(missionId, out mission) && mission.IsOperational)
+                return true;
+
+            mission = null;
+            return false;
+        }
 
         private static bool IsActivePlayer(Client client)
         {

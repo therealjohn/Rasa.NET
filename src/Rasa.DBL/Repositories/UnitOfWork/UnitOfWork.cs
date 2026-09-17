@@ -90,9 +90,15 @@ namespace Rasa.Repositories.UnitOfWork
                         typeof(System.Data.Common.DbTransaction).IsAssignableFrom(declaringType));
             }
 
-            static bool IsTransientUpdateWrapper(System.InvalidOperationException error) =>
-                error.InnerException is DbUpdateException { InnerException: DbException databaseError } &&
-                databaseError.IsTransient;
+            bool IsTransientUpdateWrapper(System.InvalidOperationException error)
+            {
+                if (error.InnerException is not DbUpdateException { InnerException: DbException databaseError } ||
+                    !databaseError.IsTransient)
+                    return false;
+
+                var providerConnectionType = _dbContext.Database.GetDbConnection().GetType();
+                return databaseError.GetType().Assembly == providerConnectionType.Assembly;
+            }
         }
 
         public void Reject()

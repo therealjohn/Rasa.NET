@@ -13,8 +13,9 @@
         public byte CategoryId { get; }
         public bool Shareable { get; }
         public bool RadioCompletable { get; }
+        public bool IsOperational { get; }
 
-        public Mission(NpcMissionEntry mission)
+        public Mission(NpcMissionEntry mission, bool isOperational = false)
         {
             MissionId = mission.Id;
             MissionGiver = mission.GiverId;
@@ -24,6 +25,7 @@
             CategoryId = mission.CategoryId;
             Shareable = mission.Shareable;
             RadioCompletable = mission.RadioCompleteable;
+            IsOperational = isOperational;
         }
 
         internal MissionInfo CreateInfo(MissionState state, bool completeable)

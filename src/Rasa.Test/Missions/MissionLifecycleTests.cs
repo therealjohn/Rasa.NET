@@ -1,13 +1,21 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
+using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace Rasa.Test.Missions
 {
     using Rasa.Data;
+    using Rasa.Managers;
+    using Rasa.Packets.Game.Client;
+    using Rasa.Packets.Game.Server;
+    using Rasa.Packets.MapChannel.Client;
+    using Rasa.Packets.MapChannel.Server;
     using Rasa.Packets.Mission.Server;
+    using Rasa.Repositories;
     using Rasa.Structures;
     using Rasa.Structures.Char;
 
@@ -157,12 +165,56 @@ namespace Rasa.Test.Missions
             using var context = MissionTestContext.WithDefinitions(321);
             var npc = context.AddNpc(77);
             for (uint id = 1; id <= 30; id++)
+            {
                 context.Client.Player.Missions.Add(id, new MissionLog(id, MissionState.Active, false));
+                context.SeedMission(context.Client.Player.Id, id, (uint)MissionState.Active, false);
+            }
 
             Assert.IsFalse(context.Manager.TryAcceptNpcMission(context.Client, npc.EntityId, 321));
 
             Assert.AreEqual(30, context.Client.Player.Missions.Count);
             Assert.AreEqual(0, context.Drain().OfType<MissionGainedPacket>().Count());
+        }
+
+        [TestMethod]
+        public void DurableUnknownMissionsCountTowardAcceptanceCapacity()
+        {
+            using var context = MissionTestContext.WithDefinitions(321);
+            var npc = context.AddNpc(77);
+            for (uint id = 1000; id < 1030; id++)
+                context.SeedMission(context.Client.Player.Id, id, (uint)MissionState.Active, false);
+
+            Assert.AreEqual(0, context.Client.Player.Missions.Count);
+            Assert.IsFalse(context.Manager.TryAcceptNpcMission(context.Client, npc.EntityId, 321));
+
+            using var unit = context.CreateChar();
+            Assert.AreEqual(30, unit.CharacterMissions.Get(context.Client.Player.Id).Count);
+            Assert.IsNull(unit.CharacterMissions.Get(context.Client.Player.Id, 321));
+            Assert.AreEqual(0, context.Drain().OfType<MissionGainedPacket>().Count());
+        }
+
+        [TestMethod]
+        public void CompetingDistinctClientsCannotExceedDurableMissionCapacity()
+        {
+            using var context = MissionTestContext.WithDefinitions(321, 429);
+            var npc = context.AddNpc(77);
+            for (uint id = 1000; id < 1029; id++)
+                context.SeedMission(context.Client.Player.Id, id, (uint)MissionState.Active, false);
+            var competitor = context.CreateCompetingClient();
+
+            var results = Task.WhenAll(
+                Task.Factory.StartNew(
+                    () => context.Manager.TryAcceptNpcMission(context.Client, npc.EntityId, 321),
+                    TaskCreationOptions.LongRunning),
+                Task.Factory.StartNew(
+                    () => context.Manager.TryAcceptNpcMission(competitor, npc.EntityId, 429),
+                    TaskCreationOptions.LongRunning))
+                .GetAwaiter().GetResult();
+            Assert.AreEqual(1, results.Count(result => result));
+            using var unit = context.CreateChar();
+            Assert.AreEqual(30, unit.CharacterMissions.Get(context.Client.Player.Id).Count);
+            Assert.AreEqual(results[0], context.Client.Player.Missions.ContainsKey(321));
+            Assert.AreEqual(results[1], competitor.Player.Missions.ContainsKey(429));
         }
 
         [TestMethod]
@@ -210,6 +262,82 @@ namespace Rasa.Test.Missions
 
             context.ReloadPlayerMissions();
             Assert.IsFalse(context.Client.Player.Missions.ContainsKey(321));
+        }
+
+        [TestMethod]
+        public void StaleClientCannotAbandonAnotherClientsCompletedMission()
+        {
+            using var context = MissionTestContext.WithCompletableMission(429);
+            var staleClient = context.CreateCompetingClient();
+
+            Assert.IsTrue(context.Manager.TryCompleteNpcMission(
+                context.Client, context.Receiver.EntityId, 429, 0));
+            var rewarded = context.ReadRewardTotals();
+
+            Assert.IsFalse(context.Manager.TryAbandon(staleClient, 429));
+            Assert.IsFalse(context.Manager.TryCompleteNpcMission(
+                staleClient, context.Receiver.EntityId, 429, 0));
+
+            var durable = context.ReadMission(429);
+            Assert.AreEqual((uint)MissionState.Completed, durable.MissionState);
+            Assert.IsFalse(durable.Completeable);
+            Assert.AreEqual(rewarded, context.ReadRewardTotals());
+            Assert.AreEqual(0, MissionTestContext.Drain(staleClient)
+                .OfType<MissionDiscardedPacket>().Count());
+        }
+
+        [TestMethod]
+        public void CharacterDeletionRemovesRestrictiveMissionRowsInTheSameOperation()
+        {
+            using var context = MissionTestContext.WithDefinitions(321);
+            context.SeedMission(context.Client.Player.Id, 321, (uint)MissionState.Completed, false);
+
+            new Rasa.Managers.CharacterManager(context).RequestDeleteCharacterInSlot(
+                context.Client, new RequestDeleteCharacterInSlotPacket { Slot = 0 });
+
+            using var unit = context.CreateChar();
+            Assert.AreEqual(0, unit.CharacterMissions.Get(context.Client.Player.Id).Count);
+            Assert.ThrowsExactly<EntityNotFoundException>(() =>
+                unit.Characters.Get(context.Client.Player.Id));
+            Assert.AreEqual(1, context.Drain().OfType<CharacterDeleteSuccessPacket>().Count());
+        }
+
+        [TestMethod]
+        public void DatabaseDefinitionsDefaultInactiveAndAreNeitherAdvertisedNorAccepted()
+        {
+            using var context = MissionTestContext.WithDatabaseDefinitions(321, 429);
+            var npc = context.AddNpc(77);
+            npc.Npc.NpcMissionIds = new List<uint> { 321, 429 };
+            var singleton = typeof(MissionManager).GetField(
+                "_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+            var previous = singleton.GetValue(null);
+            singleton.SetValue(null, context.Manager);
+            try
+            {
+                var npcManager = (NpcManager)Activator.CreateInstance(
+                    typeof(NpcManager),
+                    BindingFlags.Instance | BindingFlags.NonPublic,
+                    binder: null,
+                    args: new object[] { context },
+                    culture: null)!;
+
+                npcManager.UpdateConversationStatus(context.Client, npc);
+                var status = context.Drain().OfType<NPCConversationStatusPacket>().Single();
+                Assert.AreEqual(ConversationStatus.None, status.ConvoStatusId);
+                Assert.AreEqual(0, status.Data.Count);
+
+                npcManager.RequestNpcConverse(context.Client,
+                    new RequestNPCConversePacket { EntityId = npc.EntityId });
+                var conversation = context.Drain().OfType<ConversePacket>().Single();
+                Assert.IsFalse(conversation.ConvoDataDict.ContainsKey(ConversationType.MissionDispense));
+                Assert.IsFalse(conversation.ConvoDataDict.ContainsKey(ConversationType.MissionComplete));
+                Assert.IsFalse(context.Manager.TryAcceptNpcMission(
+                    context.Client, npc.EntityId, 321));
+            }
+            finally
+            {
+                singleton.SetValue(null, previous);
+            }
         }
 
         [TestMethod]
