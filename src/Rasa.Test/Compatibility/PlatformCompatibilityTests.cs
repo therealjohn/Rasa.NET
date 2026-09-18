@@ -61,42 +61,23 @@ namespace Rasa.Test.Compatibility
         public void DockerServicesRunWhereRequiredConfigurationAndAssetsExist()
         {
             var repositoryRoot = FindRepositoryRoot();
-            var compose = File.ReadAllText(Path.Combine(repositoryRoot, "docker-compose.yml"));
-            var dockerfile = File.ReadAllText(Path.Combine(repositoryRoot, "Dockerfile"));
+            var compose = ComposeLayout.Parse(
+                File.ReadAllText(Path.Combine(repositoryRoot, "docker-compose.yml")));
+            var image = DockerImageLayout.Create(repositoryRoot);
 
-            StringAssert.Contains(
-                compose,
-                "working_dir: /app/src/Rasa.Auth/bin/Release/net10.0");
-            StringAssert.Contains(
-                compose,
-                "working_dir: /app/src/Rasa.Game/bin/Release/net10.0");
-            StringAssert.Contains(
-                compose,
-                "./rasaauth.db:/app/src/Rasa.Auth/bin/Release/net10.0/rasaauth.db");
-            StringAssert.Contains(
-                compose,
-                "./rasachar.db:/app/src/Rasa.Game/bin/Release/net10.0/rasachar.db");
-            StringAssert.Contains(
-                compose,
-                "./rasaworld.db:/app/src/Rasa.Game/bin/Release/net10.0/rasaworld.db");
-            StringAssert.Contains(
-                compose,
-                "./appsettings.env.json:/app/src/Rasa.Game/bin/Release/net10.0/appsettings.env.json");
-            StringAssert.Contains(
-                dockerfile,
-                "COPY navmesh /app/src/Rasa.Game/bin/Release/net10.0/navmesh");
-
-            AssertOutputIncludesRequiredConfiguration(
+            AssertServiceLayout(
                 repositoryRoot,
+                compose.GetService("auth"),
+                image,
                 "Rasa.Auth",
-                "appsettings.json",
-                "databasesettings.json");
-            AssertOutputIncludesRequiredConfiguration(
+                "Auth");
+            AssertServiceLayout(
                 repositoryRoot,
+                compose.GetService("game"),
+                image,
                 "Rasa.Game",
-                "appsettings.json",
-                "databasesettings.json",
-                "kb-articles.json");
+                "Char",
+                "World");
         }
 
         private static string FindRepositoryRoot()
@@ -128,22 +109,87 @@ namespace Rasa.Test.Compatibility
                 .Attribute("Version")?.Value;
         }
 
-        private static void AssertOutputIncludesRequiredConfiguration(
+        private static void AssertServiceLayout(
             string repositoryRoot,
+            ComposeService service,
+            DockerImageLayout image,
             string projectName,
-            params string[] files)
+            params string[] databaseNames)
         {
-            var output = Path.Combine(
-                repositoryRoot,
-                "src",
-                projectName,
-                "bin",
-                "Release",
-                "net10.0");
-            foreach (var file in files)
-                Assert.IsTrue(
-                    File.Exists(Path.Combine(output, file)),
-                    $"{projectName} output is missing {file}.");
+            var outputDirectory =
+                $"/app/src/{projectName}/bin/Release/net10.0";
+            Assert.AreEqual(outputDirectory, service.WorkingDirectory, service.Name);
+            CollectionAssert.AreEqual(
+                new[] { "dotnet", projectName + ".dll" },
+                service.Command.ToArray(),
+                service.Name);
+
+            AssertImageFileAtWorkingDirectory(service, image, projectName + ".dll");
+            AssertImageFileAtWorkingDirectory(service, image, "appsettings.json");
+            AssertImageFileAtWorkingDirectory(service, image, "databasesettings.json");
+
+            using var databaseSettings = JsonDocument.Parse(File.ReadAllText(
+                Path.Combine(repositoryRoot, "src", "Rasa.DBL", "databasesettings.json")));
+            Assert.AreEqual(
+                "Sqlite",
+                databaseSettings.RootElement
+                    .GetProperty("Databases")
+                    .GetProperty("Provider")
+                    .GetString());
+            foreach (var databaseName in databaseNames)
+            {
+                var fileName = databaseSettings.RootElement
+                    .GetProperty("Databases")
+                    .GetProperty(databaseName)
+                    .GetProperty("Database")
+                    .GetString() + ".db";
+                AssertVolumeAtWorkingDirectory(service, fileName);
+            }
+
+            if (projectName != "Rasa.Game")
+                return;
+
+            AssertVolumeAtWorkingDirectory(service, "appsettings.env.json");
+            using var appSettings = JsonDocument.Parse(File.ReadAllText(
+                Path.Combine(repositoryRoot, "src", "Rasa.Game", "appsettings.json")));
+            var gameData = appSettings.RootElement.GetProperty("GameDataConfig");
+            var knowledgeBasePath = PosixPath.Resolve(
+                service.WorkingDirectory,
+                gameData.GetProperty("KnowledgeBaseFile").GetString());
+            var navMeshPath = PosixPath.Resolve(
+                service.WorkingDirectory,
+                gameData.GetProperty("NavMeshPath").GetString());
+            Assert.IsTrue(
+                image.ContainsFile(knowledgeBasePath),
+                $"Game image layout is missing {knowledgeBasePath}.");
+            Assert.IsTrue(
+                image.ContainsDirectory(navMeshPath),
+                $"Game image layout is missing {navMeshPath}.");
+            Assert.IsTrue(
+                image.ContainsFileBelow(navMeshPath, ".nav"),
+                $"Game image layout contains no navmesh files below {navMeshPath}.");
+        }
+
+        private static void AssertImageFileAtWorkingDirectory(
+            ComposeService service,
+            DockerImageLayout image,
+            string relativePath)
+        {
+            var path = PosixPath.Resolve(service.WorkingDirectory, relativePath);
+            Assert.IsTrue(
+                image.ContainsFile(path),
+                $"{service.Name} image layout is missing {path}.");
+        }
+
+        private static void AssertVolumeAtWorkingDirectory(
+            ComposeService service,
+            string relativePath)
+        {
+            var destination = PosixPath.Resolve(service.WorkingDirectory, relativePath);
+            CollectionAssert.Contains(
+                service.VolumeDestinations.ToArray(),
+                destination,
+                $"{service.Name} does not mount {destination}.");
         }
     }
 }

@@ -298,12 +298,16 @@ from legacy mission rows, so they preserve valid character-owned rows for both
 providers. On character hydration, the server maps rows to the current
 operational definition and state inside one character-database transaction.
 Mapped rows are retained. A row with no complete objective graph, an unsupported
-state, a non-operational definition, or inconsistent completable state is
-logged and removed through the shared repository path; its objective children
-cascade. The runtime mission dictionary is replaced only after that transaction
-commits. This keeps MySQL and SQLite behavior aligned, frees mission-log
-capacity, and permits the same mission ID to be accepted again without deleting
-unrelated valid attempts.
+state, or a non-operational definition is logged and removed through the shared
+repository path; its objective children cascade. An Active row is also removed
+when its persisted completable value disagrees with the required objective
+states. Durable terminal Failed and Completed rows are retained when their
+definition and objective graph are valid; hydration normalizes their runtime
+completable value to false according to the terminal state instead of treating
+the legacy bit as an Active-state consistency check. The runtime mission
+dictionary is replaced only after that transaction commits. This keeps MySQL
+and SQLite behavior aligned, frees mission-log capacity, and permits the same
+mission ID to be accepted again without deleting unrelated valid attempts.
 
 World mission definitions are immutable and inactive by default. Incomplete
 database definitions are not hydrated, advertised by NPCs, accepted, tracked or

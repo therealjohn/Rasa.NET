@@ -60,9 +60,12 @@ value `navmesh`. If you set a different `GameDataConfig.NavMeshPath`, add a
 matching read-only volume to the `game` service.
 
 `PlatformCompatibilityTests.DockerServicesRunWhereRequiredConfigurationAndAssetsExist`
-is the bounded static check for this layout. It verifies the service working
-directories and mounts, the Dockerfile navmesh destination, and the required
-configuration files in both Release outputs.
+is the bounded static check for this layout. It parses the Compose service
+blocks so each command, working directory, and volume destination is checked
+against its owning service. It also models Dockerfile `COPY`, `WORKDIR`, and
+Release-build output placement from the project files. This verifies
+configuration, SQLite, knowledge-base, and navmesh paths without relying on a
+host `bin` directory as proof of image contents.
 
 ## Start Server
 
