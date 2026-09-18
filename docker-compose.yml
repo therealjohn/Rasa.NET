@@ -3,7 +3,7 @@ services:
     image: rasa_net
     restart: always
     build: .
-    command: dotnet run --project src/Rasa.Auth/Rasa.Auth.csproj
+    command: dotnet /app/src/Rasa.Auth/bin/Release/net10.0/Rasa.Auth.dll
     stdin_open: true
     tty: true
     ports:
@@ -15,7 +15,7 @@ services:
     image: rasa_net
     restart: always
     build: .
-    command: dotnet run --project src/Rasa.Game/Rasa.Game.csproj
+    command: dotnet /app/src/Rasa.Game/bin/Release/net10.0/Rasa.Game.dll
     stdin_open: true
     tty: true
     ports:
@@ -24,5 +24,4 @@ services:
     volumes:
       - ./rasachar.db:/app/rasachar.db
       - ./rasaworld.db:/app/rasaworld.db
-      - ./appsettings.env.json:/app/src/Rasa.Game/appsettings.env.json
-
+      - ./appsettings.env.json:/app/src/Rasa.Game/bin/Release/net10.0/appsettings.env.json
