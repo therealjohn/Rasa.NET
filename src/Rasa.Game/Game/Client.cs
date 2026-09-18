@@ -476,6 +476,7 @@ namespace Rasa.Game
             Player.MapContextId = transfer.OriginMap.MapInfo.MapContextId;
             SetWorldPosition(transfer.OriginPosition, transfer.OriginRotation);
             LoadingMap = transfer.OriginMap.MapInfo.MapContextId;
+            AwaitingMapLoaded = false;
             PendingTransfer = null;
         }
 

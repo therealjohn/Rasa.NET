@@ -977,6 +977,7 @@ namespace Rasa.Managers
                     transfer.DestinationMap.MapInfo.MapContextId, transfer.DestinationMap.InstanceId,
                     transfer.DestinationMap.MapInfo.MapVersion, transfer.DestinationPosition,
                     (float)transfer.DestinationRotation));
+                client.AwaitingMapLoaded = true;
             }
         }
 

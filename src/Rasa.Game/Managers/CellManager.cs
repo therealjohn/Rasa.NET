@@ -421,7 +421,7 @@ namespace Rasa.Managers
         {
             return GetCells(map, cells).SelectMany(cell => cell.ClientList)
                 .Where(client => client != null && client != excluded &&
-                    client.State != ClientState.Disconnected && client.Player?.MapChannel == map &&
+                    client.State == ClientState.Ingame && client.Player?.MapChannel == map &&
                     !client.Player.Disconected)
                 .Distinct().ToList();
         }

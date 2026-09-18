@@ -1,7 +1,12 @@
 extern alias RasaGame;
 
+using System;
 using System.Linq;
 using System.Numerics;
+using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace Rasa.Test.World
@@ -9,6 +14,10 @@ namespace Rasa.Test.World
     using ClientState = RasaGame::Rasa.Data.ClientState;
     using Rasa.Data;
     using Rasa.Managers;
+    using Rasa.Networking;
+    using Rasa.Repositories.Char;
+    using Rasa.Repositories.UnitOfWork;
+    using Rasa.Repositories.World;
     using Rasa.Structures;
 
     [TestClass]
@@ -276,6 +285,146 @@ namespace Rasa.Test.World
             Assert.AreSame(world.Map, client.Player.MapChannel);
             Assert.AreEqual(Vector3.Zero, client.Player.Position);
             Assert.IsNull(client.PendingTransfer);
+            Assert.IsFalse(client.AwaitingMapLoaded);
+        }
+
+        [TestMethod]
+        public void MapLinkPersistenceFailurePublishesNoDestinationState()
+        {
+            using var world = new WorldTestContext();
+            var client = world.CreateClient();
+            var observer = world.CreateClient();
+            var destination = DropshipTravelTests.CreateDestination();
+            world.Map.ClientList.Remove(observer);
+            observer.Player.MapChannel = destination;
+            observer.Player.MapContextId = destination.MapInfo.MapContextId;
+            destination.ClientList.Add(observer);
+            CellManager.Instance.AddToWorld(client);
+            CellManager.Instance.AddToWorld(observer);
+            var maps = new MapChannelManager(null,
+                updateCharacter: (_, _, _) => throw new DbUpdateException("Fixture persistence failure."),
+                disconnect: current => current.State = ClientState.Disconnected,
+                refreshStats: (_, _) => { }, assignPlayer: _ => { }, enterMapChannels: _ => { });
+            maps.MapChannelArray.Add(world.Map.MapInfo.MapContextId, world.Map);
+            maps.MapChannelArray.Add(destination.MapInfo.MapContextId, destination);
+            Assert.IsTrue(maps.ChangeMap(client, destination.MapInfo.MapContextId,
+                new Vector3(400, 5, 0), 0));
+            WorldTestContext.Drain(client);
+            WorldTestContext.Drain(observer);
+
+            maps.MapLoaded(client);
+
+            Assert.AreEqual(ClientState.Disconnected, client.State);
+            Assert.IsNull(client.PendingTransfer);
+            Assert.AreSame(world.Map, client.Player.MapChannel);
+            Assert.AreEqual(Vector3.Zero, client.Player.Position);
+            Assert.IsFalse(destination.ClientList.Contains(client));
+            Assert.IsFalse(destination.MapCellInfo.Cells.Values.Any(cell => cell.ClientList.Contains(client)));
+            Assert.AreEqual(0, WorldTestContext.Drain(client).Count);
+            Assert.AreEqual(0, WorldTestContext.Drain(observer).Count);
+        }
+
+        [TestMethod]
+        public async Task MapLoadedWinsTimeoutRaceWithoutStaleCleanup()
+        {
+            using var world = new WorldTestContext();
+            var client = world.CreateClient();
+            var destination = DropshipTravelTests.CreateDestination();
+            CellManager.Instance.AddToWorld(client);
+            long now = 1000;
+            var saves = 0;
+            var disconnects = 0;
+            var assignments = 0;
+            using var saveStarted = new ManualResetEventSlim();
+            using var releaseSave = new ManualResetEventSlim();
+            var maps = new MapChannelManager(null, () => now,
+                (_, _, _) =>
+                {
+                    Interlocked.Increment(ref saves);
+                    saveStarted.Set();
+                    Assert.IsTrue(releaseSave.Wait(TimeSpan.FromSeconds(5)));
+                },
+                _ => Interlocked.Increment(ref disconnects),
+                (_, _) => { },
+                _ => Interlocked.Increment(ref assignments),
+                _ => { });
+            maps.MapChannelArray.Add(world.Map.MapInfo.MapContextId, world.Map);
+            maps.MapChannelArray.Add(destination.MapInfo.MapContextId, destination);
+            Assert.IsTrue(maps.ChangeMap(client, destination.MapInfo.MapContextId,
+                new Vector3(400, 5, 0), 0));
+
+            var loaded = Task.Run(() => maps.MapLoaded(client));
+            Assert.IsTrue(saveStarted.Wait(TimeSpan.FromSeconds(5)));
+            now = 61000;
+            var timedOut = Task.Run(() => maps.CheckTransferTimeout(client));
+            Assert.IsFalse(timedOut.Wait(TimeSpan.FromMilliseconds(100)));
+            releaseSave.Set();
+            await Task.WhenAll(loaded, timedOut).WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.IsFalse(timedOut.Result);
+            Assert.AreEqual(1, saves);
+            Assert.AreEqual(0, disconnects);
+            Assert.AreEqual(1, assignments);
+            Assert.AreEqual(ClientState.Ingame, client.State);
+            Assert.IsNull(client.PendingTransfer);
+            Assert.AreEqual(1, destination.ClientList.Count(member => member == client));
+            Assert.IsTrue(CellManager.Instance.IsInWorld(client));
+        }
+
+        [TestMethod]
+        public async Task TimeoutSerializesWithCloseAndSavesOnce()
+        {
+            using var world = new WorldTestContext();
+            var factory = new CountingFailureFactory();
+            var client = world.CreateClient(factory: factory);
+            var socket = new LengthedSocket(SizeType.Dword, false);
+            typeof(Rasa.Game.Client).GetProperty(nameof(Rasa.Game.Client.Socket),
+                BindingFlags.Instance | BindingFlags.Public).SetValue(client, socket);
+            var destination = DropshipTravelTests.CreateDestination();
+            CellManager.Instance.AddToWorld(client);
+            long now = 1000;
+            using var disconnectEntered = new ManualResetEventSlim();
+            using var releaseDisconnect = new ManualResetEventSlim();
+            var maps = new MapChannelManager(null, () => now, (_, _, _) => { },
+                current =>
+                {
+                    disconnectEntered.Set();
+                    Assert.IsTrue(releaseDisconnect.Wait(TimeSpan.FromSeconds(5)));
+                    current.Close(false);
+                });
+            maps.MapChannelArray.Add(world.Map.MapInfo.MapContextId, world.Map);
+            maps.MapChannelArray.Add(destination.MapInfo.MapContextId, destination);
+            Assert.IsTrue(maps.ChangeMap(client, destination.MapInfo.MapContextId,
+                new Vector3(400, 5, 0), 0));
+            now = 61000;
+
+            var timeout = Task.Run(() => maps.CheckTransferTimeout(client));
+            Assert.IsTrue(disconnectEntered.Wait(TimeSpan.FromSeconds(5)));
+            var close = Task.Run(() => client.Close(false));
+            Assert.IsFalse(close.Wait(TimeSpan.FromMilliseconds(100)));
+            releaseDisconnect.Set();
+            await Task.WhenAll(timeout, close).WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.IsTrue(timeout.Result);
+            Assert.AreEqual(ClientState.Disconnected, client.State);
+            Assert.IsNull(client.PendingTransfer);
+            Assert.AreSame(world.Map, client.Player.MapChannel);
+            Assert.IsFalse(client.AwaitingMapLoaded);
+            Assert.AreEqual(1, factory.SaveAttempts);
+        }
+
+        private sealed class CountingFailureFactory : IGameUnitOfWorkFactory
+        {
+            internal int SaveAttempts;
+
+            public ICharUnitOfWork CreateChar()
+            {
+                Interlocked.Increment(ref SaveAttempts);
+                throw new DbUpdateException("Fixture disconnect save failure.");
+            }
+
+            public IWorldUnitOfWork CreateWorld() =>
+                throw new InvalidOperationException("Unexpected world database access.");
         }
     }
 }

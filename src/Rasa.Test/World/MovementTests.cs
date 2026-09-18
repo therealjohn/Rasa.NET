@@ -72,7 +72,10 @@ namespace Rasa.Test.World
         }
 
         [TestMethod]
-        public void MovementDoesNotTargetDisconnectedRecipients()
+        [DataRow(ClientState.Teleporting)]
+        [DataRow(ClientState.CharacterSelection)]
+        [DataRow(ClientState.Disconnected)]
+        public void PlayerMovementTargetsOnlyActiveWorldRecipients(ClientState state)
         {
             using var world = new WorldTestContext();
             var receiver = world.CreateClient();
@@ -80,12 +83,46 @@ namespace Rasa.Test.World
             CellManager.Instance.AddToWorld(receiver);
             CellManager.Instance.AddToWorld(sender);
             WorldTestContext.Drain(receiver);
-            receiver.State = ClientState.Disconnected;
+            receiver.State = state;
 
             sender.CellMoveObject(sender, new MoveObjectMessage(sender.Player.EntityId,
                 new Movement(Vector3.Zero, Vector2.Zero)), true);
 
             Assert.AreEqual(0, WorldTestContext.Drain(receiver).Count);
+        }
+
+        [TestMethod]
+        [DataRow(ClientState.Teleporting)]
+        [DataRow(ClientState.CharacterSelection)]
+        public void CreatureMovementTargetsOnlyActiveWorldRecipients(ClientState state)
+        {
+            using var world = new WorldTestContext();
+            var receiver = world.CreateClient();
+            CellManager.Instance.AddToWorld(receiver);
+            WorldTestContext.Drain(receiver);
+            receiver.State = state;
+            var creature = new Rasa.Structures.Creature
+            {
+                Position = Vector3.Zero,
+                MapContextId = world.Map.MapInfo.MapContextId
+            };
+            var maps = MapChannelManager.Instance;
+            maps.MapChannelArray.TryGetValue(world.Map.MapInfo.MapContextId, out var previous);
+            maps.MapChannelArray[world.Map.MapInfo.MapContextId] = world.Map;
+            try
+            {
+                CellManager.Instance.CellMoveObject(creature, new Movement(Vector3.Zero, Vector2.Zero));
+
+                Assert.AreEqual(0, WorldTestContext.Drain(receiver).Count);
+            }
+            finally
+            {
+                EntityManager.Instance.FreeEntity(creature.EntityId);
+                if (previous == null)
+                    maps.MapChannelArray.Remove(world.Map.MapInfo.MapContextId);
+                else
+                    maps.MapChannelArray[world.Map.MapInfo.MapContextId] = previous;
+            }
         }
 
         [TestMethod]

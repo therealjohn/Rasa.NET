@@ -348,9 +348,11 @@ namespace Rasa.Managers
                     return;
                 }
 
-                var dropship = new Dropship(Factions.AFS, DropshipType.Teleporter, client);
                 var mapChannel = MapChannelArray[client.LoadingMap];
+                if (!DynamicObjectManager.Instance.CompleteMapLoadTransfer(client))
+                    return;
 
+                var dropship = new Dropship(Factions.AFS, DropshipType.Teleporter, client);
                 client.Player.MapChannel = mapChannel;
                 client.Player.MapContextId = dropship.Client.LoadingMap;
 
@@ -374,8 +376,6 @@ namespace Rasa.Managers
                 CellManager.Instance.CellCallMethod(dropship.Client.Player.MapChannel, dropship.Client.Player, new TeleportArrivalPacket());
                 client.CallMethod(SysEntity.ClientMethodId, new RequestMovementBlockPacket());
                 _assignPlayer(client);
-                if (!DynamicObjectManager.Instance.CompleteMapLoadTransfer(client))
-                    return;
                 CommunicatorManager.Instance.PlayerEnterMap(dropship.Client);
 
                 return;
@@ -425,18 +425,21 @@ namespace Rasa.Managers
 
         internal bool CheckTransferTimeout(Client client)
         {
-            var transfer = client.PendingTransfer;
-            if (transfer == null || _clock() < transfer.Deadline)
-                return false;
+            lock (client.SyncRoot)
+            {
+                var transfer = client.PendingTransfer;
+                if (transfer == null || _clock() < transfer.Deadline)
+                    return false;
 
-            Logger.WriteLog(LogType.Network,
-                $"Transfer timed out for entity {client.Player.EntityId}; restoring its origin.");
-            if (CellManager.Instance.IsInWorld(client))
-                CellManager.Instance.RemoveFromWorld(client);
-            client.RestoreTransferOrigin();
-            DynamicObjectManager.Instance.CleanupClientDropships(client);
-            _disconnect(client);
-            return true;
+                Logger.WriteLog(LogType.Network,
+                    $"Transfer timed out for entity {client.Player.EntityId}; restoring its origin.");
+                if (CellManager.Instance.IsInWorld(client))
+                    CellManager.Instance.RemoveFromWorld(client);
+                client.RestoreTransferOrigin();
+                DynamicObjectManager.Instance.CleanupClientDropships(client);
+                _disconnect(client);
+                return true;
+            }
         }
 
         private void CompleteMapLinkTransfer(Client client)
@@ -446,15 +449,6 @@ namespace Rasa.Managers
                 return;
 
             var map = transfer.DestinationMap;
-            if (!map.ClientList.Contains(client))
-                map.ClientList.Add(client);
-
-            InventoryManager.Instance.ResendForMap(client);
-            _refreshStats(client, false);
-            CellManager.Instance.AddToWorld(client);
-            MapLinkManager.Instance.PlayerEnteredMap(client);
-            _assignPlayer(client);
-
             try
             {
                 _updateCharacter(client, CharacterUpdate.Position, null);
@@ -468,6 +462,15 @@ namespace Rasa.Managers
                 _disconnect(client);
                 return;
             }
+
+            if (!map.ClientList.Contains(client))
+                map.ClientList.Add(client);
+
+            InventoryManager.Instance.ResendForMap(client);
+            _refreshStats(client, false);
+            CellManager.Instance.AddToWorld(client);
+            MapLinkManager.Instance.PlayerEnteredMap(client);
+            _assignPlayer(client);
 
             client.PendingTransfer = null;
             client.State = ClientState.Ingame;
