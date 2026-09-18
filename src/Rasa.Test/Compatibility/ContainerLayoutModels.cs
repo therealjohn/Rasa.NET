@@ -198,6 +198,8 @@ namespace Rasa.Test.Compatibility
             new HashSet<string>(StringComparer.Ordinal);
         private readonly Dictionary<string, string> _copiedFiles =
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _copiedHostFiles =
+            new Dictionary<string, string>(StringComparer.Ordinal);
 
         private DockerImageLayout()
         {
@@ -208,6 +210,7 @@ namespace Rasa.Test.Compatibility
             var layout = new DockerImageLayout();
             var dockerfile = DockerfileModel.Parse(
                 File.ReadAllText(Path.Combine(repositoryRoot, "Dockerfile")));
+            var dockerIgnore = DockerIgnoreMatcher.Load(repositoryRoot);
             var workingDirectory = "/";
 
             foreach (var instruction in dockerfile.Instructions)
@@ -221,10 +224,19 @@ namespace Rasa.Test.Compatibility
                         layout.AddDirectory(workingDirectory);
                         break;
                     case "COPY":
-                        layout.ApplyCopy(repositoryRoot, workingDirectory, instruction.Arguments);
+                        layout.ApplyCopy(
+                            repositoryRoot,
+                            workingDirectory,
+                            instruction.Arguments,
+                            dockerIgnore);
                         break;
-                    case "RUN" when IsReleaseBuild(instruction.Arguments):
-                        layout.ApplyReleaseBuild(repositoryRoot, workingDirectory);
+                    case "RUN":
+                        var build = DotNetBuildCommand.Parse(instruction.Arguments);
+                        if (build != null &&
+                            build.Configuration.Equals(
+                                "Release",
+                                StringComparison.OrdinalIgnoreCase))
+                            layout.ApplyBuild(workingDirectory, build);
                         break;
                 }
             }
@@ -249,7 +261,8 @@ namespace Rasa.Test.Compatibility
         private void ApplyCopy(
             string repositoryRoot,
             string workingDirectory,
-            string arguments)
+            string arguments,
+            DockerIgnoreMatcher dockerIgnore)
         {
             var fields = SplitArguments(arguments);
             if (fields.Count != 2)
@@ -259,6 +272,12 @@ namespace Rasa.Test.Compatibility
                 repositoryRoot,
                 fields[0].Replace('/', Path.DirectorySeparatorChar)));
             var destination = PosixPath.Resolve(workingDirectory, fields[1]);
+            var sourceRelativePath = Path.GetRelativePath(repositoryRoot, source)
+                .Replace('\\', '/');
+            if (dockerIgnore.IsIgnored(sourceRelativePath))
+                throw new InvalidDataException(
+                    $"Docker COPY source '{fields[0]}' is excluded by .dockerignore.");
+
             if (File.Exists(source))
             {
                 if (fields[1].EndsWith("/", StringComparison.Ordinal) ||
@@ -277,38 +296,77 @@ namespace Rasa.Test.Compatibility
                 "*",
                 SearchOption.AllDirectories))
             {
+                var repositoryRelative = Path.GetRelativePath(repositoryRoot, file)
+                    .Replace('\\', '/');
+                if (dockerIgnore.IsIgnored(repositoryRelative))
+                    continue;
+
                 var relative = Path.GetRelativePath(source, file).Replace('\\', '/');
                 AddCopiedFile(file, PosixPath.Resolve(destination, relative));
             }
         }
 
-        private void ApplyReleaseBuild(string repositoryRoot, string workingDirectory)
+        private void ApplyBuild(
+            string workingDirectory,
+            DotNetBuildCommand build)
         {
-            var solutionPath = PosixPath.Resolve(workingDirectory, "Rasa.NET.sln");
-            if (!_files.Contains(solutionPath))
+            var imageTargetPath = string.IsNullOrEmpty(build.Target)
+                ? PosixPath.Resolve(workingDirectory, "Rasa.NET.sln")
+                : PosixPath.Resolve(workingDirectory, build.Target);
+            if (!_copiedHostFiles.TryGetValue(imageTargetPath, out var hostTargetPath))
                 throw new InvalidDataException(
-                    $"Docker build runs outside the copied solution directory '{workingDirectory}'.");
+                    $"Docker build target '{imageTargetPath}' was not copied into the image.");
 
-            foreach (var projectPath in Directory.EnumerateFiles(
-                Path.Combine(repositoryRoot, "src"),
-                "*.csproj",
-                SearchOption.AllDirectories))
+            var extension = Path.GetExtension(hostTargetPath);
+            var projectTargets = new List<(string HostPath, string ImagePath)>();
+            if (extension.Equals(".sln", StringComparison.OrdinalIgnoreCase))
             {
-                if (!_copiedFiles.TryGetValue(Path.GetFullPath(projectPath), out var imageProjectPath))
-                    continue;
+                foreach (var projectPath in ReadSolutionProjects(hostTargetPath))
+                {
+                    var hostProjectPath = Path.GetFullPath(Path.Combine(
+                        Path.GetDirectoryName(hostTargetPath),
+                        projectPath.Replace('\\', Path.DirectorySeparatorChar)));
+                    var imageProjectPath = PosixPath.Resolve(
+                        PosixPath.GetDirectoryName(imageTargetPath),
+                        projectPath.Replace('\\', '/'));
+                    RequireCopiedProject(hostProjectPath, imageProjectPath);
+                    projectTargets.Add((hostProjectPath, imageProjectPath));
+                }
+            }
+            else if (extension.Equals(".csproj", StringComparison.OrdinalIgnoreCase))
+            {
+                projectTargets.Add((hostTargetPath, imageTargetPath));
+            }
+            else
+            {
+                throw new InvalidDataException(
+                    $"Unsupported Docker dotnet build target '{imageTargetPath}'.");
+            }
 
-                AddProjectOutput(projectPath, imageProjectPath, new HashSet<string>(
-                    StringComparer.OrdinalIgnoreCase));
+            if (projectTargets.Count == 0)
+                throw new InvalidDataException(
+                    $"Docker build target '{imageTargetPath}' contains no supported projects.");
+
+            var materializedProjects = new HashSet<string>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var project in projectTargets)
+            {
+                AddProjectOutput(
+                    project.HostPath,
+                    project.ImagePath,
+                    build.Configuration,
+                    materializedProjects);
             }
         }
 
         private void AddProjectOutput(
             string projectPath,
             string imageProjectPath,
-            HashSet<string> visitedProjects)
+            string configuration,
+            HashSet<string> materializedProjects)
         {
             projectPath = Path.GetFullPath(projectPath);
-            if (!visitedProjects.Add(projectPath))
+            if (!materializedProjects.Add(projectPath))
                 return;
 
             var project = XDocument.Load(projectPath);
@@ -316,11 +374,8 @@ namespace Rasa.Test.Compatibility
             var imageProjectDirectory = PosixPath.GetDirectoryName(imageProjectPath);
             var outputDirectory = PosixPath.Resolve(
                 imageProjectDirectory,
-                "bin/Release/net10.0");
-            var assemblyName = project.Descendants("AssemblyName")
-                .Select(element => element.Value)
-                .FirstOrDefault() ??
-                Path.GetFileNameWithoutExtension(projectPath);
+                $"bin/{configuration}/{ReadTargetFramework(project, projectPath)}");
+            var assemblyName = ReadAssemblyName(project, projectPath);
 
             AddFile(PosixPath.Resolve(outputDirectory, assemblyName + ".dll"));
             AddOutputContent(project, projectDirectory, outputDirectory);
@@ -334,20 +389,27 @@ namespace Rasa.Test.Compatibility
                 var referencedProject = Path.GetFullPath(Path.Combine(
                     projectDirectory,
                     include.Replace('\\', Path.DirectorySeparatorChar)));
-                if (!_copiedFiles.TryGetValue(referencedProject, out var imageReferencedProject))
-                    continue;
+                if (!_copiedFiles.TryGetValue(
+                    referencedProject,
+                    out var imageReferencedProject))
+                    throw new InvalidDataException(
+                        $"Referenced project '{referencedProject}' was not copied into the image.");
+
+                AddProjectOutput(
+                    referencedProject,
+                    imageReferencedProject,
+                    configuration,
+                    materializedProjects);
 
                 AddReferencedContent(
                     referencedProject,
-                    imageReferencedProject,
                     outputDirectory,
-                    visitedProjects);
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase));
             }
         }
 
         private void AddReferencedContent(
             string projectPath,
-            string imageProjectPath,
             string consumingOutputDirectory,
             HashSet<string> visitedProjects)
         {
@@ -357,6 +419,9 @@ namespace Rasa.Test.Compatibility
 
             var project = XDocument.Load(projectPath);
             var projectDirectory = Path.GetDirectoryName(projectPath);
+            AddFile(PosixPath.Resolve(
+                consumingOutputDirectory,
+                ReadAssemblyName(project, projectPath) + ".dll"));
             AddOutputContent(project, projectDirectory, consumingOutputDirectory);
 
             foreach (var reference in project.Descendants("ProjectReference"))
@@ -368,12 +433,12 @@ namespace Rasa.Test.Compatibility
                 var referencedProject = Path.GetFullPath(Path.Combine(
                     projectDirectory,
                     include.Replace('\\', Path.DirectorySeparatorChar)));
-                if (!_copiedFiles.TryGetValue(referencedProject, out var nestedImageProject))
-                    continue;
+                if (!_copiedFiles.ContainsKey(referencedProject))
+                    throw new InvalidDataException(
+                        $"Referenced project '{referencedProject}' was not copied into the image.");
 
                 AddReferencedContent(
                     referencedProject,
-                    nestedImageProject,
                     consumingOutputDirectory,
                     visitedProjects);
             }
@@ -419,6 +484,7 @@ namespace Rasa.Test.Compatibility
             hostPath = Path.GetFullPath(hostPath);
             imagePath = PosixPath.Normalize(imagePath);
             _copiedFiles[hostPath] = imagePath;
+            _copiedHostFiles[imagePath] = hostPath;
             AddFile(imagePath);
         }
 
@@ -437,16 +503,57 @@ namespace Rasa.Test.Compatibility
             _directories.Add("/");
         }
 
-        private static bool IsReleaseBuild(string arguments)
+        private void RequireCopiedProject(
+            string hostProjectPath,
+            string imageProjectPath)
         {
-            var fields = SplitArguments(arguments);
-            return fields.Count >= 2 &&
-                fields[0] == "dotnet" &&
-                fields[1] == "build" &&
-                (fields.Contains("--configuration") &&
-                 fields.Contains("Release") ||
-                 fields.Contains("-c") &&
-                 fields.Contains("Release"));
+            if (!_copiedFiles.TryGetValue(hostProjectPath, out var copiedImagePath) ||
+                !copiedImagePath.Equals(imageProjectPath, StringComparison.Ordinal))
+                throw new InvalidDataException(
+                    $"Solution project '{imageProjectPath}' was not copied into the image.");
+        }
+
+        private static IReadOnlyList<string> ReadSolutionProjects(string solutionPath)
+        {
+            return File.ReadLines(solutionPath)
+                .Where(line => line.StartsWith("Project(", StringComparison.Ordinal))
+                .Select(line => line.Split(','))
+                .Where(fields => fields.Length >= 2)
+                .Select(fields => fields[1].Trim().Trim('"'))
+                .Where(path => path.EndsWith(
+                    ".csproj",
+                    StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+        }
+
+        private static string ReadAssemblyName(
+            XDocument project,
+            string projectPath)
+        {
+            return project.Descendants()
+                .Where(element => element.Name.LocalName == "AssemblyName")
+                .Select(element => element.Value)
+                .FirstOrDefault() ??
+                Path.GetFileNameWithoutExtension(projectPath);
+        }
+
+        private static string ReadTargetFramework(
+            XDocument project,
+            string projectPath)
+        {
+            var targetFrameworks = project.Descendants()
+                .Where(element =>
+                    element.Name.LocalName == "TargetFramework" ||
+                    element.Name.LocalName == "TargetFrameworks")
+                .SelectMany(element => element.Value.Split(';'))
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (targetFrameworks.Length != 1)
+                throw new InvalidDataException(
+                    $"Project '{projectPath}' must have exactly one target framework.");
+
+            return targetFrameworks[0];
         }
 
         private static IReadOnlyList<string> SplitArguments(string value)
@@ -455,6 +562,203 @@ namespace Rasa.Test.Compatibility
                 .Cast<Match>()
                 .Select(match => match.Value.Trim('"', '\''))
                 .ToArray();
+        }
+
+        private sealed class DotNetBuildCommand
+        {
+            internal string Configuration { get; }
+            internal string Target { get; }
+
+            private DotNetBuildCommand(string configuration, string target)
+            {
+                Configuration = configuration;
+                Target = target;
+            }
+
+            internal static DotNetBuildCommand Parse(string arguments)
+            {
+                var fields = SplitArguments(arguments);
+                if (fields.Count < 2 ||
+                    !fields[0].Equals("dotnet", StringComparison.OrdinalIgnoreCase) ||
+                    !fields[1].Equals("build", StringComparison.OrdinalIgnoreCase))
+                    return null;
+
+                var configuration = "Debug";
+                string target = null;
+                for (var index = 2; index < fields.Count; index++)
+                {
+                    var field = fields[index];
+                    if (field == "-c" || field == "--configuration")
+                    {
+                        if (++index >= fields.Count)
+                            throw new InvalidDataException(
+                                "Docker dotnet build configuration has no value.");
+                        configuration = fields[index];
+                        continue;
+                    }
+
+                    const string configurationPrefix = "--configuration=";
+                    if (field.StartsWith(
+                        configurationPrefix,
+                        StringComparison.OrdinalIgnoreCase))
+                    {
+                        configuration = field.Substring(configurationPrefix.Length);
+                        continue;
+                    }
+
+                    if (field == "--no-restore" ||
+                        field == "--nologo" ||
+                        field == "--no-dependencies" ||
+                        field == "--disable-build-servers")
+                        continue;
+
+                    if (field.StartsWith("-", StringComparison.Ordinal))
+                        throw new InvalidDataException(
+                            $"Unsupported Docker dotnet build option '{field}'.");
+
+                    if (target != null)
+                        throw new InvalidDataException(
+                            "Docker dotnet build has multiple possible targets.");
+
+                    target = field;
+                }
+
+                if (target != null &&
+                    !target.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) &&
+                    !target.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException(
+                        $"Unsupported Docker dotnet build target '{target}'.");
+
+                return new DotNetBuildCommand(configuration, target);
+            }
+        }
+    }
+
+    internal sealed class DockerIgnoreMatcher
+    {
+        private readonly IReadOnlyList<DockerIgnoreRule> _rules;
+
+        private DockerIgnoreMatcher(IReadOnlyList<DockerIgnoreRule> rules)
+        {
+            _rules = rules;
+        }
+
+        internal static DockerIgnoreMatcher Load(string repositoryRoot)
+        {
+            var path = Path.Combine(repositoryRoot, ".dockerignore");
+            if (!File.Exists(path))
+                return new DockerIgnoreMatcher(Array.Empty<DockerIgnoreRule>());
+
+            var rules = File.ReadAllLines(path)
+                .Select(line => line.Trim())
+                .Where(line =>
+                    line.Length != 0 &&
+                    !line.StartsWith("#", StringComparison.Ordinal))
+                .Select(line => new DockerIgnoreRule(line))
+                .ToArray();
+            return new DockerIgnoreMatcher(rules);
+        }
+
+        internal bool IsIgnored(string relativePath)
+        {
+            relativePath = relativePath.Replace('\\', '/').Trim('/');
+            if (relativePath.Length == 0 || relativePath == ".")
+                return false;
+
+            var ignored = false;
+            foreach (var rule in _rules)
+            {
+                if (rule.Matches(relativePath))
+                    ignored = !rule.Negated;
+            }
+
+            return ignored;
+        }
+
+        private sealed class DockerIgnoreRule
+        {
+            private readonly Regex _pattern;
+
+            internal bool Negated { get; }
+
+            internal DockerIgnoreRule(string pattern)
+            {
+                Negated = pattern.StartsWith("!", StringComparison.Ordinal);
+                if (Negated)
+                    pattern = pattern.Substring(1);
+
+                pattern = pattern.Replace('\\', '/').Trim('/');
+                if (pattern.Length == 0)
+                    throw new InvalidDataException("Docker ignore pattern is empty.");
+
+                _pattern = new Regex(
+                    CreateRegex(pattern),
+                    RegexOptions.CultureInvariant);
+            }
+
+            internal bool Matches(string path)
+            {
+                var candidate = path;
+                while (candidate.Length != 0)
+                {
+                    if (_pattern.IsMatch(candidate))
+                        return true;
+
+                    var separator = candidate.LastIndexOf('/');
+                    candidate = separator < 0
+                        ? string.Empty
+                        : candidate.Substring(0, separator);
+                }
+
+                return false;
+            }
+
+            private static string CreateRegex(string pattern)
+            {
+                var expression = new StringBuilder("^");
+                if (!pattern.Contains('/'))
+                    expression.Append("(?:.*/)?");
+
+                for (var index = 0; index < pattern.Length; index++)
+                {
+                    var character = pattern[index];
+                    if (character == '*')
+                    {
+                        if (index + 1 < pattern.Length &&
+                            pattern[index + 1] == '*')
+                        {
+                            index++;
+                            if (index + 1 < pattern.Length &&
+                                pattern[index + 1] == '/')
+                            {
+                                index++;
+                                expression.Append("(?:.*/)?");
+                            }
+                            else
+                            {
+                                expression.Append(".*");
+                            }
+                        }
+                        else
+                        {
+                            expression.Append("[^/]*");
+                        }
+
+                        continue;
+                    }
+
+                    if (character == '?')
+                    {
+                        expression.Append("[^/]");
+                        continue;
+                    }
+
+                    expression.Append(Regex.Escape(character.ToString()));
+                }
+
+                expression.Append("$");
+                return expression.ToString();
+            }
         }
     }
 
