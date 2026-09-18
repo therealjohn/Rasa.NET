@@ -57,6 +57,48 @@ namespace Rasa.Test.Compatibility
             Assert.AreEqual("2026.3.1", ReadPackageVersion(navMesh, "DotRecast.Recast"));
         }
 
+        [TestMethod]
+        public void DockerServicesRunWhereRequiredConfigurationAndAssetsExist()
+        {
+            var repositoryRoot = FindRepositoryRoot();
+            var compose = File.ReadAllText(Path.Combine(repositoryRoot, "docker-compose.yml"));
+            var dockerfile = File.ReadAllText(Path.Combine(repositoryRoot, "Dockerfile"));
+
+            StringAssert.Contains(
+                compose,
+                "working_dir: /app/src/Rasa.Auth/bin/Release/net10.0");
+            StringAssert.Contains(
+                compose,
+                "working_dir: /app/src/Rasa.Game/bin/Release/net10.0");
+            StringAssert.Contains(
+                compose,
+                "./rasaauth.db:/app/src/Rasa.Auth/bin/Release/net10.0/rasaauth.db");
+            StringAssert.Contains(
+                compose,
+                "./rasachar.db:/app/src/Rasa.Game/bin/Release/net10.0/rasachar.db");
+            StringAssert.Contains(
+                compose,
+                "./rasaworld.db:/app/src/Rasa.Game/bin/Release/net10.0/rasaworld.db");
+            StringAssert.Contains(
+                compose,
+                "./appsettings.env.json:/app/src/Rasa.Game/bin/Release/net10.0/appsettings.env.json");
+            StringAssert.Contains(
+                dockerfile,
+                "COPY navmesh /app/src/Rasa.Game/bin/Release/net10.0/navmesh");
+
+            AssertOutputIncludesRequiredConfiguration(
+                repositoryRoot,
+                "Rasa.Auth",
+                "appsettings.json",
+                "databasesettings.json");
+            AssertOutputIncludesRequiredConfiguration(
+                repositoryRoot,
+                "Rasa.Game",
+                "appsettings.json",
+                "databasesettings.json",
+                "kb-articles.json");
+        }
+
         private static string FindRepositoryRoot()
         {
             var directory = new DirectoryInfo(AppContext.BaseDirectory);
@@ -84,6 +126,24 @@ namespace Rasa.Test.Compatibility
             return project.Descendants("PackageReference")
                 .Single(reference => reference.Attribute("Include")?.Value == package)
                 .Attribute("Version")?.Value;
+        }
+
+        private static void AssertOutputIncludesRequiredConfiguration(
+            string repositoryRoot,
+            string projectName,
+            params string[] files)
+        {
+            var output = Path.Combine(
+                repositoryRoot,
+                "src",
+                projectName,
+                "bin",
+                "Release",
+                "net10.0");
+            foreach (var file in files)
+                Assert.IsTrue(
+                    File.Exists(Path.Combine(output, file)),
+                    $"{projectName} output is missing {file}.");
         }
     }
 }

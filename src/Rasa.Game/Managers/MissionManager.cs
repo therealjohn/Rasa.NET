@@ -363,13 +363,40 @@ namespace Rasa.Managers
             IReadOnlyList<CharacterMissionEntry> rows,
             CharacterMissionProgressSnapshot progress)
         {
+            player.Missions = BuildHydration(player.Id, rows, progress).Missions;
+        }
+
+        internal void HydrateAndClearInvalid(
+            Manifestation player,
+            ICharUnitOfWork unitOfWork)
+        {
+            HydrationResult result = null;
+            unitOfWork.ExecuteTransaction(() =>
+            {
+                result = BuildHydration(
+                    player.Id,
+                    unitOfWork.CharacterMissions.Get(player.Id),
+                    unitOfWork.CharacterMissionProgress.Get(player.Id));
+                foreach (var missionId in result.InvalidMissionIds)
+                    unitOfWork.CharacterMissions.Remove(player.Id, missionId);
+            });
+            player.Missions = result.Missions;
+        }
+
+        private HydrationResult BuildHydration(
+            uint characterId,
+            IReadOnlyList<CharacterMissionEntry> rows,
+            CharacterMissionProgressSnapshot progress)
+        {
             var hydrated = new Dictionary<uint, MissionLog>();
+            var invalid = new List<uint>();
             foreach (var row in rows)
             {
                 if (!TryGetOperationalMission(row.MissionId, out var definition))
                 {
                     Logger.WriteLog(LogType.Error,
-                        $"Skipped mission {row.MissionId} for character {player.Id}: definition is not operational.");
+                        $"Cleared mission {row.MissionId} for character {characterId}: definition is not operational.");
+                    invalid.Add(row.MissionId);
                     continue;
                 }
 
@@ -377,14 +404,16 @@ namespace Rasa.Managers
                 if (!IsPublishedState(state))
                 {
                     Logger.WriteLog(LogType.Error,
-                        $"Skipped mission {row.MissionId} for character {player.Id}: unsupported state {row.MissionState}.");
+                        $"Cleared mission {row.MissionId} for character {characterId}: unsupported state {row.MissionState}.");
+                    invalid.Add(row.MissionId);
                     continue;
                 }
 
                 if (!TryHydrateObjectives(definition, progress, out var objectives))
                 {
                     Logger.WriteLog(LogType.Error,
-                        $"Skipped mission {row.MissionId} for character {player.Id}: objective state is incomplete or invalid.");
+                        $"Cleared mission {row.MissionId} for character {characterId}: objective state is incomplete or invalid.");
+                    invalid.Add(row.MissionId);
                     continue;
                 }
                 var derivedCompleteable =
@@ -397,7 +426,8 @@ namespace Rasa.Managers
                 if (state == MissionState.Active && row.Completeable != derivedCompleteable)
                 {
                     Logger.WriteLog(LogType.Error,
-                        $"Skipped mission {row.MissionId} for character {player.Id}: completable state does not match objectives.");
+                        $"Cleared mission {row.MissionId} for character {characterId}: completable state does not match objectives.");
+                    invalid.Add(row.MissionId);
                     continue;
                 }
 
@@ -408,11 +438,25 @@ namespace Rasa.Managers
                     objectives);
             }
 
-            player.Missions = hydrated;
+            return new HydrationResult(hydrated, invalid);
         }
 
         internal void Hydrate(Manifestation player, IReadOnlyList<CharacterMissionEntry> rows) =>
             Hydrate(player, rows, CharacterMissionProgressSnapshot.Empty);
+
+        private sealed class HydrationResult
+        {
+            internal Dictionary<uint, MissionLog> Missions { get; }
+            internal IReadOnlyList<uint> InvalidMissionIds { get; }
+
+            internal HydrationResult(
+                Dictionary<uint, MissionLog> missions,
+                IReadOnlyList<uint> invalidMissionIds)
+            {
+                Missions = missions;
+                InvalidMissionIds = invalidMissionIds;
+            }
+        }
 
         public IReadOnlyDictionary<uint, MissionInfo> BuildStatusSnapshot(Manifestation player)
         {

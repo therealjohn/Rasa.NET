@@ -23,6 +23,7 @@ namespace Rasa.Test.Missions
     using Rasa.Packets;
     using Rasa.Packets.Protocol;
     using Rasa.Repositories.Char;
+    using Rasa.Repositories.Char.Auction;
     using Rasa.Repositories.Char.Character;
     using Rasa.Repositories.Char.CharacterAppearance;
     using Rasa.Repositories.Char.CharacterInventory;
@@ -459,6 +460,71 @@ namespace Rasa.Test.Missions
             context.SaveChanges();
         }
 
+        internal void SeedLegacyMissionWithoutObjectives(
+            uint characterId,
+            uint missionId,
+            uint state,
+            bool completeable)
+        {
+            using var context = Open();
+            context.CharacterMissionEntries.Add(
+                new CharacterMissionEntry(characterId, missionId, state)
+                {
+                    Completeable = completeable
+                });
+            context.SaveChanges();
+        }
+
+        internal int MissionCount(uint characterId)
+        {
+            using var context = Open();
+            return context.CharacterMissionEntries.Count(entry =>
+                entry.CharacterId == characterId);
+        }
+
+        internal Item CreateAuctionItem(
+            uint templateId,
+            uint classId,
+            uint quantity,
+            uint sellerId,
+            uint price)
+        {
+            var item = CreateInventoryItem(templateId, classId, quantity);
+            using var context = Open();
+            var sellerAccount = new GameAccountEntry
+            {
+                Id = 2,
+                Name = "seller",
+                Email = "seller@example.invalid",
+                FamilyName = "Seller"
+            };
+            context.GameAccountEntries.Add(sellerAccount);
+            context.CharacterEntries.Add(new CharacterEntry
+            {
+                Id = sellerId,
+                GameAccount = sellerAccount,
+                Name = "Seller",
+                Level = 1
+            });
+            context.CharacterInventoryEntries.Add(new CharacterInventoryEntry(
+                sellerAccount.Id,
+                sellerId,
+                (uint)InventoryType.AuctionInventory,
+                0,
+                item.Id));
+            context.AuctionEntries.Add(new AuctionEntry(
+                item.Id,
+                sellerId,
+                "Seller",
+                price,
+                0,
+                12));
+            context.SaveChanges();
+            item.OwnerId = sellerId;
+            item.OwnerSlotId = 0;
+            return item;
+        }
+
         internal bool TryCompleteMissionAggregate(uint missionId, uint objectiveId)
         {
             using var context = Open();
@@ -735,7 +801,7 @@ namespace Rasa.Test.Missions
                 characterMissions: new CharacterMissionRepository(context), characterOptions: null,
                 characterSkills: null, characterTeleporters: new CharacterTeleporterRepository(context),
                 characterTitles: null,
-                auctions: null, clans: new ClanRepository(context),
+                auctions: new AuctionRepository(context), clans: new ClanRepository(context),
                 clanInventories: new ClanInventoryRepository(context),
                 clanMembers: new ClanMemberRepository(context),
                 clanLockboxLogs: new ClanLockboxLogRepository(context),

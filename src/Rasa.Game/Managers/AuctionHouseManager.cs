@@ -6,6 +6,7 @@ namespace Rasa.Managers
 {
     using Data;
     using Memory;
+    using Packets;
     using Packets.Inventory.Server;
     using Packets.MapChannel.Server;
     using Rasa.Game;
@@ -58,6 +59,7 @@ namespace Rasa.Managers
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
         private readonly ManifestationManager _currencyManager;
         private readonly MissionManager _missionManager;
+        private readonly Action<PythonPacket> _beforeBuyoutPublication;
 
         private sealed class BuyoutRejection : Exception
         {
@@ -77,6 +79,7 @@ namespace Rasa.Managers
             internal int BuyerCredits { get; init; }
             internal int SellerCredits { get; init; }
             internal uint InboxSlot { get; init; }
+            internal MissionManager.MissionProgressPublicationPlan ProgressPlan { get; init; }
         }
 
         private sealed class CancelResult
@@ -136,11 +139,13 @@ namespace Rasa.Managers
 
         internal AuctionHouseManager(
             IGameUnitOfWorkFactory gameUnitOfWorkFactory,
-            MissionManager missionManager)
+            MissionManager missionManager,
+            Action<PythonPacket> beforeBuyoutPublication = null)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
             _currencyManager = new ManifestationManager(gameUnitOfWorkFactory);
             _missionManager = missionManager;
+            _beforeBuyoutPublication = beforeBuyoutPublication;
         }
 
         #region Handlers
@@ -171,35 +176,66 @@ namespace Rasa.Managers
                 return;
             }
 
-            MissionManager.TryPublish(
-                () => (_missionManager ?? MissionManager.Instance).RecordProgress(
-                    client,
-                    MissionProgressEvent.ItemAcquired(
-                        (uint)item.ItemTemplate.Class,
-                        item.StackSize)),
-                $"auction item {item.Id} acquisition progress");
-
             client.Player.Credits[CurencyType.Credits] = result.BuyerCredits;
-            client.CallMethod(client.Player.EntityId,
-                new UpdateCreditsPacket(
-                    CurencyType.Credits, result.BuyerCredits, 0));
-
             if (result.Seller != null)
-            {
                 result.Seller.Player.Credits[CurencyType.Credits] =
                     result.SellerCredits;
-                result.Seller.CallMethod(result.Seller.Player.EntityId,
-                    new UpdateCreditsPacket(
-                        CurencyType.Credits, result.SellerCredits, 0));
-            }
 
             item.OwnerId = client.Player.Id;
             item.OwnerSlotId = result.InboxSlot;
-            InventoryManager.Instance.PublishInboxDelivery(client, item);
-            RemoveFromSellersAuctionList(
-                result.Auction.SellerId, item.EntityId, result.Auction.Price);
-            client.CallMethod(SysEntity.ClientAuctionHouseManagerId,
-                new AuctionBuyoutSuccessPacket(item.EntityId));
+            client.Player.Inventory.InboxItems.Add(item.EntityId);
+            var seller = OnlineSeller(result.Auction.SellerId);
+            seller?.Player.Inventory.AuctionItems.Remove(item.EntityId);
+
+            PublishBuyoutPacket(
+                client,
+                client.Player.EntityId,
+                new UpdateCreditsPacket(
+                    CurencyType.Credits,
+                    result.BuyerCredits,
+                    0),
+                $"auction item {item.Id} buyer credits");
+            if (result.Seller != null)
+                MissionManager.TryPublish(
+                    () => result.Seller.CallMethod(
+                        result.Seller.Player.EntityId,
+                        new UpdateCreditsPacket(
+                            CurencyType.Credits,
+                            result.SellerCredits,
+                            0)),
+                    $"auction item {item.Id} seller credits");
+            MissionManager.TryPublish(
+                () => ItemManager.Instance.SendItemDataToClient(
+                    client,
+                    item,
+                    false),
+                $"auction item {item.Id} entity data");
+            PublishBuyoutPacket(
+                client,
+                (ulong)SysEntity.ClientInventoryManagerId,
+                new AddInboxItemPacket(item.EntityId),
+                $"auction item {item.Id} inbox delivery");
+            if (seller != null)
+            {
+                MissionManager.TryPublish(
+                    () => seller.CallMethod(
+                        SysEntity.ClientInventoryManagerId,
+                        new RemoveAuctionItemPacket(item.EntityId)),
+                    $"auction item {item.Id} seller inventory removal");
+                MissionManager.TryPublish(
+                    () => seller.CallMethod(
+                        SysEntity.ClientAuctionHouseManagerId,
+                        new AuctionSoldPacket(
+                            item.EntityId,
+                            result.Auction.Price)),
+                    $"auction item {item.Id} sold result");
+            }
+            PublishBuyoutPacket(
+                client,
+                (ulong)SysEntity.ClientAuctionHouseManagerId,
+                new AuctionBuyoutSuccessPacket(item.EntityId),
+                $"auction item {item.Id} buyout result");
+            result.ProgressPlan.Publish(client);
         }
 
         private BuyoutResult ConsumeBuyoutLocked(
@@ -212,6 +248,8 @@ namespace Rasa.Managers
             var buyerAfter = 0;
             var sellerAfter = 0;
             var inboxSlot = 0u;
+            var progressPlan =
+                MissionManager.MissionProgressPublicationPlan.Empty;
 
             try
             {
@@ -286,6 +324,17 @@ namespace Rasa.Managers
                             out inboxSlot))
                         throw new BuyoutRejection(
                             PlayerMessage.PmAuctionNoBuyoutInboxFull);
+
+                    progressPlan = (_missionManager ?? MissionManager.Instance)
+                        .PlanProgress(
+                            client,
+                            new[]
+                            {
+                                MissionProgressEvent.ItemAcquired(
+                                    (uint)item.ItemTemplate.Class,
+                                    item.StackSize)
+                            },
+                            unitOfWork);
                 });
             }
             catch (BuyoutRejection rejection)
@@ -296,6 +345,7 @@ namespace Rasa.Managers
                 };
             }
             catch (Exception error) when (
+                error is GameplayRejectionException ||
                 error is OverflowException ||
                 error is System.Data.Common.DbException ||
                 error is Microsoft.EntityFrameworkCore.DbUpdateException)
@@ -314,8 +364,24 @@ namespace Rasa.Managers
                 Seller = seller,
                 BuyerCredits = buyerAfter,
                 SellerCredits = sellerAfter,
-                InboxSlot = inboxSlot
+                InboxSlot = inboxSlot,
+                ProgressPlan = progressPlan
             };
+        }
+
+        private void PublishBuyoutPacket(
+            Client client,
+            ulong entityId,
+            PythonPacket packet,
+            string description)
+        {
+            MissionManager.TryPublish(
+                () =>
+                {
+                    _beforeBuyoutPublication?.Invoke(packet);
+                    client.CallMethod(entityId, packet);
+                },
+                description);
         }
 
         /// <summary>

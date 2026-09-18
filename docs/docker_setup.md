@@ -2,9 +2,19 @@
 
 This provides an alternative to building and using the project directly on your system. Use Docker with Linux containers and Docker Compose v2.
 
-The Dockerfile builds all .NET 10 projects with SDK **10.0.401**, matching `global.json` and CI. The Compose services run the `Rasa.Auth` and `Rasa.Game` Release binaries directly from their `net10.0` output directories while keeping `/app` as the working directory, where the three SQLite files are mounted. Game configuration is mounted beside the Game executable.
+The Dockerfile builds all .NET 10 projects with SDK **10.0.401**, matching
+`global.json` and CI. Each Compose service uses its Release output directory as
+its working directory. This matches the runtime loaders, which resolve
+`appsettings.json`, `appsettings.env.json`, `databasesettings.json`, and
+`databasesettings.env.json` from the process working directory. The three
+SQLite files are mounted into the corresponding service output directory.
 
-The image also copies the repository's 77 checked-in `.nav` files to `/app/navmesh` and the knowledge-base JSON to `/app`, matching the default `GameDataConfig.NavMeshPath` and `KnowledgeBaseFile` values. Rebuild the image after updating source, dependencies, navmeshes, or knowledge-base content with `docker compose up --build`.
+The Game build copies `kb-articles.json` beside `Rasa.Game.dll`, and the
+Dockerfile copies the repository's 77 checked-in `.nav` files into the
+`navmesh` folder below that same directory. These locations match the default
+relative `GameDataConfig.NavMeshPath` and `KnowledgeBaseFile` values. Rebuild
+the image after updating source, dependencies, navmeshes, or knowledge-base
+content with `docker compose up --build`.
 
 To use a different NuGet feed for an image build without changing global configuration, pass `--build-arg NUGET_SOURCE=<feed-url>` to `docker build`.
 
@@ -43,7 +53,16 @@ Next, create a appsettings.env.json in the root directory with the following con
 }
 ```
 
-Only include settings you need to override. The image's default navigation path is already `/app/navmesh` through the relative value `navmesh`. If you set a different `GameDataConfig.NavMeshPath`, add a matching read-only volume to the `game` service.
+Only include settings you need to override. Compose mounts this file beside
+`Rasa.Game.dll`, where the loader reads it. The image's default navigation path
+is the `navmesh` folder below the Game output directory through the relative
+value `navmesh`. If you set a different `GameDataConfig.NavMeshPath`, add a
+matching read-only volume to the `game` service.
+
+`PlatformCompatibilityTests.DockerServicesRunWhereRequiredConfigurationAndAssetsExist`
+is the bounded static check for this layout. It verifies the service working
+directories and mounts, the Dockerfile navmesh destination, and the required
+configuration files in both Release outputs.
 
 ## Start Server
 

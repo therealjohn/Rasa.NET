@@ -284,14 +284,26 @@ dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore 
 Mission attempts are scoped by persistent character ID. The character database
 uses `(character_id, mission_id)` as the key, so accounts and character slots do
 not share mission state and one character can hold multiple attempts. Existing
-rows survive the additive SQLite and MySQL migration. Character deletion removes
-mission rows in the same transaction before deleting the character; the foreign
-key remains restrictive. Objective rows use
+rows survive the additive SQLite and MySQL migration. Character deletion
+cascades to mission rows, and mission deletion cascades through objective rows
+and both counter levels. Objective rows use
 `(character_id, mission_id, objective_id)` and generic/item counters add their
-counter key. Mission deletion cascades through both child levels. Objective
-states and both counter values are optimistic-concurrency tokens; mutation
+counter key. Objective states and both counter values are
+optimistic-concurrency tokens; mutation
 callers supply the expected current value so stale contexts reject instead of
 overwriting newer progress.
+
+The objective-progress migrations cannot infer immutable objective definitions
+from legacy mission rows, so they preserve valid character-owned rows for both
+providers. On character hydration, the server maps rows to the current
+operational definition and state inside one character-database transaction.
+Mapped rows are retained. A row with no complete objective graph, an unsupported
+state, a non-operational definition, or inconsistent completable state is
+logged and removed through the shared repository path; its objective children
+cascade. The runtime mission dictionary is replaced only after that transaction
+commits. This keeps MySQL and SQLite behavior aligned, frees mission-log
+capacity, and permits the same mission ID to be accepted again without deleting
+unrelated valid attempts.
 
 World mission definitions are immutable and inactive by default. Incomplete
 database definitions are not hydrated, advertised by NPCs, accepted, tracked or

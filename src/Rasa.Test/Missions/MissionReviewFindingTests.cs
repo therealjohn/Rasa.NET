@@ -11,9 +11,13 @@ namespace Rasa.Test.Missions
     using Rasa.Data;
     using Rasa.Game;
     using Rasa.Managers;
+    using Rasa.Packets;
     using Rasa.Packets.Inventory.Client;
+    using Rasa.Packets.Inventory.Server;
     using Rasa.Packets.LootDispenser.Client;
+    using Rasa.Packets.LootDispenser.Server;
     using Rasa.Packets.MapChannel.Client;
+    using Rasa.Packets.MapChannel.Server;
     using Rasa.Packets.Mission.Server;
     using Rasa.Repositories.Char;
     using Rasa.Repositories.UnitOfWork;
@@ -144,6 +148,120 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(
                 321U,
                 unit.CharacterMissions.GetByCharacterAndMission(100, 321).MissionId);
+        }
+
+        [TestMethod]
+        public void LoginHydrationClearsOnlyUnhydratableRowsAndFreesCapacityForSameId()
+        {
+            var retainedIds = Enumerable.Range(322, 29)
+                .Select(value => (uint)value)
+                .ToArray();
+            using var context = MissionTestContext.WithDefinitions(
+                retainedIds.Prepend(321U).ToArray());
+            foreach (var missionId in retainedIds)
+                context.SeedMission(
+                    context.Client.Player.Id,
+                    missionId,
+                    (uint)MissionState.Active,
+                    false);
+            context.SeedLegacyMissionWithoutObjectives(
+                context.Client.Player.Id,
+                321,
+                (uint)MissionState.Active,
+                false);
+
+            using (var unit = context.CreateChar())
+                new CharacterManager(context, context.Manager)
+                    .HydrateMissions(context.Client.Player, unit);
+
+            Assert.AreEqual(29, context.MissionCount(context.Client.Player.Id));
+            Assert.IsFalse(context.Client.Player.Missions.ContainsKey(321));
+            CollectionAssert.AreEquivalent(
+                retainedIds,
+                context.Client.Player.Missions.Keys.ToArray());
+
+            var giver = context.AddNpc(77);
+            Assert.IsTrue(context.Manager.TryAcceptNpcMission(
+                context.Client,
+                giver.EntityId,
+                321));
+            Assert.AreEqual(30, context.MissionCount(context.Client.Player.Id));
+            Assert.IsTrue(context.Client.Player.Missions[321].Objectives.ContainsKey(1));
+
+            Assert.IsTrue(context.Manager.TryAbandon(context.Client, 321));
+            Assert.IsTrue(context.Manager.TryAcceptNpcMission(
+                context.Client,
+                giver.EntityId,
+                321));
+            Assert.AreEqual(30, context.MissionCount(context.Client.Player.Id));
+        }
+
+        [TestMethod]
+        public void LegacyCleanupAndTerminalClearDoNotRemoveMappedMissions()
+        {
+            using var context = MissionTestContext.WithDefinitions(321, 429);
+            context.SeedMission(1, 321, (uint)MissionState.Active, false);
+            context.SeedLegacyMissionWithoutObjectives(
+                1,
+                429,
+                (uint)MissionState.Active,
+                false);
+
+            using (var unit = context.CreateChar())
+                new CharacterManager(context, context.Manager)
+                    .HydrateMissions(context.Client.Player, unit);
+
+            Assert.IsTrue(context.Client.Player.Missions.ContainsKey(321));
+            Assert.IsFalse(context.Client.Player.Missions.ContainsKey(429));
+            Assert.AreEqual(1, context.MissionCount(1));
+
+            var giver = context.AddNpc(77);
+            Assert.IsTrue(context.Manager.TryAcceptNpcMission(
+                context.Client,
+                giver.EntityId,
+                429));
+            Assert.IsTrue(context.Manager.TryFailMission(context.Client, 429));
+            Assert.IsTrue(context.Manager.TryClear(context.Client, 429));
+            Assert.IsTrue(context.Client.Player.Missions.ContainsKey(321));
+            Assert.AreEqual(1, context.MissionCount(1));
+        }
+
+        [TestMethod]
+        public void LegacyCleanupRollsBackWithoutPublishingPartialHydration()
+        {
+            using var context = MissionTestContext.WithDefinitions(321, 429);
+            context.SeedMission(1, 321, (uint)MissionState.Active, false);
+            context.SeedLegacyMissionWithoutObjectives(
+                1,
+                429,
+                (uint)MissionState.Active,
+                false);
+            context.Client.Player.Missions = new Dictionary<uint, MissionLog>
+            {
+                [999] = new MissionLog(
+                    999,
+                    MissionState.Active,
+                    false,
+                    new Dictionary<uint, MissionObjectiveLog>())
+            };
+            context.BeforeSave = database =>
+            {
+                if (database.ChangeTracker.Entries<CharacterMissionEntry>()
+                    .Any(entry => entry.State == EntityState.Deleted))
+                    throw new DbUpdateException("Injected legacy cleanup failure.");
+            };
+
+            Assert.ThrowsExactly<DbUpdateException>(() =>
+            {
+                using var unit = context.CreateChar();
+                new CharacterManager(context, context.Manager)
+                    .HydrateMissions(context.Client.Player, unit);
+            });
+
+            CollectionAssert.AreEqual(
+                new uint[] { 999 },
+                context.Client.Player.Missions.Keys.ToArray());
+            Assert.AreEqual(2, context.MissionCount(1));
         }
 
         [TestMethod]
@@ -517,6 +635,7 @@ namespace Rasa.Test.Missions
                 Owner = context.Client.Player.EntityId,
                 AttachedTo = corpse.EntityId,
                 IsLootable = true,
+                Credits = 7,
                 UnitOfWorkFactory = context
             };
             loot.LootItems.Add(new LootItem(
@@ -540,6 +659,12 @@ namespace Rasa.Test.Missions
                         EntityId = loot.EntityId
                     });
 
+                var packets = context.Drain();
+                AssertAcquisitionPrecedesMissionProgress(
+                    packets,
+                    typeof(UpdateCreditsPacket),
+                    typeof(ActorGotLootPacket),
+                    typeof(TakenInfoPacket));
                 Assert.AreEqual(3U,
                     context.Client.Player.Missions[321]
                         .Objectives[1].ItemCounters[itemClassId]);
@@ -556,12 +681,157 @@ namespace Rasa.Test.Missions
                 Assert.AreEqual(3U,
                     context.Client.Player.Missions[321]
                         .Objectives[1].ItemCounters[itemClassId]);
+                Assert.AreEqual(0, context.Drain()
+                    .OfType<UpdateObjectiveItemCounterPacket>().Count());
             }
             finally
             {
                 manager.RemoveForOwner(context.Map, context.Client);
                 CellManager.Instance.RemoveCreatureFromWorld(context.Map, corpse);
             }
+        }
+
+        [TestMethod]
+        public void AuctionBuyoutPublishesAcquisitionBeforeMissionProgress()
+        {
+            const uint itemClassId = 3147;
+            using var context = MissionTestContext.WithItemProgressMission(
+                MissionProgressEventKind.ItemAcquired,
+                itemClassId,
+                3);
+            context.SeedMission(1, 321, (uint)MissionState.Active, false);
+            context.ReloadPlayerMissions();
+            context.Drain();
+            var item = context.CreateAuctionItem(28, itemClassId, 3, 99, 50);
+            var manager = new AuctionHouseManager(context, context.Manager);
+
+            manager.RequestAuctionBuyout(
+                context.Client,
+                new RequestAuctionBuyoutPacket
+                {
+                    ItemId = checked((uint)item.EntityId),
+                    Price = 50
+                });
+
+            var packets = context.Drain();
+            AssertAcquisitionPrecedesMissionProgress(
+                packets,
+                typeof(UpdateCreditsPacket),
+                typeof(AddInboxItemPacket),
+                typeof(AuctionBuyoutSuccessPacket));
+            Assert.AreEqual(3U,
+                context.Client.Player.Missions[321]
+                    .Objectives[1].ItemCounters[itemClassId]);
+            Assert.AreEqual(3U,
+                context.ReadProgress(321)
+                    .Missions[321].Objectives[1].ItemCounters[itemClassId]);
+            Assert.IsTrue(context.Client.Player.Inventory.InboxItems.Contains(
+                item.EntityId));
+        }
+
+        [TestMethod]
+        public void AuctionPublicationFailureStillConvergesAndDoesNotDuplicateProgress()
+        {
+            const uint itemClassId = 3147;
+            using var context = MissionTestContext.WithItemProgressMission(
+                MissionProgressEventKind.ItemAcquired,
+                itemClassId,
+                3);
+            context.SeedMission(1, 321, (uint)MissionState.Active, false);
+            context.ReloadPlayerMissions();
+            context.Drain();
+            var item = context.CreateAuctionItem(28, itemClassId, 3, 99, 50);
+            var failed = false;
+            var manager = new AuctionHouseManager(
+                context,
+                context.Manager,
+                packet =>
+                {
+                    if (!failed && packet is AddInboxItemPacket)
+                    {
+                        failed = true;
+                        throw new InvalidOperationException(
+                            "Injected inbox publication failure.");
+                    }
+                });
+            var request = new RequestAuctionBuyoutPacket
+            {
+                ItemId = checked((uint)item.EntityId),
+                Price = 50
+            };
+
+            manager.RequestAuctionBuyout(context.Client, request);
+
+            var packets = context.Drain();
+            AssertAcquisitionPrecedesMissionProgress(
+                packets,
+                typeof(UpdateCreditsPacket),
+                typeof(AuctionBuyoutSuccessPacket));
+            Assert.AreEqual(0, packets.OfType<AddInboxItemPacket>().Count());
+            Assert.IsTrue(context.Client.Player.Inventory.InboxItems.Contains(
+                item.EntityId));
+            Assert.AreEqual(50,
+                context.Client.Player.Credits[CurencyType.Credits]);
+            Assert.AreEqual(3U,
+                context.Client.Player.Missions[321]
+                    .Objectives[1].ItemCounters[itemClassId]);
+
+            manager.RequestAuctionBuyout(context.Client, request);
+            Assert.AreEqual(3U,
+                context.ReadProgress(321)
+                    .Missions[321].Objectives[1].ItemCounters[itemClassId]);
+            Assert.AreEqual(0, context.Drain()
+                .OfType<UpdateObjectiveItemCounterPacket>().Count());
+        }
+
+        [TestMethod]
+        public void AuctionProgressRejectionRollsBackBuyoutAndRetryCommitsOnce()
+        {
+            const uint itemClassId = 3147;
+            using var context = MissionTestContext.WithItemProgressMission(
+                MissionProgressEventKind.ItemAcquired,
+                itemClassId,
+                3);
+            context.SeedMission(1, 321, (uint)MissionState.Active, false);
+            context.ReloadPlayerMissions();
+            context.Drain();
+            var item = context.CreateAuctionItem(28, itemClassId, 3, 99, 50);
+            var manager = new AuctionHouseManager(context, context.Manager);
+            var request = new RequestAuctionBuyoutPacket
+            {
+                ItemId = checked((uint)item.EntityId),
+                Price = 50
+            };
+            context.Client.Player.Missions[321]
+                .Objectives[1].SetItemCounter(itemClassId, 1);
+
+            manager.RequestAuctionBuyout(context.Client, request);
+
+            using (var unit = context.CreateChar())
+            {
+                Assert.IsNotNull(unit.Auctions.GetAuctionByItemId(item.Id));
+                Assert.AreEqual(100, unit.Characters.Get(1).Credit);
+                Assert.AreEqual(99U,
+                    unit.CharacterInventories.FindByItemId(item.Id).CharacterId);
+            }
+            Assert.AreEqual(0U,
+                context.ReadProgress(321)
+                    .Missions[321].Objectives[1].ItemCounters[itemClassId]);
+            Assert.AreEqual(0, context.Client.Player.Inventory.InboxItems.Count);
+
+            context.Client.Player.Missions[321]
+                .Objectives[1].SetItemCounter(itemClassId, 0);
+            manager.RequestAuctionBuyout(context.Client, request);
+
+            Assert.AreEqual(3U,
+                context.ReadProgress(321)
+                    .Missions[321].Objectives[1].ItemCounters[itemClassId]);
+            Assert.AreEqual(1, context.Client.Player.Inventory.InboxItems
+                .Count(entityId => entityId == item.EntityId));
+            manager.RequestAuctionBuyout(context.Client, request);
+            Assert.AreEqual(3U,
+                context.ReadProgress(321)
+                    .Missions[321].Objectives[1].ItemCounters[itemClassId]);
         }
 
         [TestMethod]
@@ -923,6 +1193,38 @@ namespace Rasa.Test.Missions
                 .Select(EntityManager.Instance.GetItem)
                 .Where(item => item != null)
                 .Sum(item => (long)item.StackSize);
+
+        private static void AssertAcquisitionPrecedesMissionProgress(
+            IReadOnlyList<PythonPacket> packets,
+            params Type[] acquisitionPacketTypes)
+        {
+            var firstMissionPacket = FindIndex(packets, packet =>
+                packet is UpdateObjectiveItemCounterPacket or
+                    ObjectiveCompletedPacket or
+                    MissionCompleteablePacket);
+            Assert.IsTrue(firstMissionPacket >= 0, "No mission progress packet was published.");
+            foreach (var packetType in acquisitionPacketTypes)
+            {
+                var acquisitionIndex = FindIndex(packets, packet =>
+                    packetType.IsInstanceOfType(packet));
+                Assert.IsTrue(
+                    acquisitionIndex >= 0,
+                    $"No {packetType.Name} was published.");
+                Assert.IsTrue(
+                    acquisitionIndex < firstMissionPacket,
+                    $"{packetType.Name} was published after mission progress.");
+            }
+        }
+
+        private static int FindIndex(
+            IReadOnlyList<PythonPacket> packets,
+            Func<PythonPacket, bool> predicate)
+        {
+            for (var index = 0; index < packets.Count; index++)
+                if (predicate(packets[index]))
+                    return index;
+            return -1;
+        }
 
         private sealed class MissionLoadingFactory : IGameUnitOfWorkFactory
         {

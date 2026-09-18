@@ -7,9 +7,9 @@ COPY Rasa.NET.sln /app
 COPY Rasa.NET.sln.DotSettings /app
 COPY global.json /app
 COPY .config /app/.config
-COPY navmesh /app/navmesh
-COPY src/Rasa.Game/kb-articles.json /app/kb-articles.json
 
 ARG NUGET_SOURCE=https://api.nuget.org/v3/index.json
 RUN dotnet restore --source "$NUGET_SOURCE"
 RUN dotnet build --no-restore --configuration Release
+
+COPY navmesh /app/src/Rasa.Game/bin/Release/net10.0/navmesh

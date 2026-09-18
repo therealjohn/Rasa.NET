@@ -815,15 +815,8 @@ namespace Rasa.Managers
             Manifestation player,
             ICharUnitOfWork unitOfWork)
         {
-            IReadOnlyList<CharacterMissionEntry> missions = null;
-            CharacterMissionProgressSnapshot progress = null;
-            unitOfWork.ExecuteTransaction(() =>
-            {
-                missions = unitOfWork.CharacterMissions.Get(player.Id);
-                progress = unitOfWork.CharacterMissionProgress.Get(player.Id);
-            });
             (_missionManager ?? MissionManager.Instance)
-                .Hydrate(player, missions, progress);
+                .HydrateAndClearInvalid(player, unitOfWork);
         }
 
         /// <summary>

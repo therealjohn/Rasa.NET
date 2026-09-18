@@ -464,6 +464,7 @@ namespace Rasa.Managers
             bool includeCredits)
         {
             var currentCredits = client.Player.Credits.GetValueOrDefault(CurencyType.Credits);
+            var creditsGranted = includeCredits && loot.Credits != 0;
             int creditsAfter;
             try
             {
@@ -529,33 +530,51 @@ namespace Rasa.Managers
                 return;
             }
 
-            progressPlan.Publish(client);
             grant.Publish(client);
 
-            if (includeCredits && loot.Credits != 0)
+            if (creditsGranted)
             {
                 loot.Credits = 0;
                 client.Player.Credits[CurencyType.Credits] = creditsAfter;
-                client.CallMethod(client.Player.EntityId,
-                    new UpdateCreditsPacket(CurencyType.Credits, creditsAfter, 0));
             }
-
-            client.CallMethod(loot.EntityId, new ActorGotLootPacket(loot));
-            client.CallMethod(loot.EntityId,
-                new TakenInfoPacket(client.Player.EntityId, Taken(loot)));
 
             if (!loot.HasLoot)
             {
                 loot.FullyLooted = true;
                 loot.IsLootable = false;
                 loot.CurrentLooter = 0;
-                CanLootItems(client, loot);
-                GotLoot(client, loot);
             }
-            else
-            {
-                CanLootItems(client, loot);
-            }
+
+            if (creditsGranted)
+                MissionManager.TryPublish(
+                    () => client.CallMethod(
+                        client.Player.EntityId,
+                        new UpdateCreditsPacket(
+                            CurencyType.Credits,
+                            creditsAfter,
+                            0)),
+                    $"corpse {loot.EntityId} credits");
+            MissionManager.TryPublish(
+                () => client.CallMethod(
+                    loot.EntityId,
+                    new ActorGotLootPacket(loot)),
+                $"corpse {loot.EntityId} actor loot result");
+            MissionManager.TryPublish(
+                () => client.CallMethod(
+                    loot.EntityId,
+                    new TakenInfoPacket(
+                        client.Player.EntityId,
+                        Taken(loot))),
+                $"corpse {loot.EntityId} taken state");
+            MissionManager.TryPublish(
+                () => CanLootItems(client, loot),
+                $"corpse {loot.EntityId} lootability");
+            if (!loot.HasLoot)
+                MissionManager.TryPublish(
+                    () => GotLoot(client, loot),
+                    $"corpse {loot.EntityId} completion");
+
+            progressPlan.Publish(client);
         }
 
         private bool TryGetLoot(Client client, ulong entityId, out LootDispenser loot)
