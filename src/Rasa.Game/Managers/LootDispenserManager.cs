@@ -41,6 +41,7 @@ namespace Rasa.Managers
         private static LootDispenserManager _instance;
         private static readonly object InstanceLock = new object();
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
+        private readonly MissionManager _missionManager;
         private readonly Func<Client, double> _distance;
         private readonly object _retirementSyncRoot = new object();
         private readonly Dictionary<ulong, PendingRetirement> _pendingRetirements = new();
@@ -81,9 +82,11 @@ namespace Rasa.Managers
 
         internal LootDispenserManager(
             IGameUnitOfWorkFactory gameUnitOfWorkFactory,
-            Func<Client, double> distance = null)
+            Func<Client, double> distance = null,
+            MissionManager missionManager = null)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
+            _missionManager = missionManager;
             _distance = distance ?? (client =>
                 client.Server?.Config.GameConfig.CorpseLootDistance ??
                 Config.GameConfig.DefaultCorpseLootDistance);
@@ -508,6 +511,12 @@ namespace Rasa.Managers
             }
 
             grant.Publish(client);
+            foreach (var item in items)
+                (_missionManager ?? MissionManager.Instance).RecordProgress(
+                    client,
+                    MissionProgressEvent.ItemAcquired(
+                        item.ItemClassId,
+                        item.ItemQuantity));
 
             if (includeCredits && loot.Credits != 0)
             {

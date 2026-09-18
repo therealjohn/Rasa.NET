@@ -22,7 +22,7 @@ namespace Rasa.Repositories.Char.CharacterMission
             return query.Where(entry => entry.CharacterId == characterId).ToList();
         }
 
-        public List<CharacterMissionEntry> GetByAccountAndSlot(
+        public List<CharacterMissionEntry> Get(
             uint accountId,
             uint characterSlot)
         {
@@ -37,12 +37,6 @@ namespace Rasa.Repositories.Char.CharacterMission
 
         public int Count(uint characterId) =>
             _charContext.CharacterMissionEntries.Count(entry => entry.CharacterId == characterId);
-
-        [CanBeNull]
-        public CharacterMissionEntry Get(uint characterId, uint missionId)
-        {
-            return GetByCharacterAndMission(characterId, missionId);
-        }
 
         [CanBeNull]
         public CharacterMissionEntry GetByCharacterAndMission(uint characterId, uint missionId)

@@ -148,7 +148,8 @@ namespace Rasa.Test.Missions
                 unit.CharacterMissionProgress.Remove(100, 321);
 
             using var reopened = context.CreateChar();
-            Assert.IsNotNull(reopened.CharacterMissions.Get(100, 321));
+            Assert.IsNotNull(
+                reopened.CharacterMissions.GetByCharacterAndMission(100, 321));
             Assert.AreEqual(0, reopened.CharacterMissionProgress.Get(100).Missions.Count);
         }
     }

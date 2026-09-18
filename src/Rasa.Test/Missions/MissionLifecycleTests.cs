@@ -63,15 +63,18 @@ namespace Rasa.Test.Missions
 
             using (var unit = db.CreateChar())
             {
-                var mission = unit.CharacterMissions.Get(100, 321);
+                var mission = unit.CharacterMissions.GetByCharacterAndMission(100, 321);
                 Assert.AreEqual(4U, mission.MissionState);
                 Assert.IsTrue(mission.Completeable);
-                Assert.AreSame(mission, unit.CharacterMissions.Get(100, 321));
+                Assert.AreSame(
+                    mission,
+                    unit.CharacterMissions.GetByCharacterAndMission(100, 321));
                 unit.CharacterMissions.Remove(100, 321);
             }
 
             using var reopened = db.CreateChar();
-            Assert.IsNull(reopened.CharacterMissions.Get(100, 321));
+            Assert.IsNull(
+                reopened.CharacterMissions.GetByCharacterAndMission(100, 321));
             CollectionAssert.AreEqual(new uint[] { 429 },
                 reopened.CharacterMissions.Get(100).Select(x => x.MissionId).ToArray());
         }
@@ -649,7 +652,8 @@ namespace Rasa.Test.Missions
             Assert.IsFalse(runtime.Completeable);
             using (var unit = context.CreateChar())
             {
-                var durable = unit.CharacterMissions.Get(context.Client.Player.Id, 321);
+                var durable = unit.CharacterMissions.GetByCharacterAndMission(
+                    context.Client.Player.Id, 321);
                 Assert.IsNotNull(durable);
                 Assert.AreEqual((uint)MissionState.Active, durable.MissionState);
                 Assert.IsFalse(durable.Completeable);
@@ -725,7 +729,8 @@ namespace Rasa.Test.Missions
 
             using var unit = context.CreateChar();
             Assert.AreEqual(30, unit.CharacterMissions.Get(context.Client.Player.Id).Count);
-            Assert.IsNull(unit.CharacterMissions.Get(context.Client.Player.Id, 321));
+            Assert.IsNull(unit.CharacterMissions.GetByCharacterAndMission(
+                context.Client.Player.Id, 321));
             Assert.AreEqual(0, context.Drain().OfType<MissionGainedPacket>().Count());
         }
 
@@ -793,7 +798,8 @@ namespace Rasa.Test.Missions
 
             Assert.IsFalse(context.Client.Player.Missions.ContainsKey(321));
             using (var unit = context.CreateChar())
-                Assert.IsNull(unit.CharacterMissions.Get(context.Client.Player.Id, 321));
+                Assert.IsNull(unit.CharacterMissions.GetByCharacterAndMission(
+                    context.Client.Player.Id, 321));
             Assert.AreEqual(321U, context.Drain().OfType<MissionDiscardedPacket>().Single().MissionId);
 
             context.ReloadPlayerMissions();
@@ -841,7 +847,7 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
-        public void DatabaseDefinitionsDefaultInactiveAndAreNeitherAdvertisedNorAccepted()
+        public void ExplicitlyDisabledDatabaseDefinitionsAreNeitherAdvertisedNorAccepted()
         {
             using var context = MissionTestContext.WithDatabaseDefinitions(321, 429);
             var npc = context.AddNpc(77);

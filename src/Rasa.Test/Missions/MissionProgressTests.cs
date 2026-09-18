@@ -454,6 +454,8 @@ namespace Rasa.Test.Missions
 
             Assert.IsTrue(context.Manager.TryCompleteNpcMission(
                 context.Client, receiver.EntityId, 429, null, null));
+            Assert.IsTrue(context.Manager.TryRewardNpcMission(
+                context.Client, receiver.EntityId, 429, null, null));
 
             var after = context.ReadRewardTotals();
             Assert.AreEqual(before.Experience + 100, after.Experience);
@@ -474,11 +476,13 @@ namespace Rasa.Test.Missions
 
             Assert.IsTrue(context.Manager.TryCompleteNpcMission(
                 context.Client, receiver.EntityId, 429, null, null));
+            Assert.IsTrue(context.Manager.TryRewardNpcMission(
+                context.Client, receiver.EntityId, 429, null, null));
 
             var packets = context.Drain();
             Assert.IsTrue(
-                packets.FindIndex(packet => packet is MissionRewardedPacket) <
-                packets.FindIndex(packet => packet is ObjectiveCompletedPacket));
+                packets.FindIndex(packet => packet is ObjectiveCompletedPacket) <
+                packets.FindIndex(packet => packet is MissionRewardedPacket));
             Assert.AreEqual(MissionState.Completed, context.Client.Player.Missions[429].State);
             Assert.AreEqual(MissionObjectiveState.Completed,
                 context.Client.Player.Missions[430].Objectives[1].State);
@@ -605,6 +609,12 @@ namespace Rasa.Test.Missions
                     MissionProgressEventKind.LogosAcquired => MissionProgressEvent.Logos(subject),
                     MissionProgressEventKind.CreatureKilled => MissionProgressEvent.Creature(subject),
                     MissionProgressEventKind.MissionCompleted => MissionProgressEvent.Mission(subject),
+                    MissionProgressEventKind.ItemAcquired =>
+                        MissionProgressEvent.ItemAcquired(subject, 1),
+                    MissionProgressEventKind.ItemConsumed =>
+                        MissionProgressEvent.ItemConsumed(subject, 1),
+                    MissionProgressEventKind.InteractionUsed =>
+                        MissionProgressEvent.Interaction(subject),
                     _ => throw new AssertFailedException()
                 };
                 Assert.IsFalse(context.Manager.RecordProgress(context.Client, progress),

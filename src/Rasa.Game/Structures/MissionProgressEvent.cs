@@ -6,11 +6,16 @@ namespace Rasa.Structures
     {
         public MissionProgressEventKind Kind { get; }
         public uint SubjectId { get; }
+        public uint Quantity { get; }
 
-        private MissionProgressEvent(MissionProgressEventKind kind, uint subjectId)
+        private MissionProgressEvent(
+            MissionProgressEventKind kind,
+            uint subjectId,
+            uint quantity = 1)
         {
             Kind = kind;
             SubjectId = subjectId;
+            Quantity = quantity;
         }
 
         public static MissionProgressEvent Waypoint(uint waypointId) =>
@@ -24,5 +29,18 @@ namespace Rasa.Structures
 
         public static MissionProgressEvent Mission(uint completedMissionId) =>
             new(MissionProgressEventKind.MissionCompleted, completedMissionId);
+
+        public static MissionProgressEvent ItemAcquired(
+            uint itemClassId,
+            uint quantity) =>
+            new(MissionProgressEventKind.ItemAcquired, itemClassId, quantity);
+
+        public static MissionProgressEvent ItemConsumed(
+            uint itemClassId,
+            uint quantity) =>
+            new(MissionProgressEventKind.ItemConsumed, itemClassId, quantity);
+
+        public static MissionProgressEvent Interaction(uint entityClassId) =>
+            new(MissionProgressEventKind.InteractionUsed, entityClassId);
     }
 }

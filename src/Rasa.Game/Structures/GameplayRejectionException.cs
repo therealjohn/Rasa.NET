@@ -12,8 +12,13 @@ namespace Rasa.Structures
         {
         }
 
+        internal GameplayRejectionException(string message, Exception innerException)
+            : base(message, innerException)
+        {
+        }
+
         internal static bool IsExpected(Exception error) =>
             error is GameplayRejectionException or EntityNotFoundException or
-                DbException or DbUpdateException or OverflowException or NotSupportedException;
+                DbException or DbUpdateException;
     }
 }

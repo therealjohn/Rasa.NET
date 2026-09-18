@@ -22,6 +22,7 @@ namespace Rasa.Structures
         public bool? RadioCompletable { get; }
         public IReadOnlyDictionary<uint, MissionObjectiveDefinition> Objectives { get; }
         public bool IsOperational { get; }
+        public string OperationalDiagnostic { get; }
 
         public Mission(NpcMissionEntry mission, bool isOperational = false)
             : this(
@@ -52,7 +53,8 @@ namespace Rasa.Structures
             bool? shareable,
             bool? radioCompletable,
             IEnumerable<MissionObjectiveDefinition> objectives,
-            bool enableOperational = false)
+            bool enableOperational = false,
+            string operationalDiagnostic = null)
         {
             MissionId = missionId;
             Name = name;
@@ -68,21 +70,30 @@ namespace Rasa.Structures
                 .ToDictionary(objective => objective.ObjectiveId);
             Objectives = new ReadOnlyDictionary<uint, MissionObjectiveDefinition>(
                 objectiveDictionary);
-            IsOperational =
-                enableOperational &&
-                MissionGiver.HasValue &&
-                MissionReciver.HasValue &&
-                Level.HasValue &&
-                GroupType.HasValue &&
-                CategoryId.HasValue &&
-                Shareable.HasValue &&
-                RadioCompletable.HasValue &&
-                objectiveDictionary.Count > 0 &&
-                objectiveDictionary.Values.All(objective => objective.HasCompleteServerContract) &&
-                objectiveDictionary.Values
-                    .SelectMany(objective =>
-                        objective.RevealedObjectiveIds.Concat(objective.ActivatedObjectiveIds))
-                    .All(objectiveDictionary.ContainsKey);
+            var diagnostics = new List<string>();
+            if (!enableOperational)
+                diagnostics.Add("operational eligibility was not enabled");
+            if (!MissionGiver.HasValue || !MissionReciver.HasValue || !Level.HasValue ||
+                !GroupType.HasValue || !CategoryId.HasValue || !Shareable.HasValue ||
+                !RadioCompletable.HasValue)
+                diagnostics.Add("mission database metadata is incomplete");
+            if (objectiveDictionary.Values.Any(objective => !objective.HasCompleteServerContract))
+                diagnostics.Add("one or more objective server contracts are incomplete");
+            if (objectiveDictionary.Values
+                .Where(objective =>
+                    objective.RevealedObjectiveIds != null &&
+                    objective.ActivatedObjectiveIds != null)
+                .SelectMany(objective =>
+                    objective.RevealedObjectiveIds.Concat(objective.ActivatedObjectiveIds))
+                .Any(objectiveId => !objectiveDictionary.ContainsKey(objectiveId)))
+                diagnostics.Add("an objective successor is missing");
+            if (!string.IsNullOrWhiteSpace(operationalDiagnostic))
+                diagnostics.Add(operationalDiagnostic);
+
+            IsOperational = diagnostics.Count == 0;
+            OperationalDiagnostic = IsOperational
+                ? null
+                : string.Join("; ", diagnostics);
         }
 
         internal MissionInfo CreateInfo(
@@ -144,6 +155,22 @@ namespace Rasa.Structures
                 worldDefinition?.Shareable,
                 worldDefinition?.RadioCompletable,
                 Objectives.Values,
-                enableOperational: false);
+                enableOperational: true);
+
+        internal Mission DisableOperational(string diagnostic) =>
+            new(
+                MissionId,
+                Name,
+                ClientNameTextId,
+                MissionGiver,
+                MissionReciver,
+                Level,
+                GroupType,
+                CategoryId,
+                Shareable,
+                RadioCompletable,
+                Objectives.Values,
+                enableOperational: true,
+                operationalDiagnostic: diagnostic);
     }
 }

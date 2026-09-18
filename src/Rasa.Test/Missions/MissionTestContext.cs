@@ -71,7 +71,8 @@ namespace Rasa.Test.Missions
 
         private MissionTestContext(
             IReadOnlyDictionary<uint, Mission> definitions,
-            IReadOnlyDictionary<uint, MissionRewardDefinition> rewards = null) : this()
+            IReadOnlyDictionary<uint, MissionRewardDefinition> rewards = null,
+            Action<Item> beforeRewardItemPublication = null) : this()
         {
             SeedCharacter(1, 0, 1);
             _world = new WorldTestContext();
@@ -95,7 +96,7 @@ namespace Rasa.Test.Missions
             CellManager.Instance.AddToWorld(Client);
             Drain();
             Manager = new MissionManager(this, definitions, rewards ?? new Dictionary<uint, MissionRewardDefinition>(),
-                new ManifestationManager(this));
+                new ManifestationManager(this), beforeRewardItemPublication);
         }
 
         internal static MissionTestContext WithDefinitions(params uint[] missionIds) =>
@@ -189,7 +190,9 @@ namespace Rasa.Test.Missions
                     },
                     enableOperational: isOperational));
 
-        internal static MissionTestContext WithCompletableMission(uint missionId)
+        internal static MissionTestContext WithCompletableMission(
+            uint missionId,
+            Action<Item> beforeRewardItemPublication = null)
         {
             var reward = new MissionRewardDefinition(
                 experience: 100,
@@ -206,7 +209,8 @@ namespace Rasa.Test.Missions
                 });
             var context = new MissionTestContext(
                 CreateDefinitions(true, missionId),
-                new Dictionary<uint, MissionRewardDefinition> { [missionId] = reward });
+                new Dictionary<uint, MissionRewardDefinition> { [missionId] = reward },
+                beforeRewardItemPublication);
             context.Reward = reward;
             context.AddRewardTemplate(28, 3147);
             context.AddRewardTemplate(29, 3147);
@@ -215,6 +219,34 @@ namespace Rasa.Test.Missions
             context.Receiver = context.AddNpc(88);
             context.Drain();
             return context;
+        }
+
+        internal static MissionTestContext WithItemProgressMission(
+            MissionProgressEventKind kind,
+            uint itemClassId,
+            uint target)
+        {
+            var itemCounters = new Dictionary<uint, MissionObjectiveItemCounterDefinition>
+            {
+                [itemClassId] = new MissionObjectiveItemCounterDefinition(
+                    itemClassId, 0, target)
+            };
+            var objective = new MissionObjectiveDefinition(
+                1, 1001, 1002, new uint?[] { null, null, null }, 0,
+                MissionObjectiveState.Incomplete, true,
+                new Dictionary<uint, MissionObjectiveCounterDefinition>(),
+                itemCounters,
+                Array.Empty<MissionObjectiveConversation>(),
+                Array.Empty<uint>(),
+                Array.Empty<uint>(),
+                Array.Empty<MissionIndicator>(),
+                MissionProgressRule.IncrementItemCounterOnExactSubject(
+                    kind, itemClassId, 0, target));
+            var mission = new Mission(
+                321, "Item mission", 321, 77, 88, 5, 1, 2, true, false,
+                new[] { objective }, true);
+            return new MissionTestContext(
+                new Dictionary<uint, Mission> { [321] = mission });
         }
 
         internal static MissionTestContext WithObjectiveMission(
@@ -513,6 +545,25 @@ namespace Rasa.Test.Missions
                 EntityManager.Instance.RegisterItem(item.EntityId, item);
                 Client.Player.Inventory.PersonalInventory[(int)slot] = item.EntityId;
             }
+        }
+
+        internal Item CreateInventoryItem(
+            uint templateId,
+            uint classId,
+            uint quantity)
+        {
+            AddRewardTemplate(templateId, classId);
+            var item = ItemManager.StageItem(
+                EntityClassManager.Instance.LoadedEntityClasses[
+                    (EntityClasses)classId].ItemTemplates[templateId],
+                quantity,
+                "");
+            item.OwnerId = Client.Player.Id;
+            using (var context = Open())
+                item.Id = new ItemRepository(context).CreateItem(item);
+            EntityManager.Instance.RegisterEntity(item.EntityId, EntityType.Item);
+            EntityManager.Instance.RegisterItem(item.EntityId, item);
+            return item;
         }
 
         private void AddRewardTemplate(uint templateId, uint classId)

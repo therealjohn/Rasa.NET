@@ -75,6 +75,7 @@ namespace Rasa.Managers
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
         private readonly ManifestationManager _currencyManager;
         private readonly CharacterManager _characterManager;
+        private readonly MissionManager _missionManager;
         public static InventoryManager Instance
         {
             get
@@ -93,11 +94,14 @@ namespace Rasa.Managers
             }
         }
 
-        internal InventoryManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory)
+        internal InventoryManager(
+            IGameUnitOfWorkFactory gameUnitOfWorkFactory,
+            MissionManager missionManager = null)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
             _currencyManager = new ManifestationManager(gameUnitOfWorkFactory);
             _characterManager = new CharacterManager(gameUnitOfWorkFactory);
+            _missionManager = missionManager;
         }
 
         #region Handlers
@@ -1390,6 +1394,7 @@ namespace Rasa.Managers
                 return AddItemToInventory(client, item);
 
             var itemClassInfo = EntityClassManager.Instance.GetItemClassInfo(item);
+            var acquired = item.StackSize;
 
             item.OwnerId = client.Player.Id;
             item.OwnerSlotId = destSlot;
@@ -1397,6 +1402,11 @@ namespace Rasa.Managers
 
             ItemManager.Instance.SendItemDataToClient(client, item, false);
             AddItemBySlot(client, InventoryType.Personal, item.EntityId, destSlot, true, true);
+            RecordItemProgress(
+                client,
+                item,
+                acquired,
+                MissionProgressEventKind.ItemAcquired);
 
             return item;
         }
@@ -1407,6 +1417,7 @@ namespace Rasa.Managers
                 return null;
 
             var itemClassInfo = EntityClassManager.Instance.GetItemClassInfo(item);
+            var initialQuantity = item.StackSize;
 
             // get item category offset
             var itemCategoryOffset = (int)item.ItemTemplate.InventoryCategory - 1;
@@ -1453,6 +1464,11 @@ namespace Rasa.Managers
                         // destroy the item
                         EntityManager.Instance.DestroyPhysicalEntity(client, item.EntityId, EntityType.Item);
                         DeleteItemRows(unitOfWork, item);
+                        RecordItemProgress(
+                            client,
+                            slotItem,
+                            initialQuantity,
+                            MissionProgressEventKind.ItemAcquired);
                         // return the 'new' item instead
                         return slotItem;
                     }
@@ -1484,10 +1500,20 @@ namespace Rasa.Managers
                     ItemManager.Instance.SendItemDataToClient(client, item, false);
                     // add item to empty slot
                     AddItemBySlot(client, InventoryType.Personal, item.EntityId, (uint)(itemCategoryOffset + i), true, true);
+                    RecordItemProgress(
+                        client,
+                        item,
+                        initialQuantity,
+                        MissionProgressEventKind.ItemAcquired);
                     return item;
                 }
             }
 
+            RecordItemProgress(
+                client,
+                item,
+                initialQuantity - item.StackSize,
+                MissionProgressEventKind.ItemAcquired);
             return null;
         }
 
@@ -2032,6 +2058,7 @@ namespace Rasa.Managers
             }
 
             using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+            var consumed = Math.Min(stackDecreaseCount, tempItem.StackSize);
 
             // uint - uint: a count larger than the stack wrapped to ~4 billion instead of
             // emptying it.
@@ -2053,6 +2080,30 @@ namespace Rasa.Managers
                 client.CallMethod(tempItem.EntityId, new SetStackCountPacket(tempItem.StackSize));
                 unitOfWork.Items.UpdateItemStackSize(tempItem);
             }
+
+            if (inventoryType == InventoryType.Personal)
+                RecordItemProgress(
+                    client,
+                    tempItem,
+                    consumed,
+                    MissionProgressEventKind.ItemConsumed);
+        }
+
+        private void RecordItemProgress(
+            Client client,
+            Item item,
+            uint quantity,
+            MissionProgressEventKind kind)
+        {
+            if (quantity == 0 || item?.ItemTemplate == null)
+                return;
+            var itemClassId = (uint)item.ItemTemplate.Class;
+            var progress = kind == MissionProgressEventKind.ItemAcquired
+                ? MissionProgressEvent.ItemAcquired(itemClassId, quantity)
+                : MissionProgressEvent.ItemConsumed(itemClassId, quantity);
+            (_missionManager ?? MissionManager.Instance).RecordProgress(
+                client,
+                progress);
         }
 
         public void RemoveItemBySlot(Client client, InventoryType inventoryType, uint slotIndex)

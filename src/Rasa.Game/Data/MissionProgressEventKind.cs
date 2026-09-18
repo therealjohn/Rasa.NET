@@ -5,6 +5,9 @@ namespace Rasa.Data
         WaypointAcquired,
         LogosAcquired,
         CreatureKilled,
-        MissionCompleted
+        MissionCompleted,
+        ItemAcquired,
+        ItemConsumed,
+        InteractionUsed
     }
 }

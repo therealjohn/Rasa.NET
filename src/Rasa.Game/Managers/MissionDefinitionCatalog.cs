@@ -95,7 +95,7 @@ namespace Rasa.Managers
                 shareable: null,
                 radioCompletable: null,
                 objectives,
-                enableOperational: false);
+                enableOperational: true);
 
         private static MissionObjectiveDefinition Objective(
             uint objectiveId,

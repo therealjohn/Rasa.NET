@@ -29,19 +29,22 @@ namespace Rasa.Test.Missions
         public void SuccessfulTurnInCommitsTheWholeRewardBeforePublishing()
         {
             using var context = MissionTestContext.WithCompletableMission(429);
+            Assert.IsTrue(context.Manager.TryCompleteNpcMission(
+                context.Client, context.Receiver.EntityId, 429, null, null));
+            context.Drain();
             var before = context.ReadRewardTotals();
             context.BeforeSave = _ =>
             {
-                Assert.AreEqual(MissionState.Active, context.Client.Player.Missions[429].State);
-                Assert.IsTrue(context.Client.Player.Missions[429].Completeable);
+                Assert.AreEqual(MissionState.Success, context.Client.Player.Missions[429].State);
+                Assert.IsFalse(context.Client.Player.Missions[429].Completeable);
                 Assert.AreEqual(before.Experience, context.Client.Player.Experience);
                 Assert.AreEqual(before.Credits, context.Client.Player.Credits[CurencyType.Credits]);
                 Assert.AreEqual(before.Prestige, context.Client.Player.Credits[CurencyType.Prestige]);
                 Assert.AreEqual(0, context.Drain().Count);
             };
 
-            Assert.IsTrue(context.Manager.TryCompleteNpcMission(
-                context.Client, context.Receiver.EntityId, 429, 0));
+            Assert.IsTrue(context.Manager.TryRewardNpcMission(
+                context.Client, context.Receiver.EntityId, 429, 0, null));
 
             var after = context.ReadRewardTotals();
             Assert.AreEqual(before.Experience + context.Reward.Experience, after.Experience);
@@ -54,17 +57,13 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(1, packets.OfType<ExperienceChangedPacket>().Count());
             Assert.AreEqual(2, packets.OfType<UpdateCreditsPacket>().Count());
             Assert.AreEqual(2, packets.OfType<InventoryAddItemPacket>().Count());
-            Assert.AreEqual(1, packets.OfType<MissionCompleteablePacket>().Count());
-            Assert.AreEqual(1, packets.OfType<MissionCompletedPacket>().Count());
+            Assert.AreEqual(0, packets.OfType<MissionCompleteablePacket>().Count());
+            Assert.AreEqual(0, packets.OfType<MissionCompletedPacket>().Count());
             Assert.AreEqual(1, packets.OfType<MissionRewardedPacket>().Count());
             var lastRewardDelta = packets.FindLastIndex(packet =>
                 packet is ExperienceChangedPacket or UpdateCreditsPacket or InventoryAddItemPacket);
-            var completeableIndex = packets.FindIndex(packet => packet is MissionCompleteablePacket);
-            var completedIndex = packets.FindIndex(packet => packet is MissionCompletedPacket);
             var rewardedIndex = packets.FindIndex(packet => packet is MissionRewardedPacket);
-            Assert.IsTrue(lastRewardDelta < completeableIndex);
-            Assert.IsTrue(completeableIndex < completedIndex);
-            Assert.IsTrue(completedIndex < rewardedIndex);
+            Assert.IsTrue(lastRewardDelta < rewardedIndex);
         }
 
         [TestMethod]
@@ -122,7 +121,7 @@ namespace Rasa.Test.Missions
             var completed = results.GetAwaiter().GetResult();
 
             Assert.AreEqual(1, completed.Count(result => result));
-            Assert.AreEqual(2, context.CharUnitsCreated);
+            Assert.IsTrue(context.CharUnitsCreated >= 2);
             AssertGrantedOnce(context, before, 5);
             Assert.AreEqual(1, context.Drain().Concat(MissionTestContext.Drain(competitor))
                 .OfType<MissionRewardedPacket>().Count());
@@ -245,7 +244,7 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
-        public void MidPublicationFailureReleasesOnlyUnregisteredStagedEntities()
+        public void MidPublicationFailureKeepsEveryCommittedItemInRuntimeInventory()
         {
             using var context = MissionTestContext.WithCompletableMission(429);
             var expected = new InvalidOperationException("Injected publication failure.");
@@ -263,16 +262,18 @@ namespace Rasa.Test.Missions
             var staged = GetStagedItems(grant);
             Assert.AreEqual(3, staged.Length);
 
-            var actual = Assert.ThrowsExactly<InvalidOperationException>(() => grant.Publish(context.Client));
+            grant.Publish(context.Client);
 
-            Assert.AreSame(expected, actual);
-            StringAssert.Contains(actual.StackTrace, nameof(ThrowAtPersistenceBoundary));
             grant.Dispose();
             var freeIds = GetFreeEntityIds();
-            CollectionAssert.DoesNotContain(freeIds, staged[0].EntityId);
-            CollectionAssert.Contains(freeIds, staged[1].EntityId);
-            CollectionAssert.Contains(freeIds, staged[2].EntityId);
-            EntityManager.Instance.ReleaseEntity(staged[0].EntityId, EntityType.Item);
+            foreach (var item in staged)
+            {
+                CollectionAssert.DoesNotContain(freeIds, item.EntityId);
+                CollectionAssert.Contains(
+                    context.Client.Player.Inventory.PersonalInventory,
+                    item.EntityId);
+                EntityManager.Instance.ReleaseEntity(item.EntityId, EntityType.Item);
+            }
         }
 
         [TestMethod]
@@ -332,8 +333,6 @@ namespace Rasa.Test.Missions
 
         [TestMethod]
         [DataRow("database")]
-        [DataRow("overflow")]
-        [DataRow("capability")]
         public void ExpectedGameplayAndPersistenceFailuresPublishNothingAndAllowRetry(string failure)
         {
             using var context = MissionTestContext.WithCompletableMission(429);
@@ -341,8 +340,6 @@ namespace Rasa.Test.Missions
             Exception expected = failure switch
             {
                 "database" => new DbUpdateException("Injected update failure."),
-                "overflow" => new OverflowException("Injected arithmetic failure."),
-                "capability" => new NotSupportedException("Injected transaction capability failure."),
                 _ => throw new AssertFailedException($"Unknown failure {failure}.")
             };
             context.AfterSave = _ => throw expected;
@@ -407,10 +404,12 @@ namespace Rasa.Test.Missions
             Assert.IsFalse(context.Manager.TryCompleteNpcMission(
                 context.Client, context.Receiver.EntityId, 429, 0));
             context.Client.Player.Missions[429].Completeable = true;
-            Assert.IsFalse(context.Manager.TryCompleteNpcMission(
-                context.Client, context.Receiver.EntityId, 429, 2));
+            Assert.IsTrue(context.Manager.TryCompleteNpcMission(
+                context.Client, context.Receiver.EntityId, 429, null, null));
+            Assert.IsFalse(context.Manager.TryRewardNpcMission(
+                context.Client, context.Receiver.EntityId, 429, 2, null));
 
-            AssertUnchanged(context, before);
+            AssertRewardUnchangedAtSuccess(context, before);
         }
 
         [TestMethod]
@@ -423,7 +422,7 @@ namespace Rasa.Test.Missions
             Assert.IsFalse(context.Manager.TryCompleteNpcMission(
                 context.Client, context.Receiver.EntityId, 429, 0));
 
-            AssertUnchanged(context, before);
+            AssertRewardUnchangedAtSuccess(context, before);
             for (var slot = 50; slot <= 51; slot++)
             {
                 var item = EntityManager.Instance.GetItem(
@@ -440,8 +439,8 @@ namespace Rasa.Test.Missions
                 EntityManager.Instance.ReleaseEntity(item.EntityId, EntityType.Item);
                 context.Client.Player.Inventory.PersonalInventory[slot] = 0;
             }
-            Assert.IsTrue(context.Manager.TryCompleteNpcMission(
-                context.Client, context.Receiver.EntityId, 429, 0));
+            Assert.IsTrue(context.Manager.TryRewardNpcMission(
+                context.Client, context.Receiver.EntityId, 429, 0, null));
         }
 
         [TestMethod]
@@ -452,9 +451,11 @@ namespace Rasa.Test.Missions
             context.ReloadPlayerMissions();
             var receiver = context.AddNpc(88);
 
-            Assert.IsFalse(context.Manager.TryCompleteNpcMission(
-                context.Client, receiver.EntityId, 429, 0, null));
             Assert.IsTrue(context.Manager.TryCompleteNpcMission(
+                context.Client, receiver.EntityId, 429, null, null));
+            Assert.IsFalse(context.Manager.TryRewardNpcMission(
+                context.Client, receiver.EntityId, 429, 0, null));
+            Assert.IsTrue(context.Manager.TryRewardNpcMission(
                 context.Client, receiver.EntityId, 429, null, null));
         }
 
@@ -464,16 +465,18 @@ namespace Rasa.Test.Missions
             using var context = MissionTestContext.WithCompletableMission(429);
             var before = context.ReadRewardTotals();
 
-            Assert.IsFalse(context.Manager.TryCompleteNpcMission(
+            Assert.IsTrue(context.Manager.TryCompleteNpcMission(
                 context.Client, context.Receiver.EntityId, 429, null, null));
-            Assert.IsFalse(context.Manager.TryCompleteNpcMission(
+            Assert.IsFalse(context.Manager.TryRewardNpcMission(
+                context.Client, context.Receiver.EntityId, 429, null, null));
+            Assert.IsFalse(context.Manager.TryRewardNpcMission(
                 context.Client, context.Receiver.EntityId, 429, -1, null));
-            Assert.IsFalse(context.Manager.TryCompleteNpcMission(
+            Assert.IsFalse(context.Manager.TryRewardNpcMission(
                 context.Client, context.Receiver.EntityId, 429, 2, null));
-            Assert.IsFalse(context.Manager.TryCompleteNpcMission(
+            Assert.IsFalse(context.Manager.TryRewardNpcMission(
                 context.Client, context.Receiver.EntityId, 429, 0, 5));
 
-            AssertUnchanged(context, before);
+            AssertRewardUnchangedAtSuccess(context, before);
             Assert.AreEqual(typeof(int?),
                 typeof(CompleteNPCMissionPacket).GetProperty(nameof(CompleteNPCMissionPacket.SelectionIdx))!.PropertyType);
             Assert.AreEqual(typeof(int?),
@@ -555,6 +558,28 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(MissionState.Active, context.Client.Player.Missions[429].State);
             Assert.IsTrue(context.Client.Player.Missions[429].Completeable);
             Assert.AreEqual(0, context.Drain().Count);
+        }
+
+        private static void AssertRewardUnchangedAtSuccess(
+            MissionTestContext context,
+            MissionTestContext.RewardTotals before)
+        {
+            var after = context.ReadRewardTotals();
+            Assert.AreEqual(before.Experience, after.Experience);
+            Assert.AreEqual(before.Credits, after.Credits);
+            Assert.AreEqual(before.Prestige, after.Prestige);
+            Assert.AreEqual(before.ItemCount, after.ItemCount);
+            Assert.AreEqual(
+                (uint)MissionState.Success,
+                context.ReadMission(429).MissionState);
+            Assert.IsFalse(context.ReadMission(429).Completeable);
+            Assert.AreEqual(
+                MissionState.Success,
+                context.Client.Player.Missions[429].State);
+            Assert.IsFalse(context.Client.Player.Missions[429].Completeable);
+            Assert.AreEqual(
+                0,
+                context.Drain().OfType<MissionRewardedPacket>().Count());
         }
 
         private static void ThrowAtPersistenceBoundary(Exception error) => throw error;

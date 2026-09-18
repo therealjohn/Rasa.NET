@@ -245,7 +245,13 @@ namespace Rasa.Managers
                 station.TriggeredByPlayers.Remove(user);
 
                 if (!action.IsInrerrupted)
+                {
                     CellManager.Instance.CellCallMethod(station, new UsableInfoPacket(station.IsEnabled, station.StateId, 0, station.WindupTime, station.ActivateMission));
+                    MissionManager.Instance.RecordProgress(
+                        user,
+                        MissionProgressEvent.Interaction(
+                            (uint)station.EntityClassId));
+                }
 
                 return;
             }

@@ -11,7 +11,8 @@ namespace Rasa.Structures
     {
         CompleteExact,
         CompleteDistinctSet,
-        IncrementExactCounter
+        IncrementExactCounter,
+        IncrementExactItemCounter
     }
 
     public sealed class MissionProgressRule
@@ -57,7 +58,7 @@ namespace Rasa.Structures
             if (kind == MissionProgressEventKind.WaypointAcquired)
                 throw new ArgumentOutOfRangeException(
                     nameof(kind),
-                    "Exact completion supports Logos, creature, or completed mission events.");
+                    "Waypoint progress requires a distinct-set rule.");
             return CompleteOnExactSubject(kind, subjectId, null);
         }
 
@@ -98,11 +99,40 @@ namespace Rasa.Structures
                 initialValue,
                 targetValue);
 
+        public static MissionProgressRule IncrementItemCounterOnExactSubject(
+            MissionProgressEventKind kind,
+            uint itemClassId,
+            uint initialValue,
+            uint targetValue)
+        {
+            if (kind != MissionProgressEventKind.ItemAcquired &&
+                kind != MissionProgressEventKind.ItemConsumed)
+                throw new ArgumentOutOfRangeException(
+                    nameof(kind),
+                    "Item counters support item acquisition or consumption events.");
+            return new MissionProgressRule(
+                MissionProgressRuleType.IncrementExactItemCounter,
+                kind,
+                new[] { itemClassId },
+                counterId: itemClassId,
+                initialValue: initialValue,
+                targetValue: targetValue);
+        }
+
         internal bool Matches(MissionProgressEvent progress) =>
             progress.Kind == Kind && _subjectSet.Contains(progress.SubjectId);
 
         internal bool IsCompatible(MissionObjectiveDefinition objective)
         {
+            if (RuleType == MissionProgressRuleType.IncrementExactItemCounter)
+                return CounterId.HasValue &&
+                    InitialValue.HasValue &&
+                    TargetValue.HasValue &&
+                    objective.ItemCounters.TryGetValue(
+                        CounterId.Value, out var itemCounter) &&
+                    itemCounter.ItemClassId == CounterId.Value &&
+                    itemCounter.InitialValue == InitialValue.Value &&
+                    itemCounter.TargetValue == TargetValue.Value;
             if (RuleType != MissionProgressRuleType.IncrementExactCounter)
                 return true;
             return CounterId.HasValue &&

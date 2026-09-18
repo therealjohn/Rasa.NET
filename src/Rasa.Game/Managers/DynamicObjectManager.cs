@@ -464,8 +464,23 @@ namespace Rasa.Managers
                         controlpoint.Faction = controlpoint.Faction == Factions.AFS ? Factions.Bane : Factions.AFS;
                         controlpoint.StateId = controlpoint.StateId == UseObjectState.CpointStateFactionAOwned ? UseObjectState.CpointStateFactionBOwned : UseObjectState.CpointStateFactionAOwned;
 
-                        CellManager.Instance.CellCallMethod(controlpoint, new ForceStatePacket(controlpoint.StateId, 100));
-                        CellManager.Instance.CellCallMethod(controlpoint, new UsableInfoPacket(true, controlpoint.StateId, 0, 10000, 0));
+                        CellManager.Instance.CellCallMethod(
+                            mapChannel,
+                            controlpoint,
+                            new ForceStatePacket(controlpoint.StateId, 100));
+                        CellManager.Instance.CellCallMethod(
+                            mapChannel,
+                            controlpoint,
+                            new UsableInfoPacket(
+                                true,
+                                controlpoint.StateId,
+                                0,
+                                10000,
+                                0));
+                        (_missionManager ?? MissionManager.Instance).RecordProgress(
+                            client,
+                            MissionProgressEvent.Interaction(
+                                (uint)controlpoint.EntityClassId));
                         break;
                     }
             }
@@ -674,6 +689,9 @@ namespace Rasa.Managers
 
                         if (!haveLogos)
                             CharacterManager.Instance.UpdateCharacter(client, CharacterUpdate.Logos, logosId);
+                        (_missionManager ?? MissionManager.Instance).RecordProgress(
+                            client,
+                            MissionProgressEvent.Interaction((uint)obj.EntityClassId));
 
                         break;
                     }

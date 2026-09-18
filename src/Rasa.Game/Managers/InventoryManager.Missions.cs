@@ -197,7 +197,7 @@ namespace Rasa.Managers
                 }
             }
 
-            internal void Publish(Client client)
+            internal void ConvergeRuntime(Client client)
             {
                 for (var index = 0; index < _slots.Length; index++)
                 {
@@ -208,25 +208,55 @@ namespace Rasa.Managers
                     if (slot.Existing != null)
                     {
                         slot.Existing.StackSize = slot.Count;
-                        client.CallMethod(
-                            slot.Existing.EntityId,
-                            new SetStackCountPacket(slot.Count));
                         continue;
                     }
 
                     var item = slot.Staged;
-                    _beforeRegister?.Invoke(item);
-                    EntityManager.Instance.RegisterEntity(item.EntityId, EntityType.Item);
-                    slot.OwnershipTransferred = true;
-                    EntityManager.Instance.RegisterItem(item.EntityId, item);
+                    if (!slot.OwnershipTransferred)
+                    {
+                        EntityManager.Instance.RegisterEntity(item.EntityId, EntityType.Item);
+                        EntityManager.Instance.RegisterItem(item.EntityId, item);
+                        slot.OwnershipTransferred = true;
+                        MissionManager.TryPublish(
+                            () => _beforeRegister?.Invoke(item),
+                            $"mission reward item {item.Id} publication hook");
+                    }
                     client.Player.Inventory.PersonalInventory[index] = item.EntityId;
-                    ItemManager.Instance.SendItemDataToClient(client, item, false);
-                    client.CallMethod(
-                        SysEntity.ClientInventoryManagerId,
-                        new InventoryAddItemPacket(
-                            InventoryType.Personal,
-                            item.EntityId,
-                            (uint)index));
+                }
+            }
+
+            internal void Publish(Client client)
+            {
+                ConvergeRuntime(client);
+                for (var index = 0; index < _slots.Length; index++)
+                {
+                    var slot = _slots[index];
+                    if (slot == null || slot.Count == slot.OriginalCount)
+                        continue;
+
+                    if (slot.Existing != null)
+                    {
+                        MissionManager.TryPublish(
+                            () => client.CallMethod(
+                                slot.Existing.EntityId,
+                                new SetStackCountPacket(slot.Count)),
+                            $"mission reward stack {slot.Existing.Id}");
+                        continue;
+                    }
+
+                    var item = slot.Staged;
+                    MissionManager.TryPublish(
+                        () => ItemManager.Instance.SendItemDataToClient(
+                            client, item, false),
+                        $"mission reward item {item.Id} entity data");
+                    MissionManager.TryPublish(
+                        () => client.CallMethod(
+                            SysEntity.ClientInventoryManagerId,
+                            new InventoryAddItemPacket(
+                                InventoryType.Personal,
+                                item.EntityId,
+                                (uint)index)),
+                        $"mission reward item {item.Id} inventory slot");
                 }
             }
 
