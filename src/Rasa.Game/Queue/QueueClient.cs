@@ -1,4 +1,5 @@
 ﻿using System;
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
 
@@ -58,7 +59,8 @@ namespace Rasa.Queue
             // cost this one connection.
             try
             {
-                HandleReceive(data);
+                using var reader = data.GetReader();
+                HandleReceive(reader);
             }
             catch (Exception e)
             {
@@ -67,14 +69,14 @@ namespace Rasa.Queue
             }
         }
 
-        private void HandleReceive(BufferData data)
+        private void HandleReceive(BinaryReader reader)
         {
             switch (State)
             {
                 case QueueState.Authenticating:
                     var keyPacket = new ClientKeyPacket();
 
-                    keyPacket.Read(data.GetReader());
+                    keyPacket.Read(reader);
 
                     if (keyPacket.PublicKey != Manager.Config.PublicKey)
                     {
@@ -89,12 +91,12 @@ namespace Rasa.Queue
                     break;
 
                 case QueueState.Authenticated:
-                    if (data[data.Offset++] != 7)
-                        throw new Exception("Invalid opcode???");
+                    if (reader.ReadByte() != 7)
+                        throw new InvalidDataException("Invalid queue opcode.");
 
                     var loginPacket = new QueueLoginPacket();
 
-                    loginPacket.Read(data.GetReader());
+                    loginPacket.Read(reader);
 
                     UserId = loginPacket.UserId;
                     OneTimeKey = loginPacket.OneTimeKey;
@@ -105,7 +107,7 @@ namespace Rasa.Queue
                     break;
 
                 default:
-                    throw new Exception("Received packet in a invalid queue state!");
+                    throw new InvalidDataException("Received packet in an invalid queue state.");
             }
         }
 

@@ -69,6 +69,7 @@ namespace Rasa.Game
         // the queue into the stream on the MainLoop. Receives are serialized per socket,
         // so there is exactly one producer per client and byte order is preserved.
         private readonly ConcurrentQueue<(byte[] Buffer, int Length)> _pendingChunks = new();
+        private readonly object _pendingChunksLock = new();
 
         // Bytes enqueued but not yet drained. Bounded so a client that floods faster than
         // the MainLoop consumes cannot grow memory without limit. Legitimate traffic is a
@@ -581,13 +582,22 @@ namespace Rasa.Game
 
         private bool OnDecrypt(BufferData data)
         {
-            var result = GameCryptManager.Decrypt(data.Buffer, data.BaseOffset + data.Offset, data.RemainingLength, Data);
+            return DecryptFrame(data, Data);
+        }
+
+        internal static bool DecryptFrame(BufferData data, ClientCryptData cryptData)
+        {
+            var length = data.RemainingLength;
+            if (length < 8 || length % 8 != 0)
+                return false;
+
+            var result = GameCryptManager.Decrypt(data.Buffer, data.BaseOffset + data.Offset, length, cryptData);
             if (!result)
                 return false;
 
             var blowfishPadding = data[data.Offset] & 0xF;
-            if (blowfishPadding > 8)
-                throw new Exception("More than 8 bytes of blowfish padding was added to the packet?");
+            if (blowfishPadding < 1 || blowfishPadding > 8 || blowfishPadding > data.RemainingLength)
+                return false;
 
             data.Offset += blowfishPadding;
 
@@ -611,25 +621,42 @@ namespace Rasa.Game
 		
         private void OnReceive(BufferData data)
         {
-            // IOCP thread. Do not touch _incomingDataQueue here - see the field comment.
             var count = data.RemainingLength;
-            if (count <= 0 || State == ClientState.Disconnected)
+            if (count <= 0)
                 return;
 
-            // Same rent-and-copy CopyFromArray() used to do; only the List.Add is deferred.
             var chunk = ArrayPool<byte>.Shared.Rent(count);
             Buffer.BlockCopy(data.Buffer, data.BaseOffset + data.Offset, chunk, 0, count);
 
-            var pending = Interlocked.Add(ref _pendingBytes, count);
-            if (pending > MaxPendingBytes)
+            var overflowed = false;
+            var pending = 0;
+
+            lock (_pendingChunksLock)
             {
-                ArrayPool<byte>.Shared.Return(chunk);
-                Logger.WriteLog(LogType.Security, $"Client {Socket.RemoteAddress} has {pending} bytes of undrained input (limit {MaxPendingBytes}), disconnecting.");
-                Close(false);
-                return;
+                if (State == ClientState.Disconnected)
+                {
+                    ArrayPool<byte>.Shared.Return(chunk);
+                    return;
+                }
+
+                pending = _pendingBytes + count;
+                if (pending > MaxPendingBytes)
+                {
+                    overflowed = true;
+                    ArrayPool<byte>.Shared.Return(chunk);
+                }
+                else
+                {
+                    _pendingBytes = pending;
+                    _pendingChunks.Enqueue((chunk, count));
+                }
             }
 
-            _pendingChunks.Enqueue((chunk, count));
+            if (!overflowed)
+                return;
+
+            Logger.WriteLog(LogType.Security, $"Client {Socket.RemoteAddress} has {pending} bytes of undrained input (limit {MaxPendingBytes}), disconnecting.");
+            Close(false);
         }
 
         // MainLoop thread. Moves everything the socket thread has handed off into the
@@ -637,22 +664,27 @@ namespace Rasa.Game
         // returns it to the pool once it has been consumed, exactly as before.
         private void DrainPendingChunks()
         {
-            while (_pendingChunks.TryDequeue(out var chunk))
+            lock (_pendingChunksLock)
             {
-                Interlocked.Add(ref _pendingBytes, -chunk.Length);
-                _incomingDataQueue.AddSharedPoolArray(chunk.Buffer, chunk.Length);
+                while (_pendingChunks.TryDequeue(out var chunk))
+                {
+                    _pendingBytes -= chunk.Length;
+                    _incomingDataQueue.AddSharedPoolArray(chunk.Buffer, chunk.Length);
+                }
             }
         }
 
-        // Called from Close() after State is Disconnected, so OnReceive() no longer
-        // enqueues. A completion already past that check can still slip one chunk in
-        // afterwards; that array is simply collected by the GC, which is harmless.
+        // State is set before this is called. The shared lock makes an OnReceive already in
+        // progress either enqueue before this drain or observe Disconnected and return its rent.
         private void DiscardPendingChunks()
         {
-            while (_pendingChunks.TryDequeue(out var chunk))
+            lock (_pendingChunksLock)
             {
-                Interlocked.Add(ref _pendingBytes, -chunk.Length);
-                ArrayPool<byte>.Shared.Return(chunk.Buffer);
+                while (_pendingChunks.TryDequeue(out var chunk))
+                {
+                    _pendingBytes -= chunk.Length;
+                    ArrayPool<byte>.Shared.Return(chunk.Buffer);
+                }
             }
         }
 

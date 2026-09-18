@@ -1,4 +1,5 @@
 ﻿using System.Net.Sockets;
+using System.Threading;
 
 namespace Rasa.Login
 {
@@ -18,6 +19,7 @@ namespace Rasa.Login
         public BigNum PrivateKey { get; } = new BigNum();
         public BigNum PublicKey { get; } = new BigNum();
         public BigNum K { get; } = new BigNum();
+        private int _closed;
 
         public LoginClient(LoginManager manager, LengthedSocket socket)
         {
@@ -50,7 +52,8 @@ namespace Rasa.Login
         private void OnReceive(BufferData data)
         {
             var packet = new ClientKeyPacket();
-            packet.Read(data.GetReader());
+            using var reader = data.GetReader();
+            packet.Read(reader);
 
             DHKeyExchange.GenerateServerK(PrivateKey, packet.B, K);
 
@@ -68,16 +71,12 @@ namespace Rasa.Login
 
         private void OnError(SocketAsyncEventArgs args)
         {
-            Manager.Disconnect(this);
-
             Close();
         }
 
         /// <summary>The socket gave up on this connection; the reason is already logged.</summary>
         private void OnDrop(string reason)
         {
-            Manager.Disconnect(this);
-
             Close();
         }
 
@@ -86,12 +85,17 @@ namespace Rasa.Login
             Socket.AutoReceive = true;
             Socket.OnReceive = null;
             Socket.OnError = null;
+            Socket.OnDrop = null;
             Socket.OnEncrypt = null;
         }
 
         public void Close()
         {
+            if (Interlocked.Exchange(ref _closed, 1) != 0)
+                return;
+
             Socket.Close();
+            Manager.Disconnect(this);
         }
     }
 }
