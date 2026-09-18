@@ -791,14 +791,16 @@ namespace Rasa.Managers
                     return false;
 
                 var candidates = new List<ProgressCandidate>();
-                foreach (var mission in _loadedMissions.Values.Where(
-                    definition => definition.IsOperational))
+                foreach (var mission in _loadedMissions.Values
+                    .Where(definition => definition.IsOperational)
+                    .OrderBy(definition => definition.MissionId))
                 {
                     if (!client.Player.Missions.TryGetValue(
                             mission.MissionId, out var runtimeMission) ||
                         runtimeMission.State != MissionState.Active)
                         continue;
-                    foreach (var objective in mission.Objectives.Values)
+                    foreach (var objective in mission.Objectives.Values
+                        .OrderBy(definition => definition.ObjectiveId))
                     {
                         if (objective.ProgressRule == null ||
                             !objective.ProgressRule.Matches(progress) ||
@@ -817,7 +819,7 @@ namespace Rasa.Managers
                     return false;
 
                 var publications = new List<ProgressPublication>();
-                var completableMissions = new HashSet<uint>();
+                var completableMissions = new SortedSet<uint>();
                 try
                 {
                     using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
@@ -948,33 +950,32 @@ namespace Rasa.Managers
                     return false;
                 }
 
-                foreach (var publication in publications)
+                foreach (var publication in publications.Where(
+                    publication => publication.CounterId.HasValue))
                 {
-                    if (publication.CounterId.HasValue)
-                    {
-                        publication.Candidate.RuntimeObjective.SetCounter(
-                            publication.CounterId.Value, publication.CounterValue.Value);
-                        var rule = publication.Candidate.ObjectiveDefinition.ProgressRule;
-                        client.CallMethod(
-                            client.Player.EntityId,
-                            new UpdateObjectiveCounterPacket(
-                                publication.Candidate.Definition.MissionId,
-                                publication.Candidate.ObjectiveDefinition.ObjectiveId,
-                                publication.CounterId.Value,
-                                publication.CounterValue.Value,
-                                rule.InitialValue.Value,
-                                rule.TargetValue.Value));
-                    }
-                    if (publication.Completed)
-                    {
-                        publication.Candidate.RuntimeObjective.State =
-                            MissionObjectiveState.Completed;
-                        client.CallMethod(
-                            client.Player.EntityId,
-                            new ObjectiveCompletedPacket(
-                                publication.Candidate.Definition.MissionId,
-                                publication.Candidate.ObjectiveDefinition.ObjectiveId));
-                    }
+                    publication.Candidate.RuntimeObjective.SetCounter(
+                        publication.CounterId.Value, publication.CounterValue.Value);
+                    var rule = publication.Candidate.ObjectiveDefinition.ProgressRule;
+                    client.CallMethod(
+                        client.Player.EntityId,
+                        new UpdateObjectiveCounterPacket(
+                            publication.Candidate.Definition.MissionId,
+                            publication.Candidate.ObjectiveDefinition.ObjectiveId,
+                            publication.CounterId.Value,
+                            publication.CounterValue.Value,
+                            rule.InitialValue.Value,
+                            rule.TargetValue.Value));
+                }
+                foreach (var publication in publications.Where(
+                    publication => publication.Completed))
+                {
+                    publication.Candidate.RuntimeObjective.State =
+                        MissionObjectiveState.Completed;
+                    client.CallMethod(
+                        client.Player.EntityId,
+                        new ObjectiveCompletedPacket(
+                            publication.Candidate.Definition.MissionId,
+                            publication.Candidate.ObjectiveDefinition.ObjectiveId));
                 }
                 foreach (var missionId in completableMissions)
                 {

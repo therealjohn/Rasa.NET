@@ -50,17 +50,17 @@ namespace Rasa.Managers
                             MissionProgressEventKind.LogosAcquired,
                             new HashSet<uint> { 1, 2, 6, 9, 10, 23, 24, 28, 38, 49, 53, 56 })),
                     Objective(20, 12810, 12811,
-                        progressRule: Creature(82, true)),
+                        progressRule: Creature(82)),
                     Objective(21, 12812, 12813,
-                        progressRule: Creature(83, true)),
+                        progressRule: Creature(83)),
                     Objective(22, 12814, 12815,
-                        progressRule: Creature(84, true)),
+                        progressRule: Creature(84)),
                     Objective(23, 12816, 12817,
                         progressRule: Creature(79, false)),
                     Objective(24, 12818, 12819,
-                        progressRule: Creature(80, true)),
+                        progressRule: Creature(80)),
                     Objective(25, 12820, 12821,
-                        progressRule: Creature(75, true)),
+                        progressRule: Creature(75)),
                     Objective(40, 12852, 12853, 12854),
                     Objective(41, 12855, 12856),
                     Objective(46, 12859, 12860),
@@ -122,7 +122,9 @@ namespace Rasa.Managers
         private static MissionObjectiveConversation Completion(uint npcPackageId, uint playerFlagId) =>
             new(npcPackageId, playerFlagId, MissionObjectiveConversationType.Completion);
 
-        private static MissionProgressRule Creature(uint creatureId, bool spawnResolved) =>
+        private static MissionProgressRule Creature(
+            uint creatureId,
+            bool? spawnResolved = null) =>
             MissionProgressRule.CompleteOnExactSubject(
                 MissionProgressEventKind.CreatureKilled,
                 creatureId,

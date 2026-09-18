@@ -69,11 +69,33 @@ namespace Rasa.Test.Missions
                     catalog[1449].Objectives[subject.Key].ProgressRule,
                     MissionProgressEventKind.CreatureKilled,
                     new[] { subject.Value });
-                Assert.AreEqual(subject.Key != 23,
-                    catalog[1449].Objectives[subject.Key].ProgressRule.SourceSpawnResolved);
+                if (subject.Key == 23)
+                    Assert.IsFalse(catalog[1449].Objectives[subject.Key]
+                        .ProgressRule.SourceSpawnResolved.Value);
+                else
+                    Assert.IsNull(catalog[1449].Objectives[subject.Key]
+                        .ProgressRule.SourceSpawnResolved);
             }
-            foreach (var objectiveId in new uint[] { 3, 4, 5, 6, 7, 40, 48, 55, 58 })
-                Assert.IsNull(catalog[1449].Objectives[objectiveId].ProgressRule);
+
+            var permittedRules = new HashSet<(uint MissionId, uint ObjectiveId)>
+            {
+                (1069, 1),
+                (1449, 1),
+                (1449, 8),
+                (1449, 20),
+                (1449, 21),
+                (1449, 22),
+                (1449, 23),
+                (1449, 24),
+                (1449, 25)
+            };
+            foreach (var mission in catalog.Values)
+            foreach (var objective in mission.Objectives.Values)
+            {
+                if (!permittedRules.Contains((mission.MissionId, objective.ObjectiveId)))
+                    Assert.IsNull(objective.ProgressRule,
+                        $"Mission {mission.MissionId} objective {objective.ObjectiveId} has an unsupported progress rule.");
+            }
             Assert.IsFalse(catalog[1449].Objectives.Values
                 .Any(objective => objective.Counters.Count > 0 || objective.ItemCounters.Count > 0));
         }

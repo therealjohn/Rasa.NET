@@ -302,7 +302,10 @@ increment one fully specified test-only counter. Generic production counters are
 not inferred. `RecordProgress` validates the active client plus runtime and
 durable mission state, writes all matched changes in one serializable
 transaction, and publishes counter, objective-completed, then
-mission-completable deltas after commit.
+mission-completable deltas after commit. When one event matches multiple
+objectives, every runtime counter update and counter/item-counter packet is
+published first, followed by every objective-completed packet and then every
+mission-completable packet. Each phase uses mission/objective definition order.
 
 The gameplay action commits and publishes first. Waypoint progress follows
 `WaypointGained`, Logos progress follows `LogosStoneAdded`, creature progress
@@ -377,9 +380,10 @@ The source-only catalog also preserves these bounded progress slices:
   `{49,50,51,57,61,73,156}`. Objective `8`: distinct Logos
   `{1,2,6,9,10,23,24,28,38,49,53,56}`. Objectives `20` through `25` bind
   exact creature IDs `{82,83,84,79,80,75}` respectively. Objective `23`
-  explicitly records that Horntail's map-1220 spawn is unresolved. Objectives
-  `3/4/5/6/7/40/48/55/58` and all other unsupported targets have no progress
-  rule.
+  explicitly records that Horntail's map-1220 spawn is unresolved. Spawn
+  resolution for objectives `20-22` and `24-25` remains unknown rather than
+  inferred from corroborating rows. Every objective outside the exact listed
+  rules has no progress rule.
 
 All three definitions have `IsOperational == false`, carry no production
 rewards, and produce no character mission/objective/counter writes or mission

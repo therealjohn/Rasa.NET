@@ -13,6 +13,7 @@ namespace Rasa.Test.Missions
     using ClientState = RasaGame::Rasa.Data.ClientState;
     using Rasa.Data;
     using Rasa.Managers;
+    using Rasa.Packets;
     using Rasa.Packets.ClientMethod.Server;
     using Rasa.Packets.Manifestation.Server;
     using Rasa.Packets.MapChannel.Server;
@@ -121,6 +122,68 @@ namespace Rasa.Test.Missions
                     typeof(MissionCompleteablePacket)
                 },
                 context.Drain().Select(packet => packet.GetType()).ToArray());
+        }
+
+        [TestMethod]
+        public void MultiMatchEventPublishesAllCountersThenObjectivesThenCompletableMissions()
+        {
+            var mission321 = CreateMissionWithObjectives(
+                321,
+                CreateProgressObjective(
+                    9,
+                    MissionProgressRule.IncrementCounterOnExactSubject(
+                        MissionProgressEventKind.CreatureKilled, 75, 0, 3, 4),
+                    new Dictionary<uint, MissionObjectiveCounterDefinition>
+                    {
+                        [0] = new MissionObjectiveCounterDefinition(0, 3, 4)
+                    }),
+                CreateProgressObjective(
+                    2,
+                    MissionProgressRule.CompleteOnExactSubject(
+                        MissionProgressEventKind.CreatureKilled, 75)));
+            var mission320 = CreateMissionWithObjectives(
+                320,
+                CreateProgressObjective(
+                    5,
+                    MissionProgressRule.IncrementCounterOnExactSubject(
+                        MissionProgressEventKind.CreatureKilled, 75, 0, 6, 7),
+                    new Dictionary<uint, MissionObjectiveCounterDefinition>
+                    {
+                        [0] = new MissionObjectiveCounterDefinition(0, 6, 7)
+                    }),
+                CreateProgressObjective(
+                    1,
+                    MissionProgressRule.CompleteOnExactSubject(
+                        MissionProgressEventKind.CreatureKilled, 75)));
+            using var context = MissionTestContext.WithCustomDefinitions(
+                new Dictionary<uint, Mission>
+                {
+                    [321] = mission321,
+                    [320] = mission320
+                });
+            SeedActive(context, 321);
+            context.SeedMission(1, 320, (uint)MissionState.Active, false);
+            context.ReloadPlayerMissions();
+            context.Drain();
+
+            Assert.IsTrue(context.Manager.RecordProgress(
+                context.Client, MissionProgressEvent.Creature(75)));
+
+            CollectionAssert.AreEqual(
+                new[]
+                {
+                    "counter:320:5:0:7",
+                    "counter:321:9:0:4",
+                    "objective:320:1",
+                    "objective:320:5",
+                    "objective:321:2",
+                    "objective:321:9",
+                    "completable:320",
+                    "completable:321"
+                },
+                context.Drain().Select(DescribeProgressPacket).ToArray());
+            Assert.IsTrue(context.Client.Player.Missions[320].Completeable);
+            Assert.IsTrue(context.Client.Player.Missions[321].Completeable);
         }
 
         [TestMethod]
@@ -421,31 +484,57 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
-        public void RecoveredInactiveRulesNeverReadOrWriteCharacterProgress()
+        public void RecoveredInactiveSourceIdentitySweepNeverReadsOrWritesCharacterProgress()
         {
             using var context = MissionTestContext.WithRecoveredDefinitions();
-            context.ResetCharUnitCount();
-            foreach (var definition in context.Manager.LoadedMissions.Values)
-            foreach (var objective in definition.Objectives.Values)
+            var identities = new HashSet<uint>
             {
-                var rule = objective.ProgressRule;
-                var subjects = rule?.Subjects ?? new uint[] { objective.ObjectiveId };
-                foreach (var subject in subjects)
-                foreach (MissionProgressEventKind kind in Enum.GetValues(typeof(MissionProgressEventKind)))
+                38, 42, 43, 75, 79, 80, 81, 82, 83, 84, 91,
+                112, 113, 156, 168, 184, 219, 1220, 7364
+            };
+            foreach (var definition in context.Manager.LoadedMissions.Values)
+            {
+                identities.Add(definition.MissionId);
+                identities.Add(definition.ClientNameTextId.Value);
+                foreach (var objective in definition.Objectives.Values)
                 {
-                    var progress = kind switch
+                    identities.Add(objective.ObjectiveId);
+                    if (objective.ClientNameTextId.HasValue)
+                        identities.Add(objective.ClientNameTextId.Value);
+                    if (objective.ClientBodyTextId.HasValue)
+                        identities.Add(objective.ClientBodyTextId.Value);
+                    foreach (var textId in objective.ClientCounterTextIds.Where(id => id.HasValue))
+                        identities.Add(textId.Value);
+                    foreach (var subject in objective.ProgressRule?.Subjects ?? Array.Empty<uint>())
+                        identities.Add(subject);
+                    foreach (var conversation in objective.Conversations)
                     {
-                        MissionProgressEventKind.WaypointAcquired => MissionProgressEvent.Waypoint(subject),
-                        MissionProgressEventKind.LogosAcquired => MissionProgressEvent.Logos(subject),
-                        MissionProgressEventKind.CreatureKilled => MissionProgressEvent.Creature(subject),
-                        MissionProgressEventKind.MissionCompleted => MissionProgressEvent.Mission(subject),
-                        _ => throw new AssertFailedException()
-                    };
-                    Assert.IsFalse(context.Manager.RecordProgress(context.Client, progress));
+                        identities.Add(conversation.NpcPackageId);
+                        identities.Add(conversation.PlayerFlagId);
+                        identities.Add((uint)conversation.Type);
+                    }
                 }
             }
 
+            context.ResetCharUnitCount();
+            var baselineSaves = context.SaveAttempts;
+            foreach (var subject in identities.OrderBy(id => id))
+            foreach (MissionProgressEventKind kind in Enum.GetValues(typeof(MissionProgressEventKind)))
+            {
+                var progress = kind switch
+                {
+                    MissionProgressEventKind.WaypointAcquired => MissionProgressEvent.Waypoint(subject),
+                    MissionProgressEventKind.LogosAcquired => MissionProgressEvent.Logos(subject),
+                    MissionProgressEventKind.CreatureKilled => MissionProgressEvent.Creature(subject),
+                    MissionProgressEventKind.MissionCompleted => MissionProgressEvent.Mission(subject),
+                    _ => throw new AssertFailedException()
+                };
+                Assert.IsFalse(context.Manager.RecordProgress(context.Client, progress),
+                    $"Inactive definitions advanced for systematic identity {subject} as {kind}.");
+            }
+
             Assert.AreEqual(0, context.CharUnitsCreated);
+            Assert.AreEqual(baselineSaves, context.SaveAttempts);
             Assert.AreEqual(0, context.Drain().Count);
         }
 
@@ -500,19 +589,45 @@ namespace Rasa.Test.Missions
             return context;
         }
 
-        private static Mission CreateMission(uint missionId, MissionProgressRule rule)
+        private static Mission CreateMission(uint missionId, MissionProgressRule rule) =>
+            CreateMissionWithObjectives(missionId, CreateProgressObjective(1, rule));
+
+        private static Mission CreateMissionWithObjectives(
+            uint missionId,
+            params MissionObjectiveDefinition[] objectives) =>
+            new(
+                missionId, $"Mission {missionId}", missionId, 77, 88, 5, 1, 2,
+                true, false, objectives, true);
+
+        private static MissionObjectiveDefinition CreateProgressObjective(
+            uint objectiveId,
+            MissionProgressRule rule,
+            IReadOnlyDictionary<uint, MissionObjectiveCounterDefinition> counters = null)
         {
-            var objective = new MissionObjectiveDefinition(
-                1, 1001, 1002, new uint?[] { null, null, null }, 0,
+            counters ??= new Dictionary<uint, MissionObjectiveCounterDefinition>();
+            var counterTextIds = new uint?[3];
+            foreach (var counterId in counters.Keys)
+                counterTextIds[counterId] = 9000 + counterId;
+            return new MissionObjectiveDefinition(
+                objectiveId, 1001, 1002, counterTextIds, objectiveId,
                 MissionObjectiveState.Incomplete, true,
-                new Dictionary<uint, MissionObjectiveCounterDefinition>(),
+                counters,
                 new Dictionary<uint, MissionObjectiveItemCounterDefinition>(),
                 Array.Empty<MissionObjectiveConversation>(),
                 Array.Empty<uint>(), Array.Empty<uint>(), Array.Empty<MissionIndicator>(), rule);
-            return new Mission(
-                missionId, $"Mission {missionId}", missionId, 77, 88, 5, 1, 2,
-                true, false, new[] { objective }, true);
         }
+
+        private static string DescribeProgressPacket(PythonPacket packet) =>
+            packet switch
+            {
+                UpdateObjectiveCounterPacket counter =>
+                    $"counter:{counter.MissionId}:{counter.ObjectiveId}:{counter.CounterId}:{counter.CounterValue}",
+                ObjectiveCompletedPacket completed =>
+                    $"objective:{completed.MissionId}:{completed.ObjectiveId}",
+                MissionCompleteablePacket completeable =>
+                    $"completable:{completeable.MissionId}",
+                _ => $"unexpected:{packet.GetType().Name}"
+            };
 
         private static Creature AddCreature(MissionTestContext context, uint dbId)
         {
