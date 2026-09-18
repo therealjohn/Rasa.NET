@@ -614,7 +614,7 @@ namespace Rasa.Managers
                                 "Mission objective NPC changed before persistence.");
 
                         durableObjective.ObjectiveState = (byte)MissionObjectiveState.Completed;
-                        foreach (var successorId in revealed.Except(activated))
+                        foreach (var successorId in revealed)
                         {
                             if (!durableObjectives.TryGetValue(successorId, out var successor))
                                 throw new GameplayRejectionException(
@@ -631,15 +631,21 @@ namespace Rasa.Managers
                                 throw new GameplayRejectionException(
                                     "Configured activated mission objective is missing.");
                             if (successor.ObjectiveState ==
-                                (byte)MissionObjectiveState.Incomplete)
+                                (byte)MissionObjectiveState.Inactive ||
+                                successor.ObjectiveState ==
+                                (byte)MissionObjectiveState.NotAssigned)
+                            {
+                                successor.ObjectiveState = (byte)MissionObjectiveState.Incomplete;
+                                appliedActivated.Add(successorId);
+                            }
+                            else if (successor.ObjectiveState is
+                                ((byte)MissionObjectiveState.Incomplete) or
+                                ((byte)MissionObjectiveState.Completed) or
+                                ((byte)MissionObjectiveState.Failed))
                                 continue;
-                            if (successor.ObjectiveState is not
-                                ((byte)MissionObjectiveState.Inactive) and not
-                                ((byte)MissionObjectiveState.NotAssigned))
+                            else
                                 throw new GameplayRejectionException(
-                                    "Configured activated mission objective is not available.");
-                            successor.ObjectiveState = (byte)MissionObjectiveState.Incomplete;
-                            appliedActivated.Add(successorId);
+                                    "Configured activated mission objective state is invalid.");
                         }
 
                         completeable = true;
@@ -681,9 +687,7 @@ namespace Rasa.Managers
 
                 client.CallMethod(client.Player.EntityId,
                     new ObjectiveCompletedPacket(missionId, objectiveId));
-                foreach (var successorId in revealed.Where(successorId =>
-                    appliedRevealed.Contains(successorId) ||
-                    appliedActivated.Contains(successorId)))
+                foreach (var successorId in revealed.Where(appliedRevealed.Contains))
                     client.CallMethod(client.Player.EntityId,
                         new ObjectiveRevealedPacket(
                             missionId,
@@ -819,9 +823,12 @@ namespace Rasa.Managers
                 if (log.State == MissionState.Active)
                 {
                     if (log.Completeable &&
-                        mission.MissionReciver == creature.DbId &&
-                        TryGetRewardInfo(mission.MissionId, out var completionReward))
+                        mission.MissionReciver == creature.DbId)
                     {
+                        var completionReward = _rewardDefinitions.TryGetValue(
+                            mission.MissionId, out var definition)
+                            ? definition.CreateInfo()
+                            : new RewardInfo();
                         completeable.Add(mission.MissionId, completionReward);
                         continue;
                     }

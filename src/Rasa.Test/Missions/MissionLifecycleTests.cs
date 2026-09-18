@@ -227,6 +227,80 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
+        public void StaleClientActivatesPreRevealedSuccessorWithoutRevealingItAgain()
+        {
+            using var context = MissionTestContext.WithObjectiveMission();
+            var giver = context.AddNpc(77);
+            var objectiveNpc = context.AddNpc(500, npcPackageId: 700);
+            Assert.IsTrue(context.Manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            context.Drain();
+            var staleClient = context.CreateCompetingClient();
+            using (var unit = context.CreateChar())
+                unit.CharacterMissionProgress.SetObjectiveState(
+                    1,
+                    321,
+                    9,
+                    (byte)MissionObjectiveState.Inactive,
+                    (byte)MissionObjectiveState.NotAssigned);
+
+            Assert.IsTrue(context.Manager.TryCompleteNpcObjective(
+                staleClient, objectiveNpc.EntityId, 321, 5, 11));
+
+            var durable = context.ReadProgress(321).Missions[321];
+            Assert.AreEqual((byte)MissionObjectiveState.Completed, durable.Objectives[5].State);
+            Assert.AreEqual((byte)MissionObjectiveState.Incomplete, durable.Objectives[9].State);
+            Assert.AreEqual(MissionObjectiveState.Completed,
+                staleClient.Player.Missions[321].Objectives[5].State);
+            Assert.AreEqual(MissionObjectiveState.Incomplete,
+                staleClient.Player.Missions[321].Objectives[9].State);
+            CollectionAssert.AreEqual(
+                new[]
+                {
+                    typeof(ObjectiveCompletedPacket),
+                    typeof(ObjectiveActivatedPacket)
+                },
+                MissionTestContext.Drain(staleClient).Select(packet => packet.GetType()).ToArray());
+        }
+
+        [TestMethod]
+        public void StaleClientCompletesPredecessorWhenSuccessorIsAlreadyCompleted()
+        {
+            using var context = MissionTestContext.WithObjectiveMission();
+            var giver = context.AddNpc(77);
+            var objectiveNpc = context.AddNpc(500, npcPackageId: 700);
+            Assert.IsTrue(context.Manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            context.Drain();
+            var staleClient = context.CreateCompetingClient();
+            using (var unit = context.CreateChar())
+                unit.CharacterMissionProgress.SetObjectiveState(
+                    1,
+                    321,
+                    9,
+                    (byte)MissionObjectiveState.Inactive,
+                    (byte)MissionObjectiveState.Completed);
+
+            Assert.IsTrue(context.Manager.TryCompleteNpcObjective(
+                staleClient, objectiveNpc.EntityId, 321, 5, 11));
+
+            var durable = context.ReadProgress(321).Missions[321];
+            Assert.AreEqual((byte)MissionObjectiveState.Completed, durable.Objectives[5].State);
+            Assert.AreEqual((byte)MissionObjectiveState.Completed, durable.Objectives[9].State);
+            Assert.IsTrue(context.ReadMission(321).Completeable);
+            Assert.AreEqual(MissionObjectiveState.Completed,
+                staleClient.Player.Missions[321].Objectives[5].State);
+            Assert.AreEqual(MissionObjectiveState.Completed,
+                staleClient.Player.Missions[321].Objectives[9].State);
+            Assert.IsTrue(staleClient.Player.Missions[321].Completeable);
+            CollectionAssert.AreEqual(
+                new[]
+                {
+                    typeof(ObjectiveCompletedPacket),
+                    typeof(MissionCompleteablePacket)
+                },
+                MissionTestContext.Drain(staleClient).Select(packet => packet.GetType()).ToArray());
+        }
+
+        [TestMethod]
         public void ObjectiveCompletionRejectsWrongBindingStaleStateAndDuplicateClick()
         {
             using var context = MissionTestContext.WithObjectiveMission();
@@ -490,6 +564,46 @@ namespace Rasa.Test.Missions
             Assert.IsTrue(classification.TryGetStatus(out var status, out var missionIds));
             Assert.AreEqual(ConversationStatus.ObjectivComplete, status);
             CollectionAssert.AreEqual(new uint[] { 321 }, missionIds);
+        }
+
+        [TestMethod]
+        public void CompletableMissionConversationDoesNotRequireARewardDefinition()
+        {
+            using var context = MissionTestContext.WithDefinitions(321);
+            context.SeedMission(1, 321, (uint)MissionState.Active, true);
+            context.ReloadPlayerMissions();
+            var receiver = context.AddNpc(88);
+            var classification = context.Manager.ClassifyNpcConversation(
+                context.Client.Player,
+                receiver);
+
+            Assert.IsTrue(classification.TryGetStatus(out var status, out var missionIds));
+            Assert.AreEqual(ConversationStatus.MissionComplete, status);
+            CollectionAssert.AreEqual(new uint[] { 321 }, missionIds);
+            var classifiedMissions =
+                (Dictionary<uint, RewardInfo>)classification.CreateConversationData()[
+                    ConversationType.MissionComplete];
+            Assert.AreEqual(0, classifiedMissions[321].FixedReward.Credits.Count);
+            Assert.AreEqual(0, classifiedMissions[321].FixedReward.FixedItems.Count);
+            Assert.AreEqual(0, classifiedMissions[321].SelectableReward.Count);
+
+            var npcManager = CreateNpcManager(context, out var singleton, out var previous);
+            try
+            {
+                npcManager.RequestNpcConverse(context.Client,
+                    new RequestNPCConversePacket { EntityId = receiver.EntityId });
+                var conversation = context.Drain().OfType<ConversePacket>().Single();
+                var publishedMissions =
+                    (Dictionary<uint, RewardInfo>)conversation.ConvoDataDict[
+                        ConversationType.MissionComplete];
+                Assert.AreEqual(0, publishedMissions[321].FixedReward.Credits.Count);
+                Assert.AreEqual(0, publishedMissions[321].FixedReward.FixedItems.Count);
+                Assert.AreEqual(0, publishedMissions[321].SelectableReward.Count);
+            }
+            finally
+            {
+                singleton.SetValue(null, previous);
+            }
         }
 
         [TestMethod]
