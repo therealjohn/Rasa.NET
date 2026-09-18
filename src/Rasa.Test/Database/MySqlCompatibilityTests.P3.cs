@@ -152,9 +152,9 @@ namespace Rasa.Test.Database
                         }
                     }
                 });
-                unit.CharacterMissionProgress.SetObjectiveState(123, 429, 5, 2);
-                unit.CharacterMissionProgress.SetCounter(123, 429, 5, 3, 7);
-                unit.CharacterMissionProgress.SetItemCounter(123, 429, 5, 200, 8);
+                unit.CharacterMissionProgress.SetObjectiveState(123, 429, 5, 1, 2);
+                unit.CharacterMissionProgress.SetCounter(123, 429, 5, 3, 4, 7);
+                unit.CharacterMissionProgress.SetItemCounter(123, 429, 5, 200, 6, 8);
             }
 
             using var reopened = CreateP3UnitOfWork(database);
@@ -169,6 +169,60 @@ namespace Rasa.Test.Database
             Assert.AreEqual((byte)2, objective.State);
             Assert.AreEqual(7U, objective.Counters[3]);
             Assert.AreEqual(8U, objective.ItemCounters[200]);
+        }
+
+        [TestMethod]
+        public void P4MissionObjectiveConcurrencyRejectsStaleUpdates()
+        {
+            using var database = CreateP3Database();
+            using (var seed = CreateP3UnitOfWork(database))
+            {
+                seed.CharacterMissions.Add(new CharacterMissionEntry(123, 429, 0));
+                seed.CharacterMissionProgress.AddObjectives(new[]
+                {
+                    new CharacterMissionObjectiveEntry(123, 429, 5, 1)
+                    {
+                        Counters =
+                        {
+                            new CharacterMissionObjectiveCounterEntry(123, 429, 5, 3, 4)
+                        },
+                        ItemCounters =
+                        {
+                            new CharacterMissionObjectiveItemCounterEntry(123, 429, 5, 200, 6)
+                        }
+                    }
+                });
+            }
+
+            using (var current = CreateP3UnitOfWork(database))
+            using (var stale = CreateP3UnitOfWork(database))
+            {
+                current.CharacterMissionProgress.Get(123, 429, 5);
+                stale.CharacterMissionProgress.Get(123, 429, 5);
+                current.CharacterMissionProgress.SetObjectiveState(123, 429, 5, 1, 2);
+                Assert.ThrowsExactly<DbUpdateConcurrencyException>(() =>
+                    stale.CharacterMissionProgress.SetObjectiveState(123, 429, 5, 1, 3));
+            }
+
+            using (var current = CreateP3UnitOfWork(database))
+            using (var stale = CreateP3UnitOfWork(database))
+            {
+                current.CharacterMissionProgress.Get(123, 429, 5);
+                stale.CharacterMissionProgress.Get(123, 429, 5);
+                current.CharacterMissionProgress.SetCounter(123, 429, 5, 3, 4, 7);
+                Assert.ThrowsExactly<DbUpdateConcurrencyException>(() =>
+                    stale.CharacterMissionProgress.SetCounter(123, 429, 5, 3, 4, 9));
+            }
+
+            using (var current = CreateP3UnitOfWork(database))
+            using (var stale = CreateP3UnitOfWork(database))
+            {
+                current.CharacterMissionProgress.Get(123, 429, 5);
+                stale.CharacterMissionProgress.Get(123, 429, 5);
+                current.CharacterMissionProgress.SetItemCounter(123, 429, 5, 200, 6, 8);
+                Assert.ThrowsExactly<DbUpdateConcurrencyException>(() =>
+                    stale.CharacterMissionProgress.SetItemCounter(123, 429, 5, 200, 6, 10));
+            }
         }
 
         [TestMethod]

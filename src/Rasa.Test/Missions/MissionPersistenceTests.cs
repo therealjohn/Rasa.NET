@@ -52,11 +52,13 @@ namespace Rasa.Test.Missions
                 var tracked = unit.CharacterMissionProgress.Get(100, 321, 1);
                 Assert.AreSame(tracked, unit.CharacterMissionProgress.Get(100, 321, 1));
                 unit.CharacterMissionProgress.SetObjectiveState(
-                    100, 321, 1, (byte)MissionObjectiveState.Completed);
-                unit.CharacterMissionProgress.SetCounter(100, 321, 1, 4, 7);
-                unit.CharacterMissionProgress.SetItemCounter(100, 321, 1, 200, 8);
+                    100, 321, 1,
+                    (byte)MissionObjectiveState.Incomplete,
+                    (byte)MissionObjectiveState.Completed);
+                unit.CharacterMissionProgress.SetCounter(100, 321, 1, 4, 5, 7);
+                unit.CharacterMissionProgress.SetItemCounter(100, 321, 1, 200, 6, 8);
                 Assert.ThrowsExactly<System.InvalidOperationException>(() =>
-                    unit.CharacterMissionProgress.SetCounter(100, 321, 1, 99, 1));
+                    unit.CharacterMissionProgress.SetCounter(100, 321, 1, 99, 0, 1));
             }
 
             using var reopened = context.CreateChar();
@@ -64,6 +66,57 @@ namespace Rasa.Test.Missions
             Assert.AreEqual((byte)MissionObjectiveState.Completed, objective.State);
             Assert.AreEqual(7U, objective.Counters[4]);
             Assert.AreEqual(8U, objective.ItemCounters[200]);
+        }
+
+        [TestMethod]
+        public void StaleObjectiveAndCounterUpdatesRejectAcrossDistinctContexts()
+        {
+            using var context = new MissionTestContext();
+            context.SeedCharacter(10, 0, 100);
+            context.SeedMission(100, 321, (uint)MissionState.Active, false);
+            context.SeedObjective(100, 321, 1, MissionObjectiveState.Incomplete,
+                new Dictionary<uint, uint> { [4] = 5 },
+                new Dictionary<uint, uint> { [200] = 6 });
+
+            using (var current = context.CreateChar())
+            using (var stale = context.CreateChar())
+            {
+                current.CharacterMissionProgress.Get(100, 321, 1);
+                stale.CharacterMissionProgress.Get(100, 321, 1);
+                current.CharacterMissionProgress.SetObjectiveState(
+                    100, 321, 1,
+                    (byte)MissionObjectiveState.Incomplete,
+                    (byte)MissionObjectiveState.Completed);
+                Assert.ThrowsExactly<Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException>(() =>
+                    stale.CharacterMissionProgress.SetObjectiveState(
+                        100, 321, 1,
+                        (byte)MissionObjectiveState.Incomplete,
+                        (byte)MissionObjectiveState.Failed));
+            }
+
+            using (var current = context.CreateChar())
+            using (var stale = context.CreateChar())
+            {
+                current.CharacterMissionProgress.Get(100, 321, 1);
+                stale.CharacterMissionProgress.Get(100, 321, 1);
+                current.CharacterMissionProgress.SetCounter(100, 321, 1, 4, 5, 7);
+                Assert.ThrowsExactly<Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException>(() =>
+                    stale.CharacterMissionProgress.SetCounter(100, 321, 1, 4, 5, 9));
+            }
+
+            using (var current = context.CreateChar())
+            using (var stale = context.CreateChar())
+            {
+                current.CharacterMissionProgress.Get(100, 321, 1);
+                stale.CharacterMissionProgress.Get(100, 321, 1);
+                current.CharacterMissionProgress.SetItemCounter(100, 321, 1, 200, 6, 8);
+                Assert.ThrowsExactly<Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException>(() =>
+                    stale.CharacterMissionProgress.SetItemCounter(100, 321, 1, 200, 6, 10));
+            }
+
+            using var mismatch = context.CreateChar();
+            Assert.ThrowsExactly<Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException>(() =>
+                mismatch.CharacterMissionProgress.SetCounter(100, 321, 1, 4, 5, 11));
         }
 
         [TestMethod]

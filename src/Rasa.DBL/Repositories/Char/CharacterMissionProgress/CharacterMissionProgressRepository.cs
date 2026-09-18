@@ -35,6 +35,18 @@ namespace Rasa.Repositories.Char.CharacterMissionProgress
                     entry.MissionId == missionId &&
                     entry.ObjectiveId == objectiveId);
 
+        public IReadOnlyDictionary<uint, CharacterMissionObjectiveEntry> GetTracked(
+            uint characterId,
+            uint missionId) =>
+            _charContext.CharacterMissionObjectiveEntries
+                .Include(entry => entry.Counters)
+                .Include(entry => entry.ItemCounters)
+                .AsSingleQuery()
+                .Where(entry =>
+                    entry.CharacterId == characterId &&
+                    entry.MissionId == missionId)
+                .ToDictionary(entry => entry.ObjectiveId);
+
         public void AddObjectives(IEnumerable<CharacterMissionObjectiveEntry> objectives)
         {
             _charContext.CharacterMissionObjectiveEntries.AddRange(objectives);
@@ -45,9 +57,14 @@ namespace Rasa.Repositories.Char.CharacterMissionProgress
             uint characterId,
             uint missionId,
             uint objectiveId,
+            byte expectedState,
             byte state)
         {
             var objective = RequireObjective(characterId, missionId, objectiveId);
+            RequireExpectedValue(
+                objective.ObjectiveState,
+                expectedState,
+                "Mission objective state is stale.");
             objective.ObjectiveState = state;
             _charContext.SaveChanges();
         }
@@ -57,6 +74,7 @@ namespace Rasa.Repositories.Char.CharacterMissionProgress
             uint missionId,
             uint objectiveId,
             uint counterId,
+            uint expectedValue,
             uint value)
         {
             var counter = _charContext.CharacterMissionObjectiveCounterEntries.SingleOrDefault(entry =>
@@ -66,6 +84,10 @@ namespace Rasa.Repositories.Char.CharacterMissionProgress
                 entry.CounterId == counterId);
             if (counter == null)
                 throw new InvalidOperationException("Mission objective counter does not exist.");
+            RequireExpectedValue(
+                counter.CounterValue,
+                expectedValue,
+                "Mission objective counter is stale.");
             counter.CounterValue = value;
             _charContext.SaveChanges();
         }
@@ -75,6 +97,7 @@ namespace Rasa.Repositories.Char.CharacterMissionProgress
             uint missionId,
             uint objectiveId,
             uint itemClassId,
+            uint expectedValue,
             uint value)
         {
             var counter = _charContext.CharacterMissionObjectiveItemCounterEntries.SingleOrDefault(entry =>
@@ -84,6 +107,10 @@ namespace Rasa.Repositories.Char.CharacterMissionProgress
                 entry.ItemClassId == itemClassId);
             if (counter == null)
                 throw new InvalidOperationException("Mission objective item counter does not exist.");
+            RequireExpectedValue(
+                counter.CounterValue,
+                expectedValue,
+                "Mission objective item counter is stale.");
             counter.CounterValue = value;
             _charContext.SaveChanges();
         }
@@ -102,6 +129,15 @@ namespace Rasa.Repositories.Char.CharacterMissionProgress
             uint objectiveId) =>
             Get(characterId, missionId, objectiveId) ??
             throw new InvalidOperationException("Mission objective does not exist.");
+
+        private static void RequireExpectedValue<T>(
+            T currentValue,
+            T expectedValue,
+            string message)
+        {
+            if (!EqualityComparer<T>.Default.Equals(currentValue, expectedValue))
+                throw new DbUpdateConcurrencyException(message);
+        }
 
         private CharacterMissionProgressSnapshot CreateSnapshot(uint characterId, uint? missionId)
         {

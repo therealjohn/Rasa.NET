@@ -349,6 +349,7 @@ namespace Rasa.Migrations.MySqlChar
                         .HasColumnName("counter_id");
 
                     b.Property<uint>("CounterValue")
+                        .IsConcurrencyToken()
                         .HasColumnType("int(11) unsigned")
                         .HasColumnName("counter_value");
 
@@ -372,6 +373,7 @@ namespace Rasa.Migrations.MySqlChar
                         .HasColumnName("objective_id");
 
                     b.Property<byte>("ObjectiveState")
+                        .IsConcurrencyToken()
                         .HasColumnType("tinyint(3) unsigned")
                         .HasColumnName("objective_state");
 
@@ -399,6 +401,7 @@ namespace Rasa.Migrations.MySqlChar
                         .HasColumnName("item_class_id");
 
                     b.Property<uint>("CounterValue")
+                        .IsConcurrencyToken()
                         .HasColumnType("int(11) unsigned")
                         .HasColumnName("counter_value");
 

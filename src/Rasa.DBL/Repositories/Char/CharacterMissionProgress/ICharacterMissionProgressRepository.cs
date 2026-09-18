@@ -10,10 +10,30 @@ namespace Rasa.Repositories.Char.CharacterMissionProgress
         CharacterMissionProgressSnapshot Get(uint characterId);
         CharacterMissionProgressSnapshot Get(uint characterId, uint missionId);
         CharacterMissionObjectiveEntry Get(uint characterId, uint missionId, uint objectiveId);
+        IReadOnlyDictionary<uint, CharacterMissionObjectiveEntry> GetTracked(
+            uint characterId,
+            uint missionId);
         void AddObjectives(IEnumerable<CharacterMissionObjectiveEntry> objectives);
-        void SetObjectiveState(uint characterId, uint missionId, uint objectiveId, byte state);
-        void SetCounter(uint characterId, uint missionId, uint objectiveId, uint counterId, uint value);
-        void SetItemCounter(uint characterId, uint missionId, uint objectiveId, uint itemClassId, uint value);
+        void SetObjectiveState(
+            uint characterId,
+            uint missionId,
+            uint objectiveId,
+            byte expectedState,
+            byte state);
+        void SetCounter(
+            uint characterId,
+            uint missionId,
+            uint objectiveId,
+            uint counterId,
+            uint expectedValue,
+            uint value);
+        void SetItemCounter(
+            uint characterId,
+            uint missionId,
+            uint objectiveId,
+            uint itemClassId,
+            uint expectedValue,
+            uint value);
         void Remove(uint characterId, uint missionId);
     }
 

@@ -53,6 +53,7 @@ namespace Rasa.Test.Missions
         internal Action<SqliteCharContext> BeforeSave { get; set; }
         internal Action<SqliteCharContext> AfterSave { get; set; }
         internal Action<SqliteCharContext> BeforeQuery { get; set; }
+        internal Action<string> BeforeCommand { get; set; }
         internal Client Client { get; }
         internal MapChannel Map => _world.Map;
         internal MissionManager Manager { get; }
@@ -169,7 +170,8 @@ namespace Rasa.Test.Missions
 
         internal static MissionTestContext WithObjectiveMission(
             uint missionId = 321,
-            bool selectableReward = true)
+            bool selectableReward = true,
+            bool activateSuccessor = true)
         {
             var objectives = new[]
             {
@@ -197,7 +199,9 @@ namespace Rasa.Test.Missions
                             MissionObjectiveConversationType.Completion)
                     },
                     revealedObjectiveIds: new uint[] { 9 },
-                    activatedObjectiveIds: new uint[] { 9 },
+                    activatedObjectiveIds: activateSuccessor
+                        ? new uint[] { 9 }
+                        : Array.Empty<uint>(),
                     indicators: new[]
                     {
                         new MissionIndicator
@@ -568,6 +572,7 @@ namespace Rasa.Test.Missions
                 InterceptionResult<System.Data.Common.DbDataReader> result)
             {
                 owner.BeforeQuery?.Invoke((SqliteCharContext)eventData.Context);
+                owner.BeforeCommand?.Invoke(command.CommandText);
                 return result;
             }
         }

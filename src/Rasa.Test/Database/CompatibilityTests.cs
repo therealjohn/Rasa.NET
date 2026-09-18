@@ -222,8 +222,13 @@ namespace Rasa.Test.Database
                 new[] { "CharacterId", "MissionId", "ObjectiveId", "ItemClassId" },
                 itemCounter.FindPrimaryKey()!.Properties.Select(property => property.Name).ToArray());
 
-            Assert.AreEqual(objectiveStateColumnType,
-                objective.FindProperty("ObjectiveState")!.GetColumnType());
+            var objectiveState = objective.FindProperty("ObjectiveState")!;
+            var counterValue = counter.FindProperty("CounterValue")!;
+            var itemCounterValue = itemCounter.FindProperty("CounterValue")!;
+            Assert.AreEqual(objectiveStateColumnType, objectiveState.GetColumnType());
+            Assert.IsTrue(objectiveState.IsConcurrencyToken);
+            Assert.IsTrue(counterValue.IsConcurrencyToken);
+            Assert.IsTrue(itemCounterValue.IsConcurrencyToken);
             Assert.IsTrue(objective.GetForeignKeys().Any(key =>
                 key.PrincipalEntityType.GetTableName() == "character_mission" &&
                 key.DeleteBehavior == DeleteBehavior.Cascade));

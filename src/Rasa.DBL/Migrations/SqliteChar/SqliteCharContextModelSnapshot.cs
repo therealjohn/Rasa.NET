@@ -337,6 +337,7 @@ namespace Rasa.Migrations.SqliteChar
                         .HasColumnName("counter_id");
 
                     b.Property<uint>("CounterValue")
+                        .IsConcurrencyToken()
                         .HasColumnType("int(11)")
                         .HasColumnName("counter_value");
 
@@ -360,6 +361,7 @@ namespace Rasa.Migrations.SqliteChar
                         .HasColumnName("objective_id");
 
                     b.Property<byte>("ObjectiveState")
+                        .IsConcurrencyToken()
                         .HasColumnType("tinyint(3)")
                         .HasColumnName("objective_state");
 
@@ -387,6 +389,7 @@ namespace Rasa.Migrations.SqliteChar
                         .HasColumnName("item_class_id");
 
                     b.Property<uint>("CounterValue")
+                        .IsConcurrencyToken()
                         .HasColumnType("int(11)")
                         .HasColumnName("counter_value");
 

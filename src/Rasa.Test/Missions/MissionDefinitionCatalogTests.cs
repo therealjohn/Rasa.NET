@@ -64,5 +64,23 @@ namespace Rasa.Test.Missions
             Assert.ThrowsExactly<NotSupportedException>(() =>
                 ((IDictionary<uint, MissionObjectiveDefinition>)mission.Objectives).Add(2, null));
         }
+
+        [TestMethod]
+        public void InitialObjectiveLogFactoryUsesImmutableDefinitionValues()
+        {
+            using var context = MissionTestContext.WithObjectiveMission();
+            var mission = context.Manager.LoadedMissions[321];
+
+            var first = mission.CreateInitialObjectiveLogs();
+            first[5].State = MissionObjectiveState.Completed;
+            first[5].SetCounter(0, 9);
+            first[5].SetItemCounter(200, 7);
+            var second = mission.CreateInitialObjectiveLogs();
+
+            Assert.AreEqual(MissionObjectiveState.Incomplete, second[5].State);
+            Assert.AreEqual(2U, second[5].Counters[0]);
+            Assert.AreEqual(1U, second[5].ItemCounters[200]);
+            Assert.AreEqual(MissionObjectiveState.Inactive, second[9].State);
+        }
     }
 }

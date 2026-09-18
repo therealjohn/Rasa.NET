@@ -282,7 +282,10 @@ rows survive the additive SQLite and MySQL migration. Character deletion removes
 mission rows in the same transaction before deleting the character; the foreign
 key remains restrictive. Objective rows use
 `(character_id, mission_id, objective_id)` and generic/item counters add their
-counter key. Mission deletion cascades through both child levels.
+counter key. Mission deletion cascades through both child levels. Objective
+states and both counter values are optimistic-concurrency tokens; mutation
+callers supply the expected current value so stale contexts reject instead of
+overwriting newer progress.
 
 World mission definitions are immutable and inactive by default. Incomplete
 database definitions are not hydrated, advertised by NPCs, accepted, tracked or
@@ -312,7 +315,9 @@ completed history from a stale client.
 NPC objective completion requires an active operational definition, an
 incomplete durable objective, a current-map NPC, and an exact NPC-package/player
 flag completion binding. Completion and explicitly authored reveal/activation
-transitions commit together. Packets are emitted after commit in
+transitions load as one tracked objective graph and flush once. Runtime state
+and packets include only successor transitions that were durably applied.
+Packets are emitted after commit in
 `ObjectiveCompleted`, `ObjectiveRevealed`, `ObjectiveActivated`, then
 `MissionCompleteable(true)` order.
 

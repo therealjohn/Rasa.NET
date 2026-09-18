@@ -356,17 +356,7 @@ namespace Rasa.Managers
                 if (client.Player.Missions.ContainsKey(missionId))
                     return Reject($"Rejected mission {missionId}: character {client.Player.Id} already has it.");
 
-                var objectiveLogs = definition.Objectives.Values.ToDictionary(
-                    objective => objective.ObjectiveId,
-                    objective => new MissionObjectiveLog(
-                        objective.ObjectiveId,
-                        objective.InitialState.Value,
-                        objective.Counters.ToDictionary(
-                            counter => counter.Key,
-                            counter => counter.Value.InitialValue),
-                        objective.ItemCounters.ToDictionary(
-                            counter => counter.Key,
-                            counter => counter.Value.InitialValue)));
+                var objectiveLogs = definition.CreateInitialObjectiveLogs();
                 var initialCompleteable = definition.Objectives.Values
                     .Where(objective => objective.IsRequired.Value)
                     .All(objective =>
@@ -600,6 +590,8 @@ namespace Rasa.Managers
                 var npcPackageId = npc.Npc.NpcPackageId;
                 var revealed = objectiveDefinition.RevealedObjectiveIds.ToArray();
                 var activated = objectiveDefinition.ActivatedObjectiveIds.ToArray();
+                var appliedRevealed = new List<uint>();
+                var appliedActivated = new List<uint>();
                 var completeable = false;
                 try
                 {
@@ -607,8 +599,9 @@ namespace Rasa.Managers
                     unitOfWork.ExecuteTransaction(() =>
                     {
                         var durableMission = unitOfWork.CharacterMissions.Get(client.Player.Id, missionId);
-                        var durableObjective = unitOfWork.CharacterMissionProgress.Get(
-                            client.Player.Id, missionId, objectiveId);
+                        var durableObjectives = unitOfWork.CharacterMissionProgress.GetTracked(
+                            client.Player.Id, missionId);
+                        durableObjectives.TryGetValue(objectiveId, out var durableObjective);
                         if (durableMission?.MissionState != (uint)MissionState.Active ||
                             durableObjective?.ObjectiveState != (byte)MissionObjectiveState.Incomplete)
                             throw new GameplayRejectionException(
@@ -619,40 +612,33 @@ namespace Rasa.Managers
                             throw new GameplayRejectionException(
                                 "Mission objective NPC changed before persistence.");
 
-                        unitOfWork.CharacterMissionProgress.SetObjectiveState(
-                            client.Player.Id,
-                            missionId,
-                            objectiveId,
-                            (byte)MissionObjectiveState.Completed);
+                        durableObjective.ObjectiveState = (byte)MissionObjectiveState.Completed;
                         foreach (var successorId in revealed.Except(activated))
                         {
-                            var successor = unitOfWork.CharacterMissionProgress.Get(
-                                client.Player.Id, missionId, successorId);
-                            if (successor == null)
+                            if (!durableObjectives.TryGetValue(successorId, out var successor))
                                 throw new GameplayRejectionException(
                                     "Configured revealed mission objective is missing.");
                             if (successor.ObjectiveState == (byte)MissionObjectiveState.Inactive)
-                                unitOfWork.CharacterMissionProgress.SetObjectiveState(
-                                    client.Player.Id,
-                                    missionId,
-                                    successorId,
-                                    (byte)MissionObjectiveState.NotAssigned);
+                            {
+                                successor.ObjectiveState = (byte)MissionObjectiveState.NotAssigned;
+                                appliedRevealed.Add(successorId);
+                            }
                         }
                         foreach (var successorId in activated)
                         {
-                            var successor = unitOfWork.CharacterMissionProgress.Get(
-                                client.Player.Id, missionId, successorId);
-                            if (successor == null ||
-                                successor.ObjectiveState is not
-                                    ((byte)MissionObjectiveState.Inactive) and not
-                                    ((byte)MissionObjectiveState.NotAssigned))
+                            if (!durableObjectives.TryGetValue(successorId, out var successor))
+                                throw new GameplayRejectionException(
+                                    "Configured activated mission objective is missing.");
+                            if (successor.ObjectiveState ==
+                                (byte)MissionObjectiveState.Incomplete)
+                                continue;
+                            if (successor.ObjectiveState is not
+                                ((byte)MissionObjectiveState.Inactive) and not
+                                ((byte)MissionObjectiveState.NotAssigned))
                                 throw new GameplayRejectionException(
                                     "Configured activated mission objective is not available.");
-                            unitOfWork.CharacterMissionProgress.SetObjectiveState(
-                                client.Player.Id,
-                                missionId,
-                                successorId,
-                                (byte)MissionObjectiveState.Incomplete);
+                            successor.ObjectiveState = (byte)MissionObjectiveState.Incomplete;
+                            appliedActivated.Add(successorId);
                         }
 
                         completeable = true;
@@ -661,11 +647,7 @@ namespace Rasa.Managers
                         {
                             if (candidate.ObjectiveId == objectiveId)
                                 continue;
-                            var required = unitOfWork.CharacterMissionProgress.Get(
-                                client.Player.Id,
-                                missionId,
-                                candidate.ObjectiveId);
-                            if (required == null)
+                            if (!durableObjectives.TryGetValue(candidate.ObjectiveId, out var required))
                                 throw new GameplayRejectionException(
                                     "Required mission objective state is missing.");
                             if (required.ObjectiveState != (byte)MissionObjectiveState.Completed)
@@ -682,15 +664,17 @@ namespace Rasa.Managers
                 }
 
                 runtimeObjective.State = MissionObjectiveState.Completed;
-                foreach (var successorId in revealed.Except(activated))
+                foreach (var successorId in appliedRevealed)
                     runtimeMission.Objectives[successorId].State = MissionObjectiveState.NotAssigned;
-                foreach (var successorId in activated)
+                foreach (var successorId in appliedActivated)
                     runtimeMission.Objectives[successorId].State = MissionObjectiveState.Incomplete;
                 runtimeMission.Completeable = completeable;
 
                 client.CallMethod(client.Player.EntityId,
                     new ObjectiveCompletedPacket(missionId, objectiveId));
-                foreach (var successorId in revealed)
+                foreach (var successorId in revealed.Where(successorId =>
+                    appliedRevealed.Contains(successorId) ||
+                    appliedActivated.Contains(successorId)))
                     client.CallMethod(client.Player.EntityId,
                         new ObjectiveRevealedPacket(
                             missionId,
@@ -699,7 +683,7 @@ namespace Rasa.Managers
                                 runtimeMission.State,
                                 runtimeMission.Completeable,
                                 runtimeMission.Objectives)));
-                foreach (var successorId in activated)
+                foreach (var successorId in appliedActivated)
                     client.CallMethod(client.Player.EntityId,
                         new ObjectiveActivatedPacket(missionId, successorId));
                 if (completeable)
@@ -796,6 +780,70 @@ namespace Rasa.Managers
 
             rewardInfo = null;
             return false;
+        }
+
+        internal MissionConversationState ClassifyNpcConversation(
+            Manifestation player,
+            Creature creature)
+        {
+            var dispensable = new Dictionary<uint, MissionInfo>();
+            var objectives = new List<CompleteableObjectives>();
+            var completeable = new Dictionary<uint, RewardInfo>();
+            var rewardable = new List<RewardableMissions>();
+
+            foreach (var mission in _loadedMissions.Values)
+            {
+                if (!mission.IsOperational)
+                    continue;
+                if (!player.Missions.TryGetValue(mission.MissionId, out var log))
+                {
+                    if (mission.MissionGiver == creature.DbId)
+                        dispensable.Add(
+                            mission.MissionId,
+                            mission.CreateInfo(
+                                MissionState.Active,
+                                false,
+                                mission.CreateInitialObjectiveLogs()));
+                    continue;
+                }
+
+                if (log.State == MissionState.Active)
+                {
+                    if (log.Completeable &&
+                        mission.MissionReciver == creature.DbId &&
+                        TryGetRewardInfo(mission.MissionId, out var completionReward))
+                    {
+                        completeable.Add(mission.MissionId, completionReward);
+                        continue;
+                    }
+
+                    foreach (var objective in mission.Objectives.Values)
+                    {
+                        if (!log.Objectives.TryGetValue(objective.ObjectiveId, out var objectiveLog) ||
+                            objectiveLog.State != MissionObjectiveState.Incomplete)
+                            continue;
+                        foreach (var conversation in objective.Conversations.Where(conversation =>
+                            conversation.Type == MissionObjectiveConversationType.Completion &&
+                            conversation.NpcPackageId == creature.Npc.NpcPackageId))
+                            objectives.Add(new CompleteableObjectives(
+                                (int)mission.MissionId,
+                                (int)objective.ObjectiveId,
+                                (int)conversation.PlayerFlagId));
+                    }
+                }
+                else if (log.State == MissionState.Success &&
+                    mission.MissionReciver == creature.DbId &&
+                    TryGetRewardInfo(mission.MissionId, out var reward))
+                {
+                    rewardable.Add(new RewardableMissions((int)mission.MissionId, reward));
+                }
+            }
+
+            return new MissionConversationState(
+                dispensable,
+                objectives,
+                completeable,
+                rewardable);
         }
 
         private static bool TryHydrateObjectives(

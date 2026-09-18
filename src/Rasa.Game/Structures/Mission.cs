@@ -118,6 +118,19 @@ namespace Rasa.Structures
             };
         }
 
+        internal IReadOnlyDictionary<uint, MissionObjectiveLog> CreateInitialObjectiveLogs() =>
+            Objectives.Values.ToDictionary(
+                objective => objective.ObjectiveId,
+                objective => new MissionObjectiveLog(
+                    objective.ObjectiveId,
+                    objective.InitialState.Value,
+                    objective.Counters.ToDictionary(
+                        counter => counter.Key,
+                        counter => counter.Value.InitialValue),
+                    objective.ItemCounters.ToDictionary(
+                        counter => counter.Key,
+                        counter => counter.Value.InitialValue)));
+
         internal Mission WithWorldMetadata(Mission worldDefinition) =>
             new(
                 MissionId,

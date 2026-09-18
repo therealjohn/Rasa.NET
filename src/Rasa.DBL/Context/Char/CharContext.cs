@@ -267,7 +267,8 @@ namespace Rasa.Context.Char
                 .OnDelete(DeleteBehavior.Cascade);
             modelBuilder.Entity<CharacterMissionObjectiveEntry>()
                 .Property(entry => entry.ObjectiveState)
-                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3)
+                .IsConcurrencyToken();
 
             modelBuilder.Entity<CharacterMissionObjectiveCounterEntry>()
                 .HasKey(entry => new
@@ -287,7 +288,8 @@ namespace Rasa.Context.Char
                 .AsUnsignedInt(_dbContextPropertyModifier, 11);
             modelBuilder.Entity<CharacterMissionObjectiveCounterEntry>()
                 .Property(entry => entry.CounterValue)
-                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+                .AsUnsignedInt(_dbContextPropertyModifier, 11)
+                .IsConcurrencyToken();
 
             modelBuilder.Entity<CharacterMissionObjectiveItemCounterEntry>()
                 .HasKey(entry => new
@@ -307,7 +309,8 @@ namespace Rasa.Context.Char
                 .AsUnsignedInt(_dbContextPropertyModifier, 11);
             modelBuilder.Entity<CharacterMissionObjectiveItemCounterEntry>()
                 .Property(entry => entry.CounterValue)
-                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+                .AsUnsignedInt(_dbContextPropertyModifier, 11)
+                .IsConcurrencyToken();
         }
 
         private void SetupCharacterOptionsTable(ModelBuilder modelBuilder)
