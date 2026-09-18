@@ -3,11 +3,13 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace Rasa.Test.Networking
 {
+    using Rasa.Config;
     using Rasa.Cryptography;
     using Rasa.Data;
     using Rasa.Login;
@@ -151,19 +153,74 @@ namespace Rasa.Test.Networking
         }
 
         [TestMethod]
-        public void QueueDisconnectPreventsTheEnqueueAction()
+        public async Task QueueDisconnectWinningAdmissionRaceDoesNotEnqueue()
         {
-            var state = new QueueClientState();
-            Assert.IsTrue(state.TrySet(QueueState.Authenticating));
-            Assert.IsTrue(state.TrySet(QueueState.Authenticated));
-            Assert.IsTrue(state.TryDisconnect());
-            var enqueued = false;
+            var (sender, accepted) = await ConnectAsync();
+            using (sender)
+            using (accepted)
+            using (var admissionStarted = new ManualResetEventSlim())
+            using (var releaseAdmission = new ManualResetEventSlim())
+            {
+                var config = new QueueConfig
+                {
+                    PublicKey = "queue-test-key",
+                    Prime = "queue-test-prime",
+                    Generator = "queue-test-generator"
+                };
+                var manager = new QueueManager(
+                    config,
+                    () => true,
+                    IPAddress.Loopback,
+                    8001,
+                    () =>
+                    {
+                        admissionStarted.Set();
+                        Assert.IsTrue(releaseAdmission.Wait(TimeSpan.FromSeconds(5)));
+                    });
+                var client = new QueueClient(manager, new LengthedSocket(accepted, SizeType.Dword, false));
+                lock (manager.Clients)
+                    manager.Clients.Add(client);
 
-            var transitioned = state.TrySet(QueueState.InQueue, () => enqueued = true);
+                using (var keyPayload = new MemoryStream())
+                using (var keyWriter = new BinaryWriter(keyPayload))
+                {
+                    new Rasa.Packets.Queue.Client.ClientKeyPacket
+                    {
+                        PublicKey = config.PublicKey
+                    }.Write(keyWriter);
+                    keyPayload.Position = 0;
+                    using var keyReader = new BinaryReader(keyPayload);
+                    client.HandleReceive(keyReader);
+                }
 
-            Assert.IsFalse(transitioned);
-            Assert.IsFalse(enqueued);
-            Assert.AreEqual(QueueState.Disconnected, state.Value);
+                using var loginPayload = new MemoryStream();
+                using (var loginWriter = new BinaryWriter(loginPayload, System.Text.Encoding.UTF8, true))
+                {
+                    new Rasa.Packets.Queue.Client.QueueLoginPacket
+                    {
+                        UserId = 123,
+                        OneTimeKey = 456
+                    }.Write(loginWriter);
+                }
+                loginPayload.Position = 0;
+
+                var admission = Task.Run(() =>
+                {
+                    using var loginReader = new BinaryReader(loginPayload);
+                    client.HandleReceive(loginReader);
+                });
+                Assert.IsTrue(admissionStarted.Wait(TimeSpan.FromSeconds(5)));
+
+                client.Close();
+                var stateAfterClose = client.State;
+                var clientsAfterClose = manager.Clients.Count;
+                releaseAdmission.Set();
+                await admission.WaitAsync(TimeSpan.FromSeconds(5));
+
+                Assert.AreEqual(QueueState.Disconnected, stateAfterClose);
+                Assert.AreEqual(0, clientsAfterClose);
+                Assert.AreEqual(0, manager.QueuedClients);
+            }
         }
 
         private static async Task<(Socket Sender, Socket Accepted)> ConnectAsync()

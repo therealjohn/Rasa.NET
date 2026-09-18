@@ -19,9 +19,8 @@ namespace Rasa.Queue
         /// <summary>
         /// Read on the main loop by every QueueManager pass and written on the socket threads as
         /// the handshake advances, so the transitions go through <see cref="QueueClientState"/>. They
-        /// are single writes rather than read-modify-writes everywhere except MarkArrived, which
-        /// is the one that has to be atomic: it is the main loop deciding a handed-off client has
-        /// arrived at the world port, against the client's own thread closing the socket.
+        /// are single writes during key exchange. Admission, redirect, arrival, and disconnect use
+        /// expected-state transitions because each competes with teardown or another manager pass.
         /// </summary>
         private readonly QueueClientState _state = new QueueClientState();
         public QueueState State => _state.Value;
@@ -70,7 +69,7 @@ namespace Rasa.Queue
             }
         }
 
-        private void HandleReceive(BinaryReader reader)
+        internal void HandleReceive(BinaryReader reader)
         {
             switch (State)
             {
@@ -101,11 +100,7 @@ namespace Rasa.Queue
 
                     UserId = loginPacket.UserId;
                     OneTimeKey = loginPacket.OneTimeKey;
-                    SetState(QueueState.InQueue, () =>
-                    {
-                        Manager.Enqueue(this);
-                        EnqueueTime = DateTime.Now;
-                    });
+                    Manager.Enqueue(this);
                     break;
 
                 default:
@@ -122,11 +117,6 @@ namespace Rasa.Queue
         private void SetState(QueueState state)
         {
             _state.TrySet(state);
-        }
-
-        private bool SetState(QueueState state, Action action)
-        {
-            return _state.TrySet(state, action);
         }
 
         private void OnError(SocketAsyncEventArgs args)
@@ -150,12 +140,29 @@ namespace Rasa.Queue
         /// </summary>
         public void Close()
         {
-            if (!_state.TryDisconnect())
+            if (!Manager.TryDisconnect(this))
                 return;
 
             Socket.Close();
 
             Manager.Disconnect(this);
+        }
+
+        internal bool TryAdmit(bool queued, DateTime now)
+        {
+            if (!_state.TrySet(QueueState.Authenticated, queued ? QueueState.InQueue : QueueState.Redirecting))
+                return false;
+
+            EnqueueTime = now;
+            if (!queued)
+                RedirectTime = now;
+
+            return true;
+        }
+
+        internal bool TryDisconnect()
+        {
+            return _state.TryDisconnect();
         }
 
         /// <summary>
@@ -172,9 +179,23 @@ namespace Rasa.Queue
 
         public void Redirect(IPAddress ip, int port)
         {
-            SetState(QueueState.Redirecting);
-            RedirectTime = DateTime.Now;
+            if (!TryPrepareRedirect(DateTime.Now))
+                return;
 
+            SendRedirect(ip, port);
+        }
+
+        internal bool TryPrepareRedirect(DateTime now)
+        {
+            if (!_state.TrySet(QueueState.InQueue, QueueState.Redirecting))
+                return false;
+
+            RedirectTime = now;
+            return true;
+        }
+
+        internal void SendRedirect(IPAddress ip, int port)
+        {
             Socket.Send(new HandoffToGamePacket
             {
                 OneTimeKey = OneTimeKey,
@@ -218,15 +239,6 @@ namespace Rasa.Queue
                 _value = value;
                 return true;
             }
-        }
-
-        internal bool TrySet(QueueState value, Action action)
-        {
-            if (!TrySet(value))
-                return false;
-
-            action();
-            return true;
         }
 
         internal bool TrySet(QueueState expected, QueueState value)
