@@ -171,9 +171,10 @@ namespace Rasa.Test.Missions
         internal static MissionTestContext WithObjectiveMission(
             uint missionId = 321,
             bool selectableReward = true,
-            bool activateSuccessor = true)
+            bool activateSuccessor = true,
+            bool includeCompetingObjective = false)
         {
-            var objectives = new[]
+            var objectives = new List<MissionObjectiveDefinition>
             {
                 new MissionObjectiveDefinition(
                     objectiveId: 5,
@@ -212,16 +213,53 @@ namespace Rasa.Test.Missions
                             Show3DEffect = true
                         }
                     }),
+            };
+            if (includeCompetingObjective)
+                objectives.Add(new MissionObjectiveDefinition(
+                    objectiveId: 6,
+                    clientNameTextId: 6001,
+                    clientBodyTextId: 6002,
+                    clientCounterTextIds: new uint?[] { null, null, null },
+                    ordinal: 8,
+                    initialState: MissionObjectiveState.Incomplete,
+                    isRequired: true,
+                    counters: new Dictionary<uint, MissionObjectiveCounterDefinition>(),
+                    itemCounters: new Dictionary<uint, MissionObjectiveItemCounterDefinition>(),
+                    conversations: new[]
+                    {
+                        new MissionObjectiveConversation(
+                            702,
+                            13,
+                            MissionObjectiveConversationType.Completion)
+                    },
+                    revealedObjectiveIds: new uint[] { 9 },
+                    activatedObjectiveIds: activateSuccessor
+                        ? new uint[] { 9 }
+                        : Array.Empty<uint>(),
+                    indicators: Array.Empty<MissionIndicator>()));
+            objectives.Add(
                 new MissionObjectiveDefinition(
                     objectiveId: 9,
                     clientNameTextId: 9001,
                     clientBodyTextId: 9002,
-                    clientCounterTextIds: new uint?[] { null, null, null },
+                    clientCounterTextIds: includeCompetingObjective
+                        ? new uint?[] { 9003, null, null }
+                        : new uint?[] { null, null, null },
                     ordinal: 8,
                     initialState: MissionObjectiveState.Inactive,
                     isRequired: true,
-                    counters: new Dictionary<uint, MissionObjectiveCounterDefinition>(),
-                    itemCounters: new Dictionary<uint, MissionObjectiveItemCounterDefinition>(),
+                    counters: includeCompetingObjective
+                        ? new Dictionary<uint, MissionObjectiveCounterDefinition>
+                        {
+                            [0] = new MissionObjectiveCounterDefinition(0, 3, 9)
+                        }
+                        : new Dictionary<uint, MissionObjectiveCounterDefinition>(),
+                    itemCounters: includeCompetingObjective
+                        ? new Dictionary<uint, MissionObjectiveItemCounterDefinition>
+                        {
+                            [201] = new MissionObjectiveItemCounterDefinition(201, 2, 8)
+                        }
+                        : new Dictionary<uint, MissionObjectiveItemCounterDefinition>(),
                     conversations: new[]
                     {
                         new MissionObjectiveConversation(
@@ -232,7 +270,7 @@ namespace Rasa.Test.Missions
                     revealedObjectiveIds: Array.Empty<uint>(),
                     activatedObjectiveIds: Array.Empty<uint>(),
                     indicators: Array.Empty<MissionIndicator>())
-            };
+            );
             var mission = new Mission(
                 missionId,
                 $"Mission {missionId}",
@@ -329,6 +367,25 @@ namespace Rasa.Test.Missions
                     context.CharacterMissionObjectiveEntries.Add(row);
                 }
             context.SaveChanges();
+        }
+
+        internal bool TryCompleteMissionAggregate(uint missionId, uint objectiveId)
+        {
+            using var context = Open();
+            using var transaction = context.Database.BeginTransaction(
+                System.Data.IsolationLevel.Serializable);
+            var mission = context.CharacterMissionEntries.Single(entry =>
+                entry.CharacterId == Client.Player.Id &&
+                entry.MissionId == missionId);
+            var objective = context.CharacterMissionObjectiveEntries.Single(entry =>
+                entry.CharacterId == Client.Player.Id &&
+                entry.MissionId == missionId &&
+                entry.ObjectiveId == objectiveId);
+            mission.Completeable = true;
+            objective.ObjectiveState = (byte)MissionObjectiveState.Completed;
+            context.SaveChanges();
+            transaction.Commit();
+            return true;
         }
 
         internal void ReloadPlayerMissions()

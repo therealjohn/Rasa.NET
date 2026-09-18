@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Data;
 using System.Linq;
 using System.Threading;
@@ -20,6 +21,7 @@ namespace Rasa.Test.Database
     using Rasa.Repositories.Char.CharacterAbilityDrawer;
     using Rasa.Repositories.Char.CharacterInventory;
     using Rasa.Repositories.Char.CharacterMission;
+    using Rasa.Repositories.Char.CharacterMissionProgress;
     using Rasa.Repositories.Char.CharacterSkills;
     using Rasa.Repositories.Char.Items;
     using Rasa.Structures.Char;
@@ -223,6 +225,55 @@ namespace Rasa.Test.Database
                 Assert.ThrowsExactly<DbUpdateConcurrencyException>(() =>
                     stale.CharacterMissionProgress.SetItemCounter(123, 429, 5, 200, 6, 10));
             }
+        }
+
+        [TestMethod]
+        public void P4MissionAggregateReadsUseOneSerializableSnapshot()
+        {
+            using var database = CreateP3Database();
+            using (var seed = CreateP3UnitOfWork(database))
+            {
+                seed.CharacterMissions.Add(new CharacterMissionEntry(123, 429, 0)
+                {
+                    Completeable = false
+                });
+                seed.CharacterMissionProgress.AddObjectives(new[]
+                {
+                    new CharacterMissionObjectiveEntry(123, 429, 5, 1)
+                });
+            }
+
+            IReadOnlyList<CharacterMissionEntry> missions = null;
+            CharacterMissionProgressSnapshot progress = null;
+            Task completion = null;
+            using var writerStarted = new ManualResetEventSlim();
+            using (var reader = CreateP3UnitOfWork(database))
+                reader.ExecuteTransaction(() =>
+                {
+                    missions = reader.CharacterMissions.Get(123);
+                    completion = Task.Run(() =>
+                    {
+                        using var writer = CreateP3UnitOfWork(database);
+                        writer.ExecuteTransaction(() =>
+                        {
+                            writerStarted.Set();
+                            var mission = writer.CharacterMissions.Get(123, 429);
+                            var objective = writer.CharacterMissionProgress.GetTracked(123, 429)[5];
+                            mission.Completeable = true;
+                            objective.ObjectiveState = 2;
+                        });
+                    });
+                    Assert.IsTrue(writerStarted.Wait(TimeSpan.FromSeconds(10)));
+                    progress = reader.CharacterMissionProgress.Get(123);
+                });
+            completion.GetAwaiter().GetResult();
+
+            var missionSnapshot = missions.Single(entry => entry.MissionId == 429);
+            var objectiveSnapshot = progress.Missions[429].Objectives[5];
+            Assert.AreEqual(
+                missionSnapshot.Completeable,
+                objectiveSnapshot.State == 2,
+                "The read transaction must not combine a stale mission row with new objective progress.");
         }
 
         [TestMethod]

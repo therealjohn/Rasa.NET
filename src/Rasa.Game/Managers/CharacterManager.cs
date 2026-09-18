@@ -13,6 +13,7 @@ namespace Rasa.Managers
     using Packets.MapChannel.Server;
     using Packets.ClientMethod.Server;
     using Repositories.Char;
+    using Repositories.Char.CharacterMissionProgress;
     using Repositories.UnitOfWork;
     using Repositories.World;
     using Structures;
@@ -401,8 +402,6 @@ namespace Rasa.Managers
             var characterAppearances = unitOfWork.CharacterAppearances.GetByCharacterId(character.Id);
             var appearanceData = new Dictionary<EquipmentData, AppearanceData>();
             var lockboxInfo = unitOfWork.CharacterLockboxes.Get(client.AccountEntry.Id);
-            var missions = unitOfWork.CharacterMissions.Get(character.Id);
-            var missionProgress = unitOfWork.CharacterMissionProgress.Get(character.Id);
             var clan = unitOfWork.Clans.GetClanByCharacterId(character.Id);
             var logos = unitOfWork.CharacterLogoses.GetLogos(character.Id);
 
@@ -422,9 +421,21 @@ namespace Rasa.Managers
                 LoginTime = DateTime.Now,
                 Logos = logos
             };
-            MissionManager.Instance.Hydrate(newCharacter, missions, missionProgress);
+            HydrateMissions(newCharacter, unitOfWork);
 
             return newCharacter;
+        }
+
+        internal void HydrateMissions(Manifestation player, ICharUnitOfWork unitOfWork)
+        {
+            IReadOnlyList<CharacterMissionEntry> missions = null;
+            CharacterMissionProgressSnapshot missionProgress = null;
+            unitOfWork.ExecuteTransaction(() =>
+            {
+                missions = unitOfWork.CharacterMissions.Get(player.Id);
+                missionProgress = unitOfWork.CharacterMissionProgress.Get(player.Id);
+            });
+            MissionManager.Instance.Hydrate(player, missions, missionProgress);
         }
 
         public void UpdateCharacter(Client client, CharacterUpdate job, object value = null)

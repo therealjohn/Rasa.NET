@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace Rasa.Test.Missions
@@ -146,7 +147,59 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
-        public void ObjectiveCompletionPublishesOnlyRevealTransitionsAppliedDurably()
+        public void CharacterHydrationNeverCombinesStaleMissionRowsWithNewObjectiveProgress()
+        {
+            using var context = MissionTestContext.WithDefinitions(321);
+            context.SeedMission(context.Client.Player.Id, 321, (uint)MissionState.Active, false);
+            context.Client.Player.Missions.Clear();
+            var queryCount = 0;
+            var completionAttempted = false;
+            var readUsedSerializableTransaction = false;
+            Task<bool> completion = null;
+            context.BeforeQuery = database =>
+            {
+                queryCount++;
+                if (queryCount != 2)
+                    return;
+
+                completionAttempted = true;
+                readUsedSerializableTransaction =
+                    database.Database.CurrentTransaction?.GetDbTransaction().IsolationLevel ==
+                    System.Data.IsolationLevel.Serializable;
+                completion = Task.Run(() => context.TryCompleteMissionAggregate(321, 1));
+                if (!readUsedSerializableTransaction)
+                    completion.GetAwaiter().GetResult();
+            };
+            var singleton = typeof(MissionManager).GetField(
+                "_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+            var previous = singleton.GetValue(null);
+            singleton.SetValue(null, context.Manager);
+            try
+            {
+                using var unit = context.CreateChar();
+                new CharacterManager(context).HydrateMissions(context.Client.Player, unit);
+            }
+            finally
+            {
+                context.BeforeQuery = null;
+                singleton.SetValue(null, previous);
+            }
+
+            Assert.AreEqual(2, queryCount);
+            Assert.IsTrue(completionAttempted);
+            Assert.IsTrue(readUsedSerializableTransaction);
+            Assert.IsTrue(context.Client.Player.Missions.TryGetValue(321, out var mission),
+                "A concurrent completion must not make a valid mission aggregate disappear.");
+            var objective = mission.Objectives[1];
+            completion.GetAwaiter().GetResult();
+            Assert.IsTrue(
+                (!mission.Completeable && objective.State == MissionObjectiveState.Incomplete) ||
+                (mission.Completeable && objective.State == MissionObjectiveState.Completed),
+                "Hydration must observe either the complete old aggregate or the complete new aggregate.");
+        }
+
+        [TestMethod]
+        public void ObjectiveCompletionReconcilesDurableRevealWithoutPublishingDuplicatePacket()
         {
             using var context = MissionTestContext.WithObjectiveMission(activateSuccessor: false);
             var giver = context.AddNpc(77);
@@ -164,7 +217,7 @@ namespace Rasa.Test.Missions
             Assert.IsTrue(context.Manager.TryCompleteNpcObjective(
                 context.Client, objectiveNpc.EntityId, 321, 5, 11));
 
-            Assert.AreEqual(MissionObjectiveState.Inactive,
+            Assert.AreEqual(MissionObjectiveState.NotAssigned,
                 context.Client.Player.Missions[321].Objectives[9].State);
             Assert.AreEqual((byte)MissionObjectiveState.NotAssigned,
                 context.ReadProgress(321).Missions[321].Objectives[9].State);
@@ -289,6 +342,56 @@ namespace Rasa.Test.Missions
                 context.ReadProgress(321).Missions[321].Objectives[5].State);
             Assert.AreEqual(1, context.Drain().Concat(MissionTestContext.Drain(competitor))
                 .OfType<ObjectiveCompletedPacket>().Count());
+        }
+
+        [TestMethod]
+        public void CompetingClientReconcilesAlreadyAppliedSuccessorWithoutDuplicatePackets()
+        {
+            using var context = MissionTestContext.WithObjectiveMission(
+                includeCompetingObjective: true);
+            var giver = context.AddNpc(77);
+            var firstObjectiveNpc = context.AddNpc(500, npcPackageId: 700);
+            var secondObjectiveNpc = context.AddNpc(501, npcPackageId: 702);
+            Assert.IsTrue(context.Manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            context.Drain();
+            var competitor = context.CreateCompetingClient();
+
+            Assert.IsTrue(context.Manager.TryCompleteNpcObjective(
+                context.Client, firstObjectiveNpc.EntityId, 321, 5, 11));
+            context.Drain();
+            Assert.AreEqual(MissionObjectiveState.Incomplete,
+                context.Client.Player.Missions[321].Objectives[9].State);
+            Assert.AreEqual(MissionObjectiveState.Inactive,
+                competitor.Player.Missions[321].Objectives[9].State);
+            using (var unit = context.CreateChar())
+            {
+                unit.CharacterMissionProgress.SetCounter(1, 321, 9, 0, 3, 7);
+                unit.CharacterMissionProgress.SetItemCounter(1, 321, 9, 201, 2, 6);
+            }
+
+            Assert.IsTrue(context.Manager.TryCompleteNpcObjective(
+                competitor, secondObjectiveNpc.EntityId, 321, 6, 13));
+
+            var durable = context.ReadProgress(321).Missions[321];
+            Assert.AreEqual(
+                (MissionObjectiveState)durable.Objectives[9].State,
+                context.Client.Player.Missions[321].Objectives[9].State);
+            Assert.AreEqual(
+                (MissionObjectiveState)durable.Objectives[9].State,
+                competitor.Player.Missions[321].Objectives[9].State);
+            Assert.AreEqual(
+                (MissionObjectiveState)durable.Objectives[6].State,
+                competitor.Player.Missions[321].Objectives[6].State);
+            Assert.AreEqual(
+                durable.Objectives[9].Counters[0],
+                competitor.Player.Missions[321].Objectives[9].Counters[0]);
+            Assert.AreEqual(
+                durable.Objectives[9].ItemCounters[201],
+                competitor.Player.Missions[321].Objectives[9].ItemCounters[201]);
+            var packets = MissionTestContext.Drain(competitor);
+            Assert.AreEqual(1, packets.OfType<ObjectiveCompletedPacket>().Count());
+            Assert.AreEqual(0, packets.OfType<ObjectiveRevealedPacket>().Count());
+            Assert.AreEqual(0, packets.OfType<ObjectiveActivatedPacket>().Count());
         }
 
         [TestMethod]

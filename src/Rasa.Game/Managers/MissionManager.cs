@@ -592,6 +592,7 @@ namespace Rasa.Managers
                 var activated = objectiveDefinition.ActivatedObjectiveIds.ToArray();
                 var appliedRevealed = new List<uint>();
                 var appliedActivated = new List<uint>();
+                IReadOnlyDictionary<uint, CharacterMissionObjectiveEntry> durableObjectives = null;
                 var completeable = false;
                 try
                 {
@@ -599,7 +600,7 @@ namespace Rasa.Managers
                     unitOfWork.ExecuteTransaction(() =>
                     {
                         var durableMission = unitOfWork.CharacterMissions.Get(client.Player.Id, missionId);
-                        var durableObjectives = unitOfWork.CharacterMissionProgress.GetTracked(
+                        durableObjectives = unitOfWork.CharacterMissionProgress.GetTracked(
                             client.Player.Id, missionId);
                         durableObjectives.TryGetValue(objectiveId, out var durableObjective);
                         if (durableMission?.MissionState != (uint)MissionState.Active ||
@@ -663,11 +664,19 @@ namespace Rasa.Managers
                     return false;
                 }
 
-                runtimeObjective.State = MissionObjectiveState.Completed;
-                foreach (var successorId in appliedRevealed)
-                    runtimeMission.Objectives[successorId].State = MissionObjectiveState.NotAssigned;
-                foreach (var successorId in appliedActivated)
-                    runtimeMission.Objectives[successorId].State = MissionObjectiveState.Incomplete;
+                foreach (var touchedObjectiveId in revealed
+                    .Concat(activated)
+                    .Append(objectiveId)
+                    .Distinct())
+                {
+                    var durableObjective = durableObjectives[touchedObjectiveId];
+                    var runtime = runtimeMission.Objectives[touchedObjectiveId];
+                    runtime.State = (MissionObjectiveState)durableObjective.ObjectiveState;
+                    foreach (var counter in durableObjective.Counters)
+                        runtime.SetCounter(counter.CounterId, counter.CounterValue);
+                    foreach (var counter in durableObjective.ItemCounters)
+                        runtime.SetItemCounter(counter.ItemClassId, counter.CounterValue);
+                }
                 runtimeMission.Completeable = completeable;
 
                 client.CallMethod(client.Player.EntityId,
