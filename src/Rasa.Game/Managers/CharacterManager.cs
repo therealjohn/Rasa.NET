@@ -402,6 +402,7 @@ namespace Rasa.Managers
             var appearanceData = new Dictionary<EquipmentData, AppearanceData>();
             var lockboxInfo = unitOfWork.CharacterLockboxes.Get(client.AccountEntry.Id);
             var missions = unitOfWork.CharacterMissions.Get(character.Id);
+            var missionProgress = unitOfWork.CharacterMissionProgress.Get(character.Id);
             var clan = unitOfWork.Clans.GetClanByCharacterId(character.Id);
             var logos = unitOfWork.CharacterLogoses.GetLogos(character.Id);
 
@@ -421,7 +422,7 @@ namespace Rasa.Managers
                 LoginTime = DateTime.Now,
                 Logos = logos
             };
-            MissionManager.Instance.Hydrate(newCharacter, missions);
+            MissionManager.Instance.Hydrate(newCharacter, missions, missionProgress);
 
             return newCharacter;
         }

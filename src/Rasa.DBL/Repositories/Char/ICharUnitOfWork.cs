@@ -14,6 +14,7 @@
     using CharacterLockbox;
     using CharacterLogos;
     using CharacterMission;
+    using CharacterMissionProgress;
     using CharacterOption;
     using CharacterTeleporter;
     using CharacterTitle;
@@ -36,6 +37,7 @@
         ICharacterLockboxRepository CharacterLockboxes { get; }
         ICharacterLogosRepository CharacterLogoses { get; }
         ICharacterMissionRepository CharacterMissions { get; }
+        ICharacterMissionProgressRepository CharacterMissionProgress { get; }
         ICharacterOptionRepository CharacterOptions { get; }
         ICharacterSkillsRepository CharacterSkills { get; }
         ICharacterTeleporterRepository CharacterTeleporters { get; }

@@ -88,7 +88,7 @@ namespace Rasa.Test.Missions
             context.Manager.PublishInitialState(context.Client);
 
             var packet = context.Drain().OfType<MissionStatusInfoPacket>().Single();
-            CollectionAssert.AreEquivalent(new uint[] { 321, 429, 666, 777 },
+            CollectionAssert.AreEquivalent(new uint[] { 321, 429, 666, 777, 888 },
                 packet.MissionStatusDict.Keys.ToArray());
             Assert.AreEqual(MissionState.Active, packet.MissionStatusDict[321].MissionState);
             Assert.IsFalse(packet.MissionStatusDict[321].Completeable);
@@ -98,6 +98,263 @@ namespace Rasa.Test.Missions
             Assert.IsFalse(packet.MissionStatusDict[666].Completeable);
             Assert.AreEqual(MissionState.Completed, packet.MissionStatusDict[777].MissionState);
             Assert.IsFalse(packet.MissionStatusDict[777].Completeable);
+            Assert.AreEqual(MissionState.Success, packet.MissionStatusDict[888].MissionState);
+            Assert.IsFalse(packet.MissionStatusDict[888].Completeable);
+        }
+
+        [TestMethod]
+        public void ObjectiveCompletionPersistsTransitionBeforePublishingOrderedPackets()
+        {
+            using var context = MissionTestContext.WithObjectiveMission();
+            var giver = context.AddNpc(77);
+            var objectiveNpc = context.AddNpc(500, npcPackageId: 700);
+            Assert.IsTrue(context.Manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            context.Drain();
+            context.BeforeSave = _ =>
+            {
+                Assert.AreEqual(MissionObjectiveState.Incomplete,
+                    context.Client.Player.Missions[321].Objectives[5].State);
+                Assert.AreEqual(0, context.Drain().Count);
+            };
+
+            Assert.IsTrue(context.Manager.TryCompleteNpcObjective(
+                context.Client, objectiveNpc.EntityId, 321, 5, 11));
+
+            var progress = context.ReadProgress(321).Missions[321];
+            Assert.AreEqual((byte)MissionObjectiveState.Completed, progress.Objectives[5].State);
+            Assert.AreEqual((byte)MissionObjectiveState.Incomplete, progress.Objectives[9].State);
+            Assert.IsFalse(context.ReadMission(321).Completeable);
+            var packets = context.Drain();
+            CollectionAssert.AreEqual(
+                new[]
+                {
+                    typeof(ObjectiveCompletedPacket),
+                    typeof(ObjectiveRevealedPacket),
+                    typeof(ObjectiveActivatedPacket)
+                },
+                packets.Select(packet => packet.GetType()).ToArray());
+        }
+
+        [TestMethod]
+        public void ObjectiveCompletionRejectsWrongBindingStaleStateAndDuplicateClick()
+        {
+            using var context = MissionTestContext.WithObjectiveMission();
+            var giver = context.AddNpc(77);
+            var wrongPackage = context.AddNpc(500, npcPackageId: 999);
+            var correct = context.AddNpc(501, npcPackageId: 700);
+            Assert.IsTrue(context.Manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            context.Drain();
+
+            Assert.IsFalse(context.Manager.TryCompleteNpcObjective(
+                context.Client, wrongPackage.EntityId, 321, 5, 11));
+            Assert.IsFalse(context.Manager.TryCompleteNpcObjective(
+                context.Client, correct.EntityId, 321, 5, 12));
+            Assert.IsTrue(context.Manager.TryCompleteNpcObjective(
+                context.Client, correct.EntityId, 321, 5, 11));
+            context.Drain();
+            Assert.IsFalse(context.Manager.TryCompleteNpcObjective(
+                context.Client, correct.EntityId, 321, 5, 11));
+            Assert.AreEqual(0, context.Drain().Count);
+        }
+
+        [TestMethod]
+        public void ObjectiveCompletionRejectsNpcFromAnotherMapAndStaleDurableState()
+        {
+            using var context = MissionTestContext.WithObjectiveMission();
+            var giver = context.AddNpc(77);
+            Assert.IsTrue(context.Manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            context.Drain();
+            var otherMap = new MapChannel
+            {
+                MapInfo = context.Map.MapInfo,
+                ClientList = new List<Rasa.Game.Client>(),
+                PlayerLimit = 128,
+                InstanceId = context.Map.InstanceId + 1
+            };
+            var remote = context.AddNpc(500, otherMap, 700);
+            Assert.IsFalse(context.Manager.TryCompleteNpcObjective(
+                context.Client, remote.EntityId, 321, 5, 11));
+
+            using (var unit = context.CreateChar())
+                unit.CharacterMissionProgress.SetObjectiveState(
+                    1, 321, 5, (byte)MissionObjectiveState.Completed);
+            var local = context.AddNpc(501, npcPackageId: 700);
+            Assert.IsFalse(context.Manager.TryCompleteNpcObjective(
+                context.Client, local.EntityId, 321, 5, 11));
+            Assert.AreEqual(MissionObjectiveState.Incomplete,
+                context.Client.Player.Missions[321].Objectives[5].State);
+            Assert.AreEqual(0, context.Drain().Count);
+        }
+
+        [TestMethod]
+        public void ObjectiveCompletionFailureRollsBackAndReconnectHydratesPersistedProgress()
+        {
+            using var context = MissionTestContext.WithObjectiveMission();
+            var giver = context.AddNpc(77);
+            var objectiveNpc = context.AddNpc(500, npcPackageId: 700);
+            Assert.IsTrue(context.Manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            context.Drain();
+            context.BeforeSave = _ => throw new DbUpdateException("Injected save failure.");
+
+            Assert.IsFalse(context.Manager.TryCompleteNpcObjective(
+                context.Client, objectiveNpc.EntityId, 321, 5, 11));
+            Assert.AreEqual(MissionObjectiveState.Incomplete,
+                context.Client.Player.Missions[321].Objectives[5].State);
+            Assert.AreEqual((byte)MissionObjectiveState.Incomplete,
+                context.ReadProgress(321).Missions[321].Objectives[5].State);
+            Assert.AreEqual(0, context.Drain().Count);
+
+            context.BeforeSave = null;
+            Assert.IsTrue(context.Manager.TryCompleteNpcObjective(
+                context.Client, objectiveNpc.EntityId, 321, 5, 11));
+            context.Drain();
+            context.Client.Player.Missions.Clear();
+            context.ReloadPlayerMissions();
+            Assert.AreEqual(MissionObjectiveState.Completed,
+                context.Client.Player.Missions[321].Objectives[5].State);
+            Assert.AreEqual(MissionObjectiveState.Incomplete,
+                context.Client.Player.Missions[321].Objectives[9].State);
+        }
+
+        [TestMethod]
+        public void CompetingClientsCannotCompleteTheSameObjectiveTwice()
+        {
+            using var context = MissionTestContext.WithObjectiveMission();
+            var giver = context.AddNpc(77);
+            var objectiveNpc = context.AddNpc(500, npcPackageId: 700);
+            Assert.IsTrue(context.Manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            context.Drain();
+            var competitor = context.CreateCompetingClient();
+            context.ResetCharUnitCount();
+            using var start = new System.Threading.ManualResetEventSlim();
+
+            var results = Task.WhenAll(
+                Task.Run(() =>
+                {
+                    start.Wait();
+                    return context.Manager.TryCompleteNpcObjective(
+                        context.Client, objectiveNpc.EntityId, 321, 5, 11);
+                }),
+                Task.Run(() =>
+                {
+                    start.Wait();
+                    return context.Manager.TryCompleteNpcObjective(
+                        competitor, objectiveNpc.EntityId, 321, 5, 11);
+                }));
+            start.Set();
+            var completed = results.GetAwaiter().GetResult();
+
+            Assert.AreEqual(1, completed.Count(result => result));
+            Assert.AreEqual((byte)MissionObjectiveState.Completed,
+                context.ReadProgress(321).Missions[321].Objectives[5].State);
+            Assert.AreEqual(1, context.Drain().Concat(MissionTestContext.Drain(competitor))
+                .OfType<ObjectiveCompletedPacket>().Count());
+        }
+
+        [TestMethod]
+        public void HydrationCombinesDurableValuesWithImmutableDefinitionMetadata()
+        {
+            using var context = MissionTestContext.WithObjectiveMission();
+            var giver = context.AddNpc(77);
+            Assert.IsTrue(context.Manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            context.Drain();
+            using (var unit = context.CreateChar())
+            {
+                unit.CharacterMissionProgress.SetCounter(1, 321, 5, 0, 6);
+                unit.CharacterMissionProgress.SetItemCounter(1, 321, 5, 200, 4);
+            }
+            context.ReloadPlayerMissions();
+
+            var info = context.Manager.BuildStatusSnapshot(context.Client.Player)[321];
+            var objective = info.ObjectivesList.Single(item => item.ObjectiveId == 5);
+            Assert.AreEqual(7U, objective.Ordinal);
+            Assert.IsTrue(objective.IsRequired);
+            Assert.AreEqual(6U, objective.Counters[0].CounterValue);
+            Assert.AreEqual(2U, objective.Counters[0].InitialValue);
+            Assert.AreEqual(10U, objective.Counters[0].TargetValue);
+            Assert.AreEqual(4U, objective.ItemCounters[200].CounterValue);
+            Assert.AreEqual(8U, objective.ItemCounters[200].TargetValue);
+            Assert.AreEqual(new System.Numerics.Vector3(1.25f, 2.5f, 3.75f),
+                objective.IndicatorList.Single().Position);
+        }
+
+        [TestMethod]
+        public void NpcConversationReflectsMissionObjectiveCompletionAndRewardStates()
+        {
+            using var context = MissionTestContext.WithObjectiveMission(selectableReward: false);
+            var giver = context.AddNpc(77);
+            var firstObjectiveNpc = context.AddNpc(500, npcPackageId: 700);
+            var secondObjectiveNpc = context.AddNpc(501, npcPackageId: 701);
+            var receiver = context.AddNpc(88);
+            var npcManager = CreateNpcManager(context, out var singleton, out var previous);
+            try
+            {
+                npcManager.RequestNpcConverse(context.Client,
+                    new RequestNPCConversePacket { EntityId = giver.EntityId });
+                Assert.IsTrue(context.Drain().OfType<ConversePacket>().Single()
+                    .ConvoDataDict.ContainsKey(ConversationType.MissionDispense));
+
+                Assert.IsTrue(context.Manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+                context.Drain();
+                npcManager.RequestNpcConverse(context.Client,
+                    new RequestNPCConversePacket { EntityId = firstObjectiveNpc.EntityId });
+                Assert.IsTrue(context.Drain().OfType<ConversePacket>().Single()
+                    .ConvoDataDict.ContainsKey(ConversationType.ObjectiveComplete));
+
+                Assert.IsTrue(context.Manager.TryCompleteNpcObjective(
+                    context.Client, firstObjectiveNpc.EntityId, 321, 5, 11));
+                context.Drain();
+                Assert.IsTrue(context.Manager.TryCompleteNpcObjective(
+                    context.Client, secondObjectiveNpc.EntityId, 321, 9, 12));
+                Assert.IsTrue(context.Client.Player.Missions[321].Completeable);
+                context.Drain();
+                npcManager.RequestNpcConverse(context.Client,
+                    new RequestNPCConversePacket { EntityId = receiver.EntityId });
+                Assert.IsTrue(context.Drain().OfType<ConversePacket>().Single()
+                    .ConvoDataDict.ContainsKey(ConversationType.MissionComplete));
+
+                using (var unit = context.CreateChar())
+                    unit.CharacterMissions.SetState(1, 321, (uint)MissionState.Success);
+                var active = context.Client.Player.Missions[321];
+                context.Client.Player.Missions[321] =
+                    new MissionLog(321, MissionState.Success, false, active.Objectives);
+                npcManager.RequestNpcConverse(context.Client,
+                    new RequestNPCConversePacket { EntityId = receiver.EntityId });
+                Assert.IsTrue(context.Drain().OfType<ConversePacket>().Single()
+                    .ConvoDataDict.ContainsKey(ConversationType.MissionReward));
+            }
+            finally
+            {
+                singleton.SetValue(null, previous);
+            }
+        }
+
+        [TestMethod]
+        public void RecoveredSourceOnlyMissionsNeverAppearInNpcConversation()
+        {
+            using var context = MissionTestContext.WithRecoveredDefinitions();
+            var npc = context.AddNpc(88, npcPackageId: 168);
+            npc.Npc.NpcMissionIds = new List<uint> { 1069, 1407, 1449 };
+            var npcManager = CreateNpcManager(context, out var singleton, out var previous);
+            try
+            {
+                npcManager.RequestNpcConverse(context.Client,
+                    new RequestNPCConversePacket { EntityId = npc.EntityId });
+                var conversation = context.Drain().OfType<ConversePacket>().Single();
+                Assert.IsFalse(conversation.ConvoDataDict.Keys.Any(type =>
+                    type is ConversationType.MissionDispense or
+                        ConversationType.ObjectiveComplete or
+                        ConversationType.MissionComplete or
+                        ConversationType.MissionReward));
+
+                npcManager.UpdateConversationStatus(context.Client, npc);
+                Assert.AreEqual(ConversationStatus.None,
+                    context.Drain().OfType<NPCConversationStatusPacket>().Single().ConvoStatusId);
+            }
+            finally
+            {
+                singleton.SetValue(null, previous);
+            }
         }
 
         [TestMethod]
@@ -297,6 +554,7 @@ namespace Rasa.Test.Missions
 
             using var unit = context.CreateChar();
             Assert.AreEqual(0, unit.CharacterMissions.Get(context.Client.Player.Id).Count);
+            Assert.AreEqual(0, unit.CharacterMissionProgress.Get(context.Client.Player.Id).Missions.Count);
             Assert.ThrowsExactly<EntityNotFoundException>(() =>
                 unit.Characters.Get(context.Client.Player.Id));
             Assert.AreEqual(1, context.Drain().OfType<CharacterDeleteSuccessPacket>().Count());
@@ -356,6 +614,23 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(MissionState.Active,
                 context.Manager.BuildStatusSnapshot(context.Client.Player)[321].MissionState);
             Assert.AreEqual(77U, definition.MissionGiver);
+        }
+
+        private static NpcManager CreateNpcManager(
+            MissionTestContext context,
+            out FieldInfo singleton,
+            out object previous)
+        {
+            singleton = typeof(MissionManager).GetField(
+                "_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+            previous = singleton.GetValue(null);
+            singleton.SetValue(null, context.Manager);
+            return (NpcManager)Activator.CreateInstance(
+                typeof(NpcManager),
+                BindingFlags.Instance | BindingFlags.NonPublic,
+                binder: null,
+                args: new object[] { context },
+                culture: null)!;
         }
     }
 }

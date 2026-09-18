@@ -1,4 +1,5 @@
-﻿using System.ComponentModel.DataAnnotations;
+﻿using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace Rasa.Structures.Char
@@ -34,5 +35,8 @@ namespace Rasa.Structures.Char
         [Column("completeable")]
         [Required]
         public bool Completeable { get; set; }
+
+        public ICollection<CharacterMissionObjectiveEntry> Objectives { get; set; } =
+            new List<CharacterMissionObjectiveEntry>();
     }
 }

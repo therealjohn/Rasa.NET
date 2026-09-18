@@ -26,6 +26,7 @@ namespace Rasa.Test.Missions
     using Rasa.Repositories.Char.CharacterAppearance;
     using Rasa.Repositories.Char.CharacterInventory;
     using Rasa.Repositories.Char.CharacterMission;
+    using Rasa.Repositories.Char.CharacterMissionProgress;
     using Rasa.Repositories.Char.GameAccount;
     using Rasa.Repositories.Char.Items;
     using Rasa.Repositories.UnitOfWork;
@@ -100,23 +101,43 @@ namespace Rasa.Test.Missions
         internal static MissionTestContext WithDatabaseDefinitions(params uint[] missionIds) =>
             new(CreateDefinitions(false, missionIds));
 
+        internal static MissionTestContext WithRecoveredDefinitions() =>
+            new(MissionDefinitionCatalog.CreateRecoveredInactiveDefinitions());
+
         private static IReadOnlyDictionary<uint, Mission> CreateDefinitions(
             bool isOperational,
             params uint[] missionIds) =>
             missionIds.ToDictionary(
                 id => id,
-                id => new Mission(new NpcMissionEntry
-                {
-                    Id = id,
-                    GiverId = 77,
-                    ReciverId = 88,
-                    Level = 5,
-                    GroupType = 1,
-                    CategoryId = 2,
-                    Shareable = true,
-                    RadioCompleteable = false,
-                    Comment = "fixture"
-                }, isOperational: isOperational));
+                id => new Mission(
+                    id,
+                    $"Mission {id}",
+                    clientNameTextId: id,
+                    missionGiver: 77,
+                    missionReciver: 88,
+                    level: 5,
+                    groupType: 1,
+                    categoryId: 2,
+                    shareable: true,
+                    radioCompletable: false,
+                    objectives: new[]
+                    {
+                        new MissionObjectiveDefinition(
+                            objectiveId: 1,
+                            clientNameTextId: 1001,
+                            clientBodyTextId: 1002,
+                            clientCounterTextIds: new uint?[] { null, null, null },
+                            ordinal: 0,
+                            initialState: MissionObjectiveState.Incomplete,
+                            isRequired: true,
+                            counters: new Dictionary<uint, MissionObjectiveCounterDefinition>(),
+                            itemCounters: new Dictionary<uint, MissionObjectiveItemCounterDefinition>(),
+                            conversations: Array.Empty<MissionObjectiveConversation>(),
+                            revealedObjectiveIds: Array.Empty<uint>(),
+                            activatedObjectiveIds: Array.Empty<uint>(),
+                            indicators: Array.Empty<MissionIndicator>())
+                    },
+                    enableOperational: isOperational));
 
         internal static MissionTestContext WithCompletableMission(uint missionId)
         {
@@ -143,6 +164,97 @@ namespace Rasa.Test.Missions
             context.ReloadPlayerMissions();
             context.Receiver = context.AddNpc(88);
             context.Drain();
+            return context;
+        }
+
+        internal static MissionTestContext WithObjectiveMission(
+            uint missionId = 321,
+            bool selectableReward = true)
+        {
+            var objectives = new[]
+            {
+                new MissionObjectiveDefinition(
+                    objectiveId: 5,
+                    clientNameTextId: 5001,
+                    clientBodyTextId: 5002,
+                    clientCounterTextIds: new uint?[] { 5003, null, null },
+                    ordinal: 7,
+                    initialState: MissionObjectiveState.Incomplete,
+                    isRequired: true,
+                    counters: new Dictionary<uint, MissionObjectiveCounterDefinition>
+                    {
+                        [0] = new MissionObjectiveCounterDefinition(0, 2, 10)
+                    },
+                    itemCounters: new Dictionary<uint, MissionObjectiveItemCounterDefinition>
+                    {
+                        [200] = new MissionObjectiveItemCounterDefinition(200, 1, 8)
+                    },
+                    conversations: new[]
+                    {
+                        new MissionObjectiveConversation(
+                            700,
+                            11,
+                            MissionObjectiveConversationType.Completion)
+                    },
+                    revealedObjectiveIds: new uint[] { 9 },
+                    activatedObjectiveIds: new uint[] { 9 },
+                    indicators: new[]
+                    {
+                        new MissionIndicator
+                        {
+                            Position = new Vector3(1.25f, 2.5f, 3.75f),
+                            Radius = 4.5,
+                            IndicatorId = 7,
+                            Show3DEffect = true
+                        }
+                    }),
+                new MissionObjectiveDefinition(
+                    objectiveId: 9,
+                    clientNameTextId: 9001,
+                    clientBodyTextId: 9002,
+                    clientCounterTextIds: new uint?[] { null, null, null },
+                    ordinal: 8,
+                    initialState: MissionObjectiveState.Inactive,
+                    isRequired: true,
+                    counters: new Dictionary<uint, MissionObjectiveCounterDefinition>(),
+                    itemCounters: new Dictionary<uint, MissionObjectiveItemCounterDefinition>(),
+                    conversations: new[]
+                    {
+                        new MissionObjectiveConversation(
+                            701,
+                            12,
+                            MissionObjectiveConversationType.Completion)
+                    },
+                    revealedObjectiveIds: Array.Empty<uint>(),
+                    activatedObjectiveIds: Array.Empty<uint>(),
+                    indicators: Array.Empty<MissionIndicator>())
+            };
+            var mission = new Mission(
+                missionId,
+                $"Mission {missionId}",
+                clientNameTextId: missionId,
+                missionGiver: 77,
+                missionReciver: 88,
+                level: 5,
+                groupType: 1,
+                categoryId: 2,
+                shareable: true,
+                radioCompletable: false,
+                objectives,
+                enableOperational: true);
+            var reward = new MissionRewardDefinition(
+                experience: 100,
+                currencies: new Dictionary<CurencyType, int>(),
+                fixedItems: Array.Empty<MissionRewardItem>(),
+                selectableItems: selectableReward
+                    ? new[] { new MissionRewardItem(29, 2) }
+                    : Array.Empty<MissionRewardItem>());
+            var context = new MissionTestContext(
+                new Dictionary<uint, Mission> { [missionId] = mission },
+                new Dictionary<uint, MissionRewardDefinition> { [missionId] = reward });
+            context.Reward = reward;
+            if (selectableReward)
+                context.AddRewardTemplate(29, 3147);
             return context;
         }
 
@@ -184,13 +296,44 @@ namespace Rasa.Test.Missions
             {
                 Completeable = completeable
             });
+            if (Manager != null &&
+                Manager.LoadedMissions.TryGetValue(missionId, out var definition) &&
+                definition.IsOperational)
+                foreach (var objective in definition.Objectives.Values)
+                {
+                    var row = new CharacterMissionObjectiveEntry(
+                        characterId,
+                        missionId,
+                        objective.ObjectiveId,
+                        (byte)(completeable && objective.IsRequired.Value
+                            ? MissionObjectiveState.Completed
+                            : objective.InitialState.Value));
+                    foreach (var counter in objective.Counters)
+                        row.Counters.Add(new CharacterMissionObjectiveCounterEntry(
+                            characterId,
+                            missionId,
+                            objective.ObjectiveId,
+                            counter.Key,
+                            counter.Value.InitialValue));
+                    foreach (var counter in objective.ItemCounters)
+                        row.ItemCounters.Add(new CharacterMissionObjectiveItemCounterEntry(
+                            characterId,
+                            missionId,
+                            objective.ObjectiveId,
+                            counter.Key,
+                            counter.Value.InitialValue));
+                    context.CharacterMissionObjectiveEntries.Add(row);
+                }
             context.SaveChanges();
         }
 
         internal void ReloadPlayerMissions()
         {
             using var unit = CreateChar();
-            Manager.Hydrate(Client.Player, unit.CharacterMissions.Get(Client.Player.Id));
+            Manager.Hydrate(
+                Client.Player,
+                unit.CharacterMissions.Get(Client.Player.Id),
+                unit.CharacterMissionProgress.Get(Client.Player.Id));
         }
 
         internal CharacterMissionEntry ReadMission(uint missionId)
@@ -198,6 +341,36 @@ namespace Rasa.Test.Missions
             using var context = Open();
             return context.CharacterMissionEntries.AsNoTracking().Single(entry =>
                 entry.CharacterId == Client.Player.Id && entry.MissionId == missionId);
+        }
+
+        internal CharacterMissionProgressSnapshot ReadProgress(uint missionId)
+        {
+            using var unit = CreateChar();
+            return unit.CharacterMissionProgress.Get(Client.Player.Id, missionId);
+        }
+
+        internal void SeedObjective(
+            uint characterId,
+            uint missionId,
+            uint objectiveId,
+            MissionObjectiveState state,
+            IReadOnlyDictionary<uint, uint> counters = null,
+            IReadOnlyDictionary<uint, uint> itemCounters = null)
+        {
+            using var context = Open();
+            var row = new CharacterMissionObjectiveEntry(
+                characterId,
+                missionId,
+                objectiveId,
+                (byte)state);
+            foreach (var counter in counters ?? new Dictionary<uint, uint>())
+                row.Counters.Add(new CharacterMissionObjectiveCounterEntry(
+                    characterId, missionId, objectiveId, counter.Key, counter.Value));
+            foreach (var counter in itemCounters ?? new Dictionary<uint, uint>())
+                row.ItemCounters.Add(new CharacterMissionObjectiveItemCounterEntry(
+                    characterId, missionId, objectiveId, counter.Key, counter.Value));
+            context.CharacterMissionObjectiveEntries.Add(row);
+            context.SaveChanges();
         }
 
         internal RewardTotals ReadRewardTotals()
@@ -248,13 +421,13 @@ namespace Rasa.Test.Missions
             _addedTemplates.Add(templateId);
         }
 
-        internal Creature AddNpc(uint dbId, MapChannel map = null)
+        internal Creature AddNpc(uint dbId, MapChannel map = null, uint? npcPackageId = null)
         {
             map ??= Map;
             var npc = new Creature
             {
                 DbId = dbId,
-                Npc = new Npc(),
+                Npc = new Npc { NpcPackageId = npcPackageId ?? dbId },
                 MapContextId = map.MapInfo.MapContextId,
                 Position = Vector3.Zero,
                 EntityClass = EntityClasses.HumanBaseMale
@@ -303,7 +476,10 @@ namespace Rasa.Test.Missions
                 }
             }
             using var unit = CreateChar();
-            Manager.Hydrate(client.Player, unit.CharacterMissions.Get(client.Player.Id));
+            Manager.Hydrate(
+                client.Player,
+                unit.CharacterMissions.Get(client.Player.Id),
+                unit.CharacterMissionProgress.Get(client.Player.Id));
             Drain(client);
             return client;
         }
@@ -345,7 +521,8 @@ namespace Rasa.Test.Missions
                 characterMissions: new CharacterMissionRepository(context), characterOptions: null,
                 characterSkills: null, characterTeleporters: null, characterTitles: null,
                 clans: null, clanInventories: null, clanMembers: null, friends: null,
-                ignoreds: null, items: new ItemRepository(context), userOptions: null);
+                ignoreds: null, items: new ItemRepository(context), userOptions: null,
+                characterMissionProgress: new CharacterMissionProgressRepository(context));
         }
 
         internal void ResetCharUnitCount() => _charUnitsCreated = 0;

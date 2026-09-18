@@ -129,6 +129,8 @@ namespace Rasa.Test.Database
                 Assert.AreEqual(0, upgraded.Database.SqlQueryRaw<int>(
                     "SELECT completeable AS Value FROM character_mission " +
                     "WHERE character_id = 123 AND mission_id = 321").Single());
+                Assert.AreEqual(0, upgraded.Database.SqlQueryRaw<int>(
+                    "SELECT COUNT(*) AS Value FROM character_mission_objective").Single());
             }
             using (var unit = CreateP3UnitOfWork(database))
             {
@@ -136,6 +138,23 @@ namespace Rasa.Test.Database
                 {
                     Completeable = true
                 });
+                unit.CharacterMissionProgress.AddObjectives(new[]
+                {
+                    new CharacterMissionObjectiveEntry(123, 429, 5, 1)
+                    {
+                        Counters =
+                        {
+                            new CharacterMissionObjectiveCounterEntry(123, 429, 5, 3, 4)
+                        },
+                        ItemCounters =
+                        {
+                            new CharacterMissionObjectiveItemCounterEntry(123, 429, 5, 200, 6)
+                        }
+                    }
+                });
+                unit.CharacterMissionProgress.SetObjectiveState(123, 429, 5, 2);
+                unit.CharacterMissionProgress.SetCounter(123, 429, 5, 3, 7);
+                unit.CharacterMissionProgress.SetItemCounter(123, 429, 5, 200, 8);
             }
 
             using var reopened = CreateP3UnitOfWork(database);
@@ -145,6 +164,11 @@ namespace Rasa.Test.Database
                 (missions[0].MissionId, missions[0].MissionState, missions[0].Completeable));
             Assert.AreEqual((429U, 4U, true),
                 (missions[1].MissionId, missions[1].MissionState, missions[1].Completeable));
+            var objective = reopened.CharacterMissionProgress.Get(123, 429)
+                .Missions[429].Objectives[5];
+            Assert.AreEqual((byte)2, objective.State);
+            Assert.AreEqual(7U, objective.Counters[3]);
+            Assert.AreEqual(8U, objective.ItemCounters[200]);
         }
 
         [TestMethod]

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Rasa.Managers
 {
@@ -64,8 +65,10 @@ namespace Rasa.Managers
 
         public void CompleteNPCMission(Client client, CompleteNPCMissionPacket packet)
         {
-            Logger.WriteLog(LogType.Network,
-                $"Rejected mission {packet?.MissionId ?? 0} turn-in: objective lifecycle integration is not available.");
+            if (packet == null)
+                return;
+            MissionManager.Instance.TryCompleteNpcMission(
+                client, packet.EntityId, packet.MissionId, packet.SelectionIdx, packet.Rating);
         }
 
         public void CompleteNPCObjective(Client client, CompleteNPCObjectivePacket packet)
@@ -92,53 +95,19 @@ namespace Rasa.Managers
             if (creature == null)
                 return;
 
-            // ToDo create DB structures, and replace constant data with dinamic
+            var convoDataDict = BuildMissionConversationData(client, creature);
 
-            var convoDataDict = new Dictionary<ConversationType, object>();
-
-            if (creature.Npc.Vendor != null)
-                convoDataDict.Add(ConversationType.Vending, new List<uint> { creature.Npc.Vendor.VendorPackageId });
-
-            if (creature.Npc.NpcMissionIds != null)
-                if (creature.Npc.NpcMissionIds.Count > 0)
-                {
-                    var dispensableMissions = new Dictionary<uint, MissionInfo>();
-                    var completeableMissions = new Dictionary<uint, RewardInfo>();
-                    var completeableObjectives = new List<CompleteableObjectives>();
-
-                    foreach (var missionId in creature.Npc.NpcMissionIds)
-                    {
-                        if (!MissionManager.Instance.TryGetOperationalMission(missionId, out var mission))
-                            continue;
-
-                        if (mission.MissionGiver == creature.DbId)
-                            dispensableMissions.Add(
-                                mission.MissionId,
-                                mission.CreateInfo(MissionState.Active, false));
-
-                        if (mission.MissionReciver == creature.DbId)
-                            completeableMissions.Add(
-                                mission.MissionId,
-                                mission.CreateInfo(MissionState.Active, false).MissionConstantData.RewardInfo);
-                    }
-
-                    // insert data into convoDataDict
-                    if (dispensableMissions.Count > 0)
-                        convoDataDict.Add(ConversationType.MissionDispense, dispensableMissions);
-
-                    if (completeableMissions.Count > 0)
-                        convoDataDict.Add(ConversationType.MissionComplete, completeableMissions);
-
-                    if (completeableObjectives.Count > 0)
-                        convoDataDict.Add(ConversationType.ObjectiveChoice, completeableObjectives);
-                }
-
-            // Auctioner = 14
-            if (creature.Npc.NpcIsAuctioneer)
-                convoDataDict.Add(ConversationType.Auctioneer, true);
-
-            if (creature.Npc.NpcIsClanMaster)
-                convoDataDict.Add(ConversationType.Clan, true);
+            if (convoDataDict.Count == 0)
+            {
+                if (creature.Npc.Vendor != null)
+                    convoDataDict.Add(
+                        ConversationType.Vending,
+                        new List<uint> { creature.Npc.Vendor.VendorPackageId });
+                if (creature.Npc.NpcIsAuctioneer)
+                    convoDataDict.Add(ConversationType.Auctioneer, true);
+                if (creature.Npc.NpcIsClanMaster)
+                    convoDataDict.Add(ConversationType.Clan, true);
+            }
 
             /*
             // Greeting = 0
@@ -251,39 +220,13 @@ namespace Rasa.Managers
             var vendor = creature.Npc.Vendor;
             var statusSet = false;
 
-            /* ToDo
-             * implement Player=>MissionStatus
-             * npc missions shold be checked with player mission status
-             */
-
-            if (npc.NpcMissionIds != null)
+            var missionStatus = GetMissionConversationStatus(client, creature);
+            if (missionStatus.HasValue)
             {
-                var availableMissions = new List<uint>();
-                var completeMission = new List<uint>();
-
-                foreach (var missionId in npc.NpcMissionIds)
-                {
-                    if (!MissionManager.Instance.TryGetOperationalMission(missionId, out var mission))
-                        continue;
-
-                    if (mission.MissionReciver == creature.DbId)
-                        completeMission.Add(missionId);
-
-                    if (mission.MissionGiver == creature.DbId)
-                        availableMissions.Add(missionId);
-                }
-
-                // if we have completable mission send it, else send available missions
-                if (completeMission.Count > 0)
-                {
-                    client.CallMethod(creature.EntityId, new NPCConversationStatusPacket(ConversationStatus.ObjectivComplete, completeMission));  // complete mission
-                    statusSet = true;
-                }
-                else if (availableMissions.Count > 0)
-                {
-                    client.CallMethod(creature.EntityId, new NPCConversationStatusPacket(ConversationStatus.Available, availableMissions));       // available missions
-                    statusSet = true;
-                }
+                client.CallMethod(
+                    creature.EntityId,
+                    new NPCConversationStatusPacket(missionStatus.Value.Status, missionStatus.Value.MissionIds));
+                statusSet = true;
             }
 
             /*
@@ -388,6 +331,136 @@ namespace Rasa.Managers
                 statusSet = true;
             }
         }
+
+        private static Dictionary<ConversationType, object> BuildMissionConversationData(
+            Client client,
+            Creature creature)
+        {
+            var data = new Dictionary<ConversationType, object>();
+            var dispensable = new Dictionary<uint, MissionInfo>();
+            var objectives = new List<CompleteableObjectives>();
+            var completeable = new Dictionary<uint, RewardInfo>();
+            var rewardable = new List<RewardableMissions>();
+
+            foreach (var mission in MissionManager.Instance.LoadedMissions.Values)
+            {
+                if (!mission.IsOperational)
+                    continue;
+                if (!client.Player.Missions.TryGetValue(mission.MissionId, out var log))
+                {
+                    if (mission.MissionGiver == creature.DbId)
+                        dispensable.Add(
+                            mission.MissionId,
+                            mission.CreateInfo(
+                                MissionState.Active,
+                                false,
+                                CreateInitialObjectiveLogs(mission)));
+                    continue;
+                }
+
+                if (log.State == MissionState.Active)
+                {
+                    if (log.Completeable &&
+                        mission.MissionReciver == creature.DbId &&
+                        MissionManager.Instance.TryGetRewardInfo(
+                            mission.MissionId, out var completionReward))
+                        completeable.Add(mission.MissionId, completionReward);
+                    else
+                        foreach (var objective in mission.Objectives.Values)
+                        {
+                            if (!log.Objectives.TryGetValue(objective.ObjectiveId, out var objectiveLog) ||
+                                objectiveLog.State != MissionObjectiveState.Incomplete)
+                                continue;
+                            foreach (var conversation in objective.Conversations.Where(conversation =>
+                                conversation.Type == MissionObjectiveConversationType.Completion &&
+                                conversation.NpcPackageId == creature.Npc.NpcPackageId))
+                                objectives.Add(new CompleteableObjectives(
+                                    (int)mission.MissionId,
+                                    (int)objective.ObjectiveId,
+                                    (int)conversation.PlayerFlagId));
+                        }
+                }
+                else if (log.State == MissionState.Success &&
+                    mission.MissionReciver == creature.DbId &&
+                    MissionManager.Instance.TryGetRewardInfo(mission.MissionId, out var reward))
+                    rewardable.Add(new RewardableMissions((int)mission.MissionId, reward));
+            }
+
+            if (dispensable.Count > 0)
+                data.Add(ConversationType.MissionDispense, dispensable);
+            if (objectives.Count > 0)
+                data.Add(ConversationType.ObjectiveComplete, objectives);
+            if (completeable.Count > 0)
+                data.Add(ConversationType.MissionComplete, completeable);
+            if (rewardable.Count > 0)
+                data.Add(ConversationType.MissionReward, rewardable);
+            return data;
+        }
+
+        private static (ConversationStatus Status, List<uint> MissionIds)? GetMissionConversationStatus(
+            Client client,
+            Creature creature)
+        {
+            var available = new List<uint>();
+            var objectives = new List<uint>();
+            var completeable = new List<uint>();
+            var rewardable = new List<uint>();
+
+            foreach (var mission in MissionManager.Instance.LoadedMissions.Values)
+            {
+                if (!mission.IsOperational)
+                    continue;
+                if (!client.Player.Missions.TryGetValue(mission.MissionId, out var log))
+                {
+                    if (mission.MissionGiver == creature.DbId)
+                        available.Add(mission.MissionId);
+                    continue;
+                }
+
+                if (log.State == MissionState.Success &&
+                    mission.MissionReciver == creature.DbId &&
+                    MissionManager.Instance.TryGetRewardInfo(mission.MissionId, out _))
+                    rewardable.Add(mission.MissionId);
+                else if (log.State == MissionState.Active &&
+                    log.Completeable &&
+                    mission.MissionReciver == creature.DbId &&
+                    MissionManager.Instance.TryGetRewardInfo(mission.MissionId, out _))
+                    completeable.Add(mission.MissionId);
+                else if (log.State == MissionState.Active &&
+                    mission.Objectives.Values.Any(objective =>
+                        log.Objectives.TryGetValue(objective.ObjectiveId, out var objectiveLog) &&
+                        objectiveLog.State == MissionObjectiveState.Incomplete &&
+                        objective.Conversations.Any(conversation =>
+                            conversation.Type == MissionObjectiveConversationType.Completion &&
+                            conversation.NpcPackageId == creature.Npc.NpcPackageId)))
+                    objectives.Add(mission.MissionId);
+            }
+
+            if (rewardable.Count > 0)
+                return (ConversationStatus.Reward, rewardable);
+            if (completeable.Count > 0)
+                return (ConversationStatus.MissionComplete, completeable);
+            if (objectives.Count > 0)
+                return (ConversationStatus.ObjectivComplete, objectives);
+            if (available.Count > 0)
+                return (ConversationStatus.Available, available);
+            return null;
+        }
+
+        private static IReadOnlyDictionary<uint, MissionObjectiveLog> CreateInitialObjectiveLogs(
+            Mission mission) =>
+            mission.Objectives.Values.ToDictionary(
+                objective => objective.ObjectiveId,
+                objective => new MissionObjectiveLog(
+                    objective.ObjectiveId,
+                    objective.InitialState.Value,
+                    objective.Counters.ToDictionary(
+                        counter => counter.Key,
+                        counter => counter.Value.InitialValue),
+                    objective.ItemCounters.ToDictionary(
+                        counter => counter.Key,
+                        counter => counter.Value.InitialValue)));
+
         #endregion
 
         #region Auctioneer

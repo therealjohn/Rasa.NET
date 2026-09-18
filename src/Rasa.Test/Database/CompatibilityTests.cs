@@ -159,11 +159,11 @@ namespace Rasa.Test.Database
         }
 
         [TestMethod]
-        public void SqliteMissionUpgradePreservesHistoricalRowAndAddsCharacterState()
+        public void SqliteObjectiveProgressUpgradePreservesMissionRowsAndStartsChildrenEmpty()
         {
             WithDisposableSqlite(typeof(SqliteCharContext), (context, database) =>
             {
-                context.GetService<IMigrator>().Migrate("20260917130621_AbilityTraySelection");
+                context.GetService<IMigrator>().Migrate("20260917200225_MissionCharacterState");
                 context.Database.ExecuteSqlRaw(
                     "INSERT INTO account (id, email, name, family_name) " +
                     "VALUES (17, 'p4@example.invalid', 'P4Account', 'P4Family')");
@@ -172,24 +172,67 @@ namespace Rasa.Test.Database
                     "credit, body, mind, spirit, map_context_id, coord_x, coord_y, coord_z, rotation) " +
                     "VALUES (123, 17, 1, 'P4Preserved', 1, 1, 0, 1, 0, 1, 0, 0, 0, 0, 1220, 1, 2, 3, 0)");
                 context.Database.ExecuteSqlRaw(
-                    "INSERT INTO character_mission (character_id, mission_id, mission_state) VALUES (123, 321, 4)");
+                    "INSERT INTO character_mission (character_id, mission_id, mission_state, completeable) " +
+                    "VALUES (123, 321, 0, 1), (123, 429, 4, 0)");
 
                 context.Database.Migrate();
 
-                var row = context.Database.SqlQueryRaw<MissionUpgradeRow>(
+                var rows = context.Database.SqlQueryRaw<MissionUpgradeRow>(
                     "SELECT character_id AS CharacterId, mission_id AS MissionId, " +
                     "mission_state AS MissionState, completeable AS Completeable " +
-                    "FROM character_mission WHERE character_id = 123").Single();
-                Assert.AreEqual(123L, row.CharacterId);
-                Assert.AreEqual(321L, row.MissionId);
-                Assert.AreEqual(4L, row.MissionState);
-                Assert.AreEqual(0L, row.Completeable);
-                context.Database.ExecuteSqlRaw(
-                    "INSERT INTO character_mission (character_id, mission_id, mission_state) VALUES (123, 429, 0)");
-                Assert.AreEqual(2, context.Database.SqlQueryRaw<int>(
-                    "SELECT COUNT(*) AS Value FROM character_mission WHERE character_id = 123").Single());
+                    "FROM character_mission WHERE character_id = 123 ORDER BY mission_id").ToArray();
+                Assert.AreEqual(2, rows.Length);
+                Assert.AreEqual((321L, 0L, 1L),
+                    (rows[0].MissionId, rows[0].MissionState, rows[0].Completeable));
+                Assert.AreEqual((429L, 4L, 0L),
+                    (rows[1].MissionId, rows[1].MissionState, rows[1].Completeable));
+                Assert.AreEqual(0, context.Database.SqlQueryRaw<int>(
+                    "SELECT COUNT(*) AS Value FROM character_mission_objective").Single());
+                Assert.AreEqual(0, context.Database.SqlQueryRaw<int>(
+                    "SELECT COUNT(*) AS Value FROM character_mission_objective_counter").Single());
+                Assert.AreEqual(0, context.Database.SqlQueryRaw<int>(
+                    "SELECT COUNT(*) AS Value FROM character_mission_objective_item_counter").Single());
                 Assert.IsFalse(context.Database.GetPendingMigrations().Any());
             });
+        }
+
+        [TestMethod]
+        [DataRow(typeof(SqliteCharContext), "tinyint(3)")]
+        [DataRow(typeof(MySqlCharContext), "tinyint(3) unsigned")]
+        public void MissionObjectiveProgressModelUsesNormalizedCompositeKeysAndCascadeDeletes(
+            Type contextType,
+            string objectiveStateColumnType)
+        {
+            using var context = CreateContext(contextType, "unused");
+            var model = context.Model;
+            var objective = model.GetEntityTypes().Single(entity =>
+                entity.GetTableName() == "character_mission_objective");
+            var counter = model.GetEntityTypes().Single(entity =>
+                entity.GetTableName() == "character_mission_objective_counter");
+            var itemCounter = model.GetEntityTypes().Single(entity =>
+                entity.GetTableName() == "character_mission_objective_item_counter");
+
+            CollectionAssert.AreEqual(
+                new[] { "CharacterId", "MissionId", "ObjectiveId" },
+                objective.FindPrimaryKey()!.Properties.Select(property => property.Name).ToArray());
+            CollectionAssert.AreEqual(
+                new[] { "CharacterId", "MissionId", "ObjectiveId", "CounterId" },
+                counter.FindPrimaryKey()!.Properties.Select(property => property.Name).ToArray());
+            CollectionAssert.AreEqual(
+                new[] { "CharacterId", "MissionId", "ObjectiveId", "ItemClassId" },
+                itemCounter.FindPrimaryKey()!.Properties.Select(property => property.Name).ToArray());
+
+            Assert.AreEqual(objectiveStateColumnType,
+                objective.FindProperty("ObjectiveState")!.GetColumnType());
+            Assert.IsTrue(objective.GetForeignKeys().Any(key =>
+                key.PrincipalEntityType.GetTableName() == "character_mission" &&
+                key.DeleteBehavior == DeleteBehavior.Cascade));
+            Assert.IsTrue(counter.GetForeignKeys().Any(key =>
+                key.PrincipalEntityType == objective &&
+                key.DeleteBehavior == DeleteBehavior.Cascade));
+            Assert.IsTrue(itemCounter.GetForeignKeys().Any(key =>
+                key.PrincipalEntityType == objective &&
+                key.DeleteBehavior == DeleteBehavior.Cascade));
         }
 
         [TestMethod]

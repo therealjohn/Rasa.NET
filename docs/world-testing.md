@@ -37,13 +37,14 @@ Objective updates use the client receiver tuple layouts for
 `ObjectiveFailed`, `UpdateObjectiveCounter`, and
 `UpdateObjectiveItemCounter`. Each serialized objective has eight fields,
 including separate generic and item counter dictionaries, nullable remaining
-time, and complete X/Y/Z indicator coordinates. Objective persistence and
-production mission activation remain separate work.
+time, and complete X/Y/Z indicator coordinates. Objective state and current
+counter values are persisted separately from immutable initial/target metadata.
+Production mission activation remains separate work.
 
 Run the focused boundary checks with:
 
 ```powershell
-dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~Rasa.Test.Missions.MissionProtocolTests|FullyQualifiedName~Rasa.Test.Missions.MissionTrackerTests|FullyQualifiedName~Rasa.Test.Missions.MissionRewardTests.UnverifiedWireSelectionCannotGrantRewards"
+dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~Rasa.Test.Missions.MissionProtocolTests|FullyQualifiedName~Rasa.Test.Missions.MissionTrackerTests|FullyQualifiedName~Rasa.Test.Missions.MissionRewardTests"
 ```
 
 ## Movement and visibility
@@ -279,7 +280,9 @@ uses `(character_id, mission_id)` as the key, so accounts and character slots do
 not share mission state and one character can hold multiple attempts. Existing
 rows survive the additive SQLite and MySQL migration. Character deletion removes
 mission rows in the same transaction before deleting the character; the foreign
-key remains restrictive.
+key remains restrictive. Objective rows use
+`(character_id, mission_id, objective_id)` and generic/item counters add their
+counter key. Mission deletion cascades through both child levels.
 
 World mission definitions are immutable and inactive by default. Incomplete
 database definitions are not hydrated, advertised by NPCs, accepted, tracked or
@@ -292,34 +295,48 @@ The implemented state mapping is:
 
 - Active attempt: `MissionState.Active` with `Completeable = false`.
 - Completable attempt: `MissionState.Active` with `Completeable = true`.
+- Pending reward attempt: `MissionState.Success` with `Completeable = false`.
 - Completed attempt: `MissionState.Completed` with `Completeable = false`.
-- Failed attempt: the existing `MissionState.Failded` wire value.
+- Failed attempt: `MissionState.Failed`.
 - Abandoned attempt: the active durable row is removed and `MissionDiscarded`
   is sent.
 
 Login sends one `MissionStatusInfo` snapshot from durable state. Acceptance
 validates the active client, registered NPC, persistent giver identity, current
-map instance, duplicate state and the durable 30-mission capacity. Abandonment
-reloads the durable attempt and cannot remove completed history from a stale
-client.
+map instance, duplicate state and the durable 30-mission capacity, then creates
+the mission and all definition-authored objective/counter rows in one
+transaction. Hydration combines persisted current values with immutable
+definition metadata. Abandonment reloads the durable attempt and cannot remove
+completed history from a stale client.
+
+NPC objective completion requires an active operational definition, an
+incomplete durable objective, a current-map NPC, and an exact NPC-package/player
+flag completion binding. Completion and explicitly authored reveal/activation
+transitions commit together. Packets are emitted after commit in
+`ObjectiveCompleted`, `ObjectiveRevealed`, `ObjectiveActivated`, then
+`MissionCompleteable(true)` order.
 
 Turn-in infrastructure reloads the character and mission inside one serializable
 character transaction. Inventory, XP, supported currencies and completion state
 commit together. Runtime state and packets are published only afterward.
 Sequential, reconnect and competing-client retries grant at most once. Staged
 item entity IDs are released if planning or publication fails. Live MySQL tests
-exercise the migration and competing reward transactions in addition to the
-SQLite fixtures.
+exercise the migration, objective persistence, and competing reward
+transactions in addition to the SQLite fixtures. `selectionIdx` must be `None`
+for rewards without selectable items and an in-range zero-based integer when
+choices exist; non-null ratings are rejected. A durable `Success` row can resume
+through `RewardNPCMission`.
 
-Player-facing mission completion remains disabled. The current inbound
-`CompleteNPCMission` packet exposes a boolean field whose reward-selection
-meaning is not verified, so it cannot invoke the internal integer-selection
-turn-in path. The recovered opening Wilderness metadata identifies missions
+NPC conversations now derive dispense, objective-complete, mission-complete,
+and mission-reward entries from the character's current lifecycle state.
+Vending, auction, and clan behavior remains the fallback when no mission state
+applies. The recovered opening Wilderness metadata identifies missions
 `1449` (Wilderness Targets of Opportunity), `1407` (Too Close For Comfort) and
-`1069` (Receptive Reception), but their complete server objective, counter,
-reward, prerequisite and transition contracts are not established. These
-missions remain inactive. Native 1.16.5.0 tracker, conversation and turn-in
-acceptance, and the first playable-zone gate, remain open.
+`1069` (Receptive Reception), including source-backed objective text identities
+and four completion-conversation bindings. Missing ordinals, initial/required
+states, transitions, indicators, counters, prerequisites, repeatability, and
+rewards remain null/absent, so these definitions stay inactive and never appear
+in conversation packets.
 
 ## MySQL persistence checks
 

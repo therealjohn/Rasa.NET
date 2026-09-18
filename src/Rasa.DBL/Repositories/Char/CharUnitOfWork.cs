@@ -15,6 +15,7 @@ namespace Rasa.Repositories.Char
     using CharacterLockbox;
     using CharacterLogos;
     using CharacterMission;
+    using CharacterMissionProgress;
     using CharacterOption;
     using CharacterSkills;
     using CharacterTeleporter;
@@ -48,7 +49,8 @@ namespace Rasa.Repositories.Char
             IFriendRepository friends,
             IIgnoredRepository ignoreds,
             IItemRepository items,
-            IUserOptionRepository userOptions
+            IUserOptionRepository userOptions,
+            ICharacterMissionProgressRepository characterMissionProgress = null
             ) : base(dbContext)
         {
             GameAccounts = gameAccounts;
@@ -60,6 +62,8 @@ namespace Rasa.Repositories.Char
             CharacterLockboxes = characterLockboxes;
             CharacterLogoses = characterLogoses;
             CharacterMissions = characterMissions;
+            CharacterMissionProgress = characterMissionProgress ??
+                new CharacterMissionProgressRepository(dbContext);
             CharacterOptions = characterOptions;
             CharacterSkills = characterSkills;
             CharacterTeleporters = characterTeleporters;
@@ -81,6 +85,7 @@ namespace Rasa.Repositories.Char
         public ICharacterLockboxRepository CharacterLockboxes { get; }
         public ICharacterLogosRepository CharacterLogoses { get; }
         public ICharacterMissionRepository CharacterMissions { get; }
+        public ICharacterMissionProgressRepository CharacterMissionProgress { get; }
         public ICharacterOptionRepository CharacterOptions { get; }
         public ICharacterSkillsRepository CharacterSkills { get; }
         public ICharacterTeleporterRepository CharacterTeleporters { get; }
