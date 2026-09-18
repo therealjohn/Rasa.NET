@@ -438,7 +438,7 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
-        public void MissionCompletionAdapterRunsAfterRewardAndFailureCannotRollbackReward()
+        public void MissionCompletionAdapterFailureRollsBackBeforeRewardAndCanRetry()
         {
             using var context = CreateCompletionAdapterContext();
             var receiver = context.AddNpc(88);
@@ -452,6 +452,17 @@ namespace Rasa.Test.Missions
                     throw new DbUpdateException("Injected post-reward progress failure.");
             };
 
+            Assert.IsFalse(context.Manager.TryCompleteNpcMission(
+                context.Client, receiver.EntityId, 429, null, null));
+            Assert.AreEqual(before, context.ReadRewardTotals());
+            Assert.AreEqual(MissionState.Active,
+                context.Client.Player.Missions[429].State);
+            Assert.AreEqual(MissionObjectiveState.Incomplete,
+                context.Client.Player.Missions[430].Objectives[1].State);
+            Assert.IsTrue(context.SaveAttempts > baselineSaves);
+            Assert.AreEqual(0, context.Drain().Count);
+
+            context.BeforeSave = null;
             Assert.IsTrue(context.Manager.TryCompleteNpcMission(
                 context.Client, receiver.EntityId, 429, null, null));
             Assert.IsTrue(context.Manager.TryRewardNpcMission(
@@ -459,13 +470,13 @@ namespace Rasa.Test.Missions
 
             var after = context.ReadRewardTotals();
             Assert.AreEqual(before.Experience + 100, after.Experience);
-            Assert.AreEqual(MissionState.Completed, context.Client.Player.Missions[429].State);
-            Assert.AreEqual(MissionObjectiveState.Incomplete,
+            Assert.AreEqual(MissionState.Completed,
+                context.Client.Player.Missions[429].State);
+            Assert.AreEqual(MissionObjectiveState.Completed,
                 context.Client.Player.Missions[430].Objectives[1].State);
-            Assert.IsTrue(context.SaveAttempts > baselineSaves);
             var packets = context.Drain();
             Assert.AreEqual(1, packets.OfType<MissionRewardedPacket>().Count());
-            Assert.AreEqual(0, packets.OfType<ObjectiveCompletedPacket>().Count());
+            Assert.AreEqual(1, packets.OfType<ObjectiveCompletedPacket>().Count());
         }
 
         [TestMethod]

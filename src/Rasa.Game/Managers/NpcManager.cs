@@ -123,21 +123,21 @@ namespace Rasa.Managers
                 Missions.TryClear(client, packet.MissionId);
         }
 
-        public void ObjectiveFailed(
+        public bool ObjectiveFailed(
             Client client,
             uint missionId,
             uint objectiveId)
         {
             // Failure comes from authoritative server objective rules/scripts; the client has
             // no packet that can declare its own objective failed.
-            Missions.TryFailObjective(client, missionId, objectiveId);
+            return Missions.TryFailObjective(client, missionId, objectiveId);
         }
 
-        public void MissionFailed(Client client, uint missionId)
+        public bool MissionFailed(Client client, uint missionId)
         {
             // Server lifecycle sources may fail a mission directly when no objective owns the
             // failure condition.
-            Missions.TryFailMission(client, missionId);
+            return Missions.TryFailMission(client, missionId);
         }
 
         public void RequestNpcConverse(Client client, RequestNPCConversePacket packet)

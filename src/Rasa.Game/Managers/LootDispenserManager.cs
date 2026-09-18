@@ -475,6 +475,9 @@ namespace Rasa.Managers
             }
 
             var grant = new InventoryManager.LootGrant(_beforeItemPublication);
+            var missionManager = _missionManager ?? MissionManager.Instance;
+            var progressPlan =
+                MissionManager.MissionProgressPublicationPlan.Empty;
             try
             {
                 var factory = loot.UnitOfWorkFactory ?? _gameUnitOfWorkFactory;
@@ -492,6 +495,19 @@ namespace Rasa.Managers
                             "Durable character ownership or credits changed.");
 
                     grant.PlanAndSave(client, items, unitOfWork, destSlot);
+                    progressPlan = missionManager.PlanProgress(
+                        client,
+                        items
+                            .GroupBy(item => item.ItemClassId)
+                            .Select(group =>
+                                MissionProgressEvent.ItemAcquired(
+                                    group.Key,
+                                    group.Aggregate(
+                                        0U,
+                                        (total, item) => checked(
+                                            total + item.ItemQuantity))))
+                            .ToArray(),
+                        unitOfWork);
 
                     if (includeCredits && loot.Credits != 0)
                         unitOfWork.Characters.UpdateCharacterCredits(
@@ -513,12 +529,7 @@ namespace Rasa.Managers
                 return;
             }
 
-            foreach (var item in items)
-                (_missionManager ?? MissionManager.Instance).RecordProgress(
-                    client,
-                    MissionProgressEvent.ItemAcquired(
-                        item.ItemClassId,
-                        item.ItemQuantity));
+            progressPlan.Publish(client);
             grant.Publish(client);
 
             if (includeCredits && loot.Credits != 0)

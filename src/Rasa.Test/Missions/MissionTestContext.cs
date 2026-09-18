@@ -615,7 +615,7 @@ namespace Rasa.Test.Missions
             return clan;
         }
 
-        private void AddRewardTemplate(uint templateId, uint classId)
+        internal void AddRewardTemplate(uint templateId, uint classId)
         {
             var entityClass = (EntityClasses)classId;
             _world.AddClass(entityClass);

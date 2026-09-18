@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -195,6 +196,91 @@ namespace Rasa.Test.Missions
             Assert.IsFalse(context.Client.Player.Missions.ContainsKey(321));
             Assert.AreEqual(1,
                 context.Drain().OfType<MissionClearedPacket>().Count());
+        }
+
+        [TestMethod]
+        public void AdminFailureCommandsUseTheProductionMissionFailurePath()
+        {
+            using var context = MissionTestContext.WithObjectiveMission();
+            var giver = context.AddNpc(77);
+            Assert.IsTrue(context.Manager.TryAcceptNpcMission(
+                context.Client, giver.EntityId, 321));
+            context.Drain();
+            var commands = new ChatCommandsManager(
+                new NpcManager(context, context.Manager));
+            commands.RegisterChatCommands();
+
+            commands.ProcessCommand(context.Client, ".failobjective 321 5");
+            Assert.AreEqual(MissionObjectiveState.Incomplete,
+                context.Client.Player.Missions[321].Objectives[5].State);
+            Assert.AreEqual(0,
+                context.Drain().OfType<ObjectiveFailedPacket>().Count());
+
+            context.Client.AccountEntry.Level = (byte)GmLevel.Admin;
+            commands.ProcessCommand(context.Client, ".failobjective 321 5");
+
+            Assert.AreEqual(MissionObjectiveState.Failed,
+                context.Client.Player.Missions[321].Objectives[5].State);
+            Assert.AreEqual(MissionState.Failed,
+                context.Client.Player.Missions[321].State);
+            var packets = context.Drain();
+            Assert.AreEqual(1, packets.OfType<ObjectiveFailedPacket>().Count());
+            Assert.AreEqual(1, packets.OfType<MissionFailedPacket>().Count());
+        }
+
+        [TestMethod]
+        public void AdminMissionFailureCommandFailsAnActiveMission()
+        {
+            using var context = MissionTestContext.WithObjectiveMission();
+            var giver = context.AddNpc(77);
+            Assert.IsTrue(context.Manager.TryAcceptNpcMission(
+                context.Client, giver.EntityId, 321));
+            context.Drain();
+            context.Client.AccountEntry.Level = (byte)GmLevel.Admin;
+            var commands = new ChatCommandsManager(
+                new NpcManager(context, context.Manager));
+            commands.RegisterChatCommands();
+
+            commands.ProcessCommand(context.Client, ".failmission 321");
+
+            Assert.AreEqual(MissionState.Failed,
+                context.Client.Player.Missions[321].State);
+            Assert.AreEqual((uint)MissionState.Failed,
+                context.ReadMission(321).MissionState);
+            Assert.AreEqual(1,
+                context.Drain().OfType<MissionFailedPacket>().Count());
+        }
+
+        [TestMethod]
+        public void OptionalObjectiveFailureKeepsMissionCompletableEverywhere()
+        {
+            using var context = MissionTestContext.WithCustomDefinitions(
+                new Dictionary<uint, Mission>
+                {
+                    [321] = CreateMission(
+                        321,
+                        CreateObjective(1, true),
+                        CreateObjective(2, false))
+                });
+            context.SeedMission(
+                context.Client.Player.Id,
+                321,
+                (uint)MissionState.Active,
+                true);
+            context.ReloadPlayerMissions();
+            context.Drain();
+
+            Assert.IsTrue(context.Manager.TryFailObjective(
+                context.Client, 321, 2));
+
+            Assert.AreEqual(MissionObjectiveState.Failed,
+                context.Client.Player.Missions[321].Objectives[2].State);
+            Assert.IsTrue(context.Client.Player.Missions[321].Completeable);
+            Assert.IsTrue(context.ReadMission(321).Completeable);
+            var packets = context.Drain();
+            Assert.AreEqual(1, packets.OfType<ObjectiveFailedPacket>().Count());
+            Assert.AreEqual(0, packets.OfType<MissionFailedPacket>().Count());
+            Assert.AreEqual(0, packets.OfType<MissionCompleteablePacket>().Count());
         }
 
         [TestMethod]
@@ -414,6 +500,211 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
+        public void LootProgressFailureRollsBackClaimAndRetryCommitsOnce()
+        {
+            const uint itemClassId = 3147;
+            using var context = MissionTestContext.WithItemProgressMission(
+                MissionProgressEventKind.ItemAcquired,
+                itemClassId,
+                3);
+            context.SeedMission(1, 321, (uint)MissionState.Active, false);
+            context.ReloadPlayerMissions();
+            context.Client.Player.Position = Vector3.Zero;
+            context.Client.Player.Attributes[Attributes.Health] =
+                new ActorAttributes(Attributes.Health, 100, 100, 100, 0, 0);
+            var item = context.CreateInventoryItem(28, itemClassId, 3);
+            var corpse = CreateLootCorpse(context, item);
+            var manager = new LootDispenserManager(
+                context, _ => 2, context.Manager);
+            var before = context.ReadRewardTotals();
+            context.BeforeSave = db =>
+            {
+                if (db.ChangeTracker
+                    .Entries<CharacterMissionObjectiveItemCounterEntry>()
+                    .Any(entry => entry.State == EntityState.Modified))
+                    throw new DbUpdateException("Injected transient progress failure.");
+            };
+
+            try
+            {
+                manager.RequestLootAllFromCorpse(
+                    context.Client,
+                    new RequestLootAllFromCorpsePacket
+                    {
+                        EntityId = corpse.Loot.EntityId
+                    });
+
+                Assert.AreEqual(before, context.ReadRewardTotals());
+                Assert.AreEqual(0U,
+                    context.ReadProgress(321)
+                        .Missions[321].Objectives[1].ItemCounters[itemClassId]);
+                Assert.IsFalse(corpse.Loot.LootItems[0].Taken);
+
+                context.BeforeSave = null;
+                manager.RequestLootAllFromCorpse(
+                    context.Client,
+                    new RequestLootAllFromCorpsePacket
+                    {
+                        EntityId = corpse.Loot.EntityId
+                    });
+                var after = context.ReadRewardTotals();
+                Assert.AreEqual(before.ItemCount + 3, after.ItemCount);
+                Assert.AreEqual(3U,
+                    context.ReadProgress(321)
+                        .Missions[321].Objectives[1].ItemCounters[itemClassId]);
+
+                manager.RequestLootAllFromCorpse(
+                    context.Client,
+                    new RequestLootAllFromCorpsePacket
+                    {
+                        EntityId = corpse.Loot.EntityId
+                    });
+                Assert.AreEqual(after, context.ReadRewardTotals());
+                Assert.AreEqual(3U,
+                    context.ReadProgress(321)
+                        .Missions[321].Objectives[1].ItemCounters[itemClassId]);
+            }
+            finally
+            {
+                manager.RemoveForOwner(context.Map, context.Client);
+                CellManager.Instance.RemoveCreatureFromWorld(
+                    context.Map, corpse.Corpse);
+            }
+        }
+
+        [TestMethod]
+        public void MissionCompletionDependencyFailureRollsBackAndRetriesOnce()
+        {
+            var source = CreateMission(429);
+            var target = CreateMission(
+                430,
+                CreateObjective(
+                    1,
+                    true,
+                    MissionProgressRule.CompleteOnExactSubject(
+                        MissionProgressEventKind.MissionCompleted,
+                        429)));
+            using var context = MissionTestContext.WithCustomDefinitions(
+                new Dictionary<uint, Mission>
+                {
+                    [429] = source,
+                    [430] = target
+                });
+            context.SeedMission(1, 429, (uint)MissionState.Active, true);
+            context.SeedMission(1, 430, (uint)MissionState.Active, false);
+            context.ReloadPlayerMissions();
+            var receiver = context.AddNpc(88);
+            context.Drain();
+            context.BeforeSave = db =>
+            {
+                if (db.ChangeTracker
+                    .Entries<CharacterMissionObjectiveEntry>()
+                    .Any(entry =>
+                        entry.Entity.MissionId == 430 &&
+                        entry.State == EntityState.Modified))
+                    throw new DbUpdateException("Injected transient dependency failure.");
+            };
+
+            Assert.IsFalse(context.Manager.TryCompleteNpcMission(
+                context.Client, receiver.EntityId, 429, null, null));
+            Assert.AreEqual((uint)MissionState.Active,
+                context.ReadMission(429).MissionState);
+            Assert.AreEqual(MissionObjectiveState.Incomplete,
+                context.Client.Player.Missions[430].Objectives[1].State);
+
+            context.BeforeSave = null;
+            Assert.IsTrue(context.Manager.TryCompleteNpcMission(
+                context.Client, receiver.EntityId, 429, null, null));
+            Assert.AreEqual((uint)MissionState.Success,
+                context.ReadMission(429).MissionState);
+            Assert.AreEqual(MissionObjectiveState.Completed,
+                context.Client.Player.Missions[430].Objectives[1].State);
+            Assert.IsFalse(context.Manager.TryCompleteNpcMission(
+                context.Client, receiver.EntityId, 429, null, null));
+            Assert.AreEqual(1,
+                context.Drain().OfType<ObjectiveCompletedPacket>().Count());
+        }
+
+        [TestMethod]
+        public void RewardAcquisitionProgressFailureRollsBackAndRetriesOnce()
+        {
+            const uint itemClassId = 3147;
+            var source = CreateMission(429);
+            var itemCounter = new Dictionary<uint, MissionObjectiveItemCounterDefinition>
+            {
+                [itemClassId] = new(itemClassId, 0, 3)
+            };
+            var target = CreateMission(
+                430,
+                new MissionObjectiveDefinition(
+                    1, 1001, 1002, new uint?[] { null, null, null }, 0,
+                    MissionObjectiveState.Incomplete, true,
+                    new Dictionary<uint, MissionObjectiveCounterDefinition>(),
+                    itemCounter,
+                    Array.Empty<MissionObjectiveConversation>(),
+                    Array.Empty<uint>(),
+                    Array.Empty<uint>(),
+                    Array.Empty<MissionIndicator>(),
+                    MissionProgressRule.IncrementItemCounterOnExactSubject(
+                        MissionProgressEventKind.ItemAcquired,
+                        itemClassId,
+                        0,
+                        3)));
+            var reward = new MissionRewardDefinition(
+                0,
+                new Dictionary<CurencyType, int>(),
+                new[] { new MissionRewardItem(28, 3) },
+                Array.Empty<MissionRewardItem>());
+            using var context = MissionTestContext.WithCustomDefinitions(
+                new Dictionary<uint, Mission>
+                {
+                    [429] = source,
+                    [430] = target
+                },
+                new Dictionary<uint, MissionRewardDefinition>
+                {
+                    [429] = reward
+                });
+            context.AddRewardTemplate(28, itemClassId);
+            context.SeedMission(1, 429, (uint)MissionState.Success, false);
+            context.SeedMission(1, 430, (uint)MissionState.Active, false);
+            context.ReloadPlayerMissions();
+            var receiver = context.AddNpc(88);
+            context.Drain();
+            var before = context.ReadRewardTotals();
+            context.BeforeSave = db =>
+            {
+                if (db.ChangeTracker
+                    .Entries<CharacterMissionObjectiveItemCounterEntry>()
+                    .Any(entry =>
+                        entry.Entity.MissionId == 430 &&
+                        entry.State == EntityState.Modified))
+                    throw new DbUpdateException("Injected transient reward progress failure.");
+            };
+
+            Assert.IsFalse(context.Manager.TryRewardNpcMission(
+                context.Client, receiver.EntityId, 429, null, null));
+            Assert.AreEqual(before, context.ReadRewardTotals());
+            Assert.AreEqual((uint)MissionState.Success,
+                context.ReadMission(429).MissionState);
+            Assert.AreEqual(0U,
+                context.ReadProgress(430)
+                    .Missions[430].Objectives[1].ItemCounters[itemClassId]);
+
+            context.BeforeSave = null;
+            Assert.IsTrue(context.Manager.TryRewardNpcMission(
+                context.Client, receiver.EntityId, 429, null, null));
+            var after = context.ReadRewardTotals();
+            Assert.AreEqual(before.ItemCount + 3, after.ItemCount);
+            Assert.AreEqual(3U,
+                context.ReadProgress(430)
+                    .Missions[430].Objectives[1].ItemCounters[itemClassId]);
+            Assert.IsFalse(context.Manager.TryRewardNpcMission(
+                context.Client, receiver.EntityId, 429, null, null));
+            Assert.AreEqual(after, context.ReadRewardTotals());
+        }
+
+        [TestMethod]
         [DataRow("overflow")]
         [DataRow("capability")]
         public void UnrelatedProviderExceptionsRetainIdentityAndEscape(string kind)
@@ -485,6 +776,80 @@ namespace Rasa.Test.Missions
                 context.Client.Player.Missions[321].Objectives[1].ItemCounters[itemClassId]);
             Assert.AreEqual(1,
                 context.Drain().OfType<UpdateObjectiveItemCounterPacket>().Count());
+        }
+
+        private static Mission CreateMission(
+            uint missionId,
+            params MissionObjectiveDefinition[] objectives) =>
+            new(
+                missionId,
+                $"Mission {missionId}",
+                missionId,
+                77,
+                88,
+                5,
+                1,
+                2,
+                true,
+                false,
+                objectives,
+                true);
+
+        private static MissionObjectiveDefinition CreateObjective(
+            uint objectiveId,
+            bool required,
+            MissionProgressRule progressRule = null) =>
+            new(
+                objectiveId,
+                1000 + objectiveId,
+                2000 + objectiveId,
+                new uint?[] { null, null, null },
+                objectiveId,
+                MissionObjectiveState.Incomplete,
+                required,
+                new Dictionary<uint, MissionObjectiveCounterDefinition>(),
+                new Dictionary<uint, MissionObjectiveItemCounterDefinition>(),
+                Array.Empty<MissionObjectiveConversation>(),
+                Array.Empty<uint>(),
+                Array.Empty<uint>(),
+                Array.Empty<MissionIndicator>(),
+                progressRule);
+
+        private static (Creature Corpse, LootDispenser Loot) CreateLootCorpse(
+            MissionTestContext context,
+            Item item)
+        {
+            var corpse = new Creature
+            {
+                EntityClass = EntityClasses.HumanBaseMale,
+                MapContextId = context.Map.MapInfo.MapContextId,
+                Position = Vector3.Zero,
+                State = CharacterState.Dead,
+                Faction = Factions.Bane,
+                AppearanceData = new(),
+                Attributes = new Dictionary<Attributes, ActorAttributes>
+                {
+                    [Attributes.Health] = new(
+                        Attributes.Health, 100, 100, 0, 0, 0),
+                    [Attributes.Armor] = new(
+                        Attributes.Armor, 0, 0, 0, 0, 0)
+                }
+            };
+            CellManager.Instance.AddToWorld(context.Map, corpse);
+            var loot = new LootDispenser
+            {
+                Owner = context.Client.Player.EntityId,
+                AttachedTo = corpse.EntityId,
+                IsLootable = true,
+                UnitOfWorkFactory = context
+            };
+            loot.LootItems.Add(new LootItem(
+                item,
+                context.Client.Player.EntityId,
+                0));
+            corpse.CorpseLootEntityId = loot.EntityId;
+            context.Map.LootDispensers.Add(loot.EntityId, loot);
+            return (corpse, loot);
         }
 
         private static long RuntimeItemCount(Client client) =>
