@@ -50,6 +50,15 @@ namespace Rasa.Managers
         private readonly HashSet<ActionId> _reportedUnsupported = new HashSet<ActionId>();
         private readonly Random _random = new Random();
 
+        private sealed class LightningLanding
+        {
+            internal Creature Primary;
+            internal Vector3 PrimaryPosition;
+            internal float ArcRadius;
+            internal int ArcDamage;
+            internal IReadOnlyList<Creature> ArcTargets;
+        }
+
         /// <summary>
         /// Metres past an ability's range a target may be and still be hit. The client checks
         /// range before it asks, so a refusal here is either a moving target or a cheat; the
@@ -477,6 +486,26 @@ namespace Rasa.Managers
                 return;
             }
 
+            LightningLanding lightningLanding = null;
+            if (IsDirectDamage(actionInfo, info) &&
+                actionInfo.Module == "abilities.lightning" &&
+                !TrySnapshotLightningLanding(
+                    mapChannel,
+                    player,
+                    info,
+                    action,
+                    out lightningLanding))
+            {
+                SendToOthers(mapChannel, player,
+                    new ActionInterruptPacket(
+                        player.EntityId,
+                        action.ActionId,
+                        action.ActionArgId));
+                Fail(client, action.ActionId, action.ActionArgId,
+                    PlayerMessage.PmActionFailedNoTarget);
+                return;
+            }
+
             // Paid on landing, not on asking. A sustained ability pays as it runs, through its
             // effect's drain, not here.
             if (!IsSustained(info))
@@ -504,7 +533,14 @@ namespace Rasa.Managers
 
             if (IsDirectDamage(actionInfo, info))
             {
-                ResolveDirectDamage(mapChannel, client, player, actionInfo, info, action);
+                ResolveDirectDamage(
+                    mapChannel,
+                    client,
+                    player,
+                    actionInfo,
+                    info,
+                    action,
+                    lightningLanding);
                 return;
             }
 
@@ -641,7 +677,14 @@ namespace Rasa.Managers
         /// of the performer. A cone is taken as the full circle for now. Each target gets its
         /// own roll, as the client's per-hit rawInfo expects.
         /// </summary>
-        private void ResolveDirectDamage(MapChannel mapChannel, Client client, Manifestation player, ActionInfo actionInfo, ActionLevelInfo info, ActionData action)
+        private void ResolveDirectDamage(
+            MapChannel mapChannel,
+            Client client,
+            Manifestation player,
+            ActionInfo actionInfo,
+            ActionLevelInfo info,
+            ActionData action,
+            LightningLanding lightningLanding)
         {
             var damageType = (DamageType)info.Get(AbilityProperty.DamageType, (int)DamageType.Physical);
             var scaleType = info.Get(AbilityProperty.DamageScaleType);
@@ -649,11 +692,36 @@ namespace Rasa.Managers
             var max = Math.Max(min, info.Get(AbilityProperty.DamageAmountMax, min));
 
             var targets = new List<Creature>();
-            var primary = action.TargetId != 0 ? ResolveTarget(mapChannel, action.TargetId) as Creature : null;
+            var primary = action.TargetId != 0
+                ? ResolveTarget(mapChannel, action.TargetId) as Creature
+                : null;
             var lightning = actionInfo.Module == "abilities.lightning";
+            var lightningArc = (Radius: 0f, Damage: 0, MaximumTargets: 0);
+            var lightningPrimaryPosition = Vector3.Zero;
+            IReadOnlyList<Creature> lightningArcTargets = Array.Empty<Creature>();
 
-            if (lightning && IsValidPrimaryTarget(mapChannel, player, primary))
+            if (lightning)
             {
+                if (lightningLanding == null &&
+                    !TrySnapshotLightningLanding(
+                        mapChannel,
+                        player,
+                        info,
+                        action,
+                        out lightningLanding))
+                    return;
+
+                primary = lightningLanding.Primary;
+                if (!IsValidPrimaryTarget(mapChannel, player, primary))
+                    return;
+
+                lightningPrimaryPosition =
+                    lightningLanding.PrimaryPosition;
+                lightningArc =
+                    (lightningLanding.ArcRadius,
+                        lightningLanding.ArcDamage,
+                        lightningLanding.ArcTargets.Count);
+                lightningArcTargets = lightningLanding.ArcTargets;
                 targets.Add(primary);
             }
             else if (info.Has(AbilityProperty.RadiusAroundSource) || info.Has(AbilityProperty.ConeRadius))
@@ -696,29 +764,118 @@ namespace Rasa.Managers
                 };
 
                 if (lightning && target == primary)
-                {
-                    var arc = GetLightningArcSpec(info, player.Level);
-
-                    foreach (var arcTarget in SelectLightningArcTargets(
-                                 mapChannel, player, primary, arc.Radius, arc.MaximumTargets))
-                    {
-                        var arcTaken = ActorManager.Instance.Damage(
-                            mapChannel, arcTarget, arc.Damage, player);
-                        hit.Arcs.Add(new AbilityHit
-                        {
-                            EntityId = arcTarget.EntityId,
-                            Amount = arc.Damage,
-                            DamageType = damageType,
-                            DeathBlow = arcTaken > 0 &&
-                                        arcTarget.Attributes[Attributes.Health].Current <= 0
-                        });
-                    }
-                }
+                    ApplyLightningArcs(
+                        mapChannel,
+                        player,
+                        primary.EntityId,
+                        lightningPrimaryPosition,
+                        lightningArc.Radius,
+                        lightningArc.Damage,
+                        damageType,
+                        lightningArcTargets,
+                        hit);
 
                 recovery.Hits.Add(hit);
             }
 
             CellManager.Instance.CellCallMethod(mapChannel, player, recovery);
+        }
+
+        private static bool TrySnapshotLightningLanding(
+            MapChannel mapChannel,
+            Manifestation player,
+            ActionLevelInfo info,
+            ActionData action,
+            out LightningLanding landing)
+        {
+            landing = null;
+            var primary = action.TargetId != 0
+                ? ResolveTarget(mapChannel, action.TargetId) as Creature
+                : null;
+            if (!IsValidPrimaryTarget(mapChannel, player, primary) ||
+                !IsFinite(primary.Position))
+                return false;
+
+            var arc = GetLightningArcSpec(info, player.Level);
+            landing = new LightningLanding
+            {
+                Primary = primary,
+                PrimaryPosition = primary.Position,
+                ArcRadius = arc.Radius,
+                ArcDamage = arc.Damage,
+                ArcTargets = SelectLightningArcTargets(
+                    mapChannel,
+                    player,
+                    primary,
+                    arc.Radius,
+                    arc.MaximumTargets)
+            };
+            return true;
+        }
+
+        private static void ApplyLightningArcs(
+            MapChannel mapChannel,
+            Manifestation player,
+            ulong primaryEntityId,
+            Vector3 primaryPosition,
+            float radius,
+            int damage,
+            DamageType damageType,
+            IReadOnlyList<Creature> arcTargets,
+            AbilityHit primaryHit)
+        {
+            if (damage <= 0 || !float.IsFinite(radius) || radius <= 0 ||
+                !IsFinite(primaryPosition) || arcTargets == null)
+                return;
+
+            var radiusSquared = radius * radius;
+            foreach (var arcTarget in arcTargets)
+            {
+                if (!IsValidLightningArcTarget(
+                        mapChannel,
+                        player,
+                        arcTarget,
+                        primaryEntityId,
+                        primaryPosition,
+                        radiusSquared))
+                    continue;
+
+                var arcTaken = ActorManager.Instance.Damage(
+                    mapChannel, arcTarget, damage, player);
+                primaryHit.Arcs.Add(new AbilityHit
+                {
+                    EntityId = arcTarget.EntityId,
+                    Amount = damage,
+                    DamageType = damageType,
+                    DeathBlow = arcTaken > 0 &&
+                                arcTarget.Attributes[Attributes.Health].Current <= 0
+                });
+            }
+        }
+
+        private static bool IsValidLightningArcTarget(
+            MapChannel mapChannel,
+            Manifestation player,
+            Creature candidate,
+            ulong primaryEntityId,
+            Vector3 primaryPosition,
+            float radiusSquared)
+        {
+            if (mapChannel == null || player == null || candidate == null ||
+                candidate.EntityId == primaryEntityId ||
+                candidate.MapContextId != mapChannel.MapInfo.MapContextId ||
+                EntityManager.Instance.GetEntityType(candidate.EntityId) !=
+                EntityType.Creature ||
+                !EntityManager.Instance.Creatures.TryGetValue(
+                    candidate.EntityId, out var registered) ||
+                !ReferenceEquals(candidate, registered) ||
+                !IsHostile(player, candidate) ||
+                !IsFinite(candidate.Position))
+                return false;
+
+            var distance = Vector3.DistanceSquared(
+                primaryPosition, candidate.Position);
+            return float.IsFinite(distance) && distance <= radiusSquared;
         }
 
         /// <summary>Living, non-AFS creatures within radius metres of a point, from the cells around the performer.</summary>

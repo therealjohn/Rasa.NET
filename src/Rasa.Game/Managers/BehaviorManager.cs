@@ -185,12 +185,11 @@ namespace Rasa.Managers
 
             if (creature.Attributes[Attributes.Health].Current <= 0)
             {
-                creature.Controller.DeadTime += delta;
-
                 // A corpse with loot still on it, or with someone's window open on it, stays
                 // longer than one that has been cleared: twenty seconds from the kill is about
                 // one more fight, and bodies were going before anyone could loot them.
-                if (LootDispenserManager.Instance.MayDespawn(mapChannel, creature, creature.Controller.DeadTime))
+                if (LootDispenserManager.Instance.AdvanceCorpseLifetime(
+                        mapChannel, creature, delta))
                     needDeletion = true;
 
                 return; // creature dead

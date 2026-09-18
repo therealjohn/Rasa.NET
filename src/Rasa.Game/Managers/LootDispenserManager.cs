@@ -139,15 +139,44 @@ namespace Rasa.Managers
                 return true;
 
             lock (mapChannel.LootSyncRoot)
-            {
-                if (creature.CorpseLootEntityId == 0 ||
-                    !mapChannel.LootDispensers.TryGetValue(
-                        creature.CorpseLootEntityId, out var loot))
-                    return Math.Max(deadTime, creature.Controller?.DeadTime ?? 0) >=
-                           EmptyCorpseMs;
+                return MayDespawnLocked(mapChannel, creature, deadTime);
+        }
 
-                return HasExpired(loot, creature, deadTime);
+        internal bool AdvanceCorpseLifetime(
+            MapChannel mapChannel,
+            Creature creature,
+            long delta)
+        {
+            RetryPendingRetirements();
+
+            if (mapChannel == null || creature?.Controller == null)
+                return true;
+
+            lock (mapChannel.LootSyncRoot)
+            {
+                if (delta > 0)
+                    creature.Controller.DeadTime =
+                        creature.Controller.DeadTime > long.MaxValue - delta
+                            ? long.MaxValue
+                            : creature.Controller.DeadTime + delta;
+
+                return MayDespawnLocked(
+                    mapChannel, creature, creature.Controller.DeadTime);
             }
+        }
+
+        private static bool MayDespawnLocked(
+            MapChannel mapChannel,
+            Creature creature,
+            long deadTime)
+        {
+            if (creature.CorpseLootEntityId == 0 ||
+                !mapChannel.LootDispensers.TryGetValue(
+                    creature.CorpseLootEntityId, out var loot))
+                return Math.Max(deadTime, creature.Controller?.DeadTime ?? 0) >=
+                       EmptyCorpseMs;
+
+            return HasExpired(loot, creature, deadTime);
         }
 
         internal LootDispenser Create(Client killer, Creature creature)

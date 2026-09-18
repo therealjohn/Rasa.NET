@@ -62,6 +62,13 @@ namespace Rasa.Repositories.Char.CharacterInventory
             _charContext.SaveChanges();
         }
 
+        public CharacterInventoryEntry FindByItemId(uint itemId)
+        {
+            var query = _charContext.CreateNoTrackingQuery(
+                _charContext.CharacterInventoryEntries);
+            return query.FirstOrDefault(entry => entry.ItemId == itemId);
+        }
+
         public List<CharacterInventoryEntry> GetItems(uint accountId)
         {
             var query = _charContext.CreateNoTrackingQuery(_charContext.CharacterInventoryEntries);

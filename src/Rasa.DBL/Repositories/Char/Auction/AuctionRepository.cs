@@ -84,16 +84,17 @@ namespace Rasa.Repositories.Char.Auction
             return entries.Count;
         }
 
-        public void DeleteAuction(uint itemId)
+        public bool DeleteAuction(uint itemId)
         {
-            var query = _charContext.CreateNoTrackingQuery(_charContext.AuctionEntries);
+            var query = _charContext.CreateTrackingQuery(_charContext.AuctionEntries);
             var entry = query.FirstOrDefault(a => a.ItemId == itemId);
 
             if (entry == null)
-                return;
+                return false;
 
             _charContext.Remove(entry);
             _charContext.SaveChanges();
+            return true;
         }
     }
 }

@@ -117,6 +117,41 @@ namespace Rasa.Test.Gameplay
         }
 
         [TestMethod]
+        public void CorpseExpiryAdvanceCannotBeExtendedByAConcurrentOpen()
+        {
+            using var context = new LootFixture();
+            context.Corpse.Controller.DeadTime =
+                LootDispenserManager.LootableCorpseMs - 1;
+            using var openStarted = new ManualResetEventSlim();
+            Task open;
+            bool expired;
+
+            lock (context.Map.LootSyncRoot)
+            {
+                expired = context.Manager.AdvanceCorpseLifetime(
+                    context.Map, context.Corpse, 1);
+                open = Task.Run(() =>
+                {
+                    openStarted.Set();
+                    context.Manager.RequestCorpseLooting(context.Client,
+                        new RequestCorpseLootingPacket
+                        {
+                            EntityId = context.Loot.EntityId
+                        });
+                });
+                Assert.IsTrue(openStarted.Wait(5000));
+                Assert.IsFalse(open.Wait(100));
+            }
+
+            Assert.IsTrue(open.Wait(5000));
+            Assert.IsTrue(expired);
+            Assert.AreEqual(LootDispenserManager.LootableCorpseMs,
+                context.Corpse.Controller.DeadTime);
+            Assert.AreEqual(0UL, context.Loot.CurrentLooter);
+            Assert.AreEqual(0, context.Drain().OfType<LootCorpsePacket>().Count());
+        }
+
+        [TestMethod]
         public void PersistenceFailureRollsBackTheWholeLootClaimAndAllowsRetry()
         {
             using var context = new LootFixture();

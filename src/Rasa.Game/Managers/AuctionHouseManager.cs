@@ -53,10 +53,20 @@ namespace Rasa.Managers
 
         private static AuctionHouseManager _instance;
         private static readonly object InstanceLock = new object();
+        private static readonly object AuctionSyncRoot = new object();
 
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
         private readonly ManifestationManager _currencyManager;
-        private readonly CharacterManager _characterManager;
+
+        private sealed class BuyoutRejection : Exception
+        {
+            internal PlayerMessage FailureMessage { get; }
+
+            internal BuyoutRejection(PlayerMessage message)
+            {
+                FailureMessage = message;
+            }
+        }
 
         /// <summary>
         /// Deposit charged to list an item, in tenths of a percent, by the duration the seller
@@ -94,7 +104,6 @@ namespace Rasa.Managers
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
             _currencyManager = new ManifestationManager(gameUnitOfWorkFactory);
-            _characterManager = new CharacterManager(gameUnitOfWorkFactory);
         }
 
         #region Handlers
@@ -115,69 +124,133 @@ namespace Rasa.Managers
                 return;
             }
 
-            using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
-            var auction = unitOfWork.Auctions.GetAuctionByItemId(item.Id);
+            lock (AuctionSyncRoot)
+                BuyoutLocked(client, packet, item);
+        }
 
-            if (auction == null)
+        private void BuyoutLocked(
+            Client client,
+            RequestAuctionBuyoutPacket packet,
+            Item item)
+        {
+            AuctionEntry auction = null;
+            Client seller = null;
+            var buyerAfter = 0;
+            var sellerAfter = 0;
+            var inboxSlot = 0u;
+
+            try
             {
-                BuyoutFailed(client, packet.ItemId, PlayerMessage.PmAuctionItemNotFound);
+                using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+                unitOfWork.ExecuteTransaction(() =>
+                {
+                    auction = unitOfWork.Auctions.GetAuctionByItemId(item.Id);
+                    if (auction == null)
+                        throw new BuyoutRejection(
+                            PlayerMessage.PmAuctionItemNotFound);
+
+                    if (auction.SellerId == client.Player.Id)
+                        throw new BuyoutRejection(
+                            PlayerMessage.PmAuctionCannotPurchaseOwnItem);
+
+                    if (packet.Price != auction.Price)
+                        throw new BuyoutRejection(
+                            PlayerMessage.PmAuctionPendingTransaction);
+
+                    var buyer = unitOfWork.Characters.Find(client.Player.Id);
+                    var durableItem =
+                        unitOfWork.CharacterInventories.FindByItemId(item.Id);
+                    if (buyer == null ||
+                        buyer.AccountId != client.AccountEntry.Id ||
+                        !client.Player.Credits.TryGetValue(
+                            CurencyType.Credits, out var runtimeBuyerCredits) ||
+                        buyer.Credit != runtimeBuyerCredits ||
+                        durableItem == null ||
+                        durableItem.CharacterId != auction.SellerId ||
+                        durableItem.InventoryType !=
+                        (uint)InventoryType.AuctionInventory ||
+                        item.OwnerId != auction.SellerId)
+                        throw new BuyoutRejection(
+                            PlayerMessage.PmAuctionPendingTransaction);
+
+                    if (buyer.Credit < auction.Price)
+                        throw new BuyoutRejection(
+                            PlayerMessage.PmAuctionInsufficientFunds);
+
+                    var durableSeller =
+                        unitOfWork.Characters.Find(auction.SellerId);
+                    if (durableSeller == null)
+                        throw new BuyoutRejection(
+                            PlayerMessage.PmAuctionPendingTransaction);
+
+                    seller = OnlineSeller(auction.SellerId);
+                    if (seller != null &&
+                        (!seller.Player.Credits.TryGetValue(
+                             CurencyType.Credits, out var runtimeSellerCredits) ||
+                         runtimeSellerCredits != durableSeller.Credit))
+                        throw new BuyoutRejection(
+                            PlayerMessage.PmAuctionPendingTransaction);
+
+                    buyerAfter = checked(buyer.Credit - (int)auction.Price);
+                    sellerAfter = checked(
+                        durableSeller.Credit + (int)auction.Price);
+
+                    unitOfWork.Characters.UpdateCharacterCredits(
+                        buyer.Id, buyerAfter);
+                    unitOfWork.Characters.UpdateCharacterCredits(
+                        durableSeller.Id, sellerAfter);
+
+                    if (!InventoryManager.Instance.TryMoveToInbox(
+                            unitOfWork,
+                            buyer.AccountId,
+                            buyer.Id,
+                            item.Id,
+                            out inboxSlot))
+                        throw new BuyoutRejection(
+                            PlayerMessage.PmAuctionNoBuyoutInboxFull);
+
+                    if (!unitOfWork.Auctions.DeleteAuction(item.Id))
+                        throw new BuyoutRejection(
+                            PlayerMessage.PmAuctionPendingTransaction);
+                });
+            }
+            catch (BuyoutRejection rejection)
+            {
+                BuyoutFailed(client, packet.ItemId, rejection.FailureMessage);
+                return;
+            }
+            catch (Exception error) when (
+                error is OverflowException ||
+                error is System.Data.Common.DbException ||
+                error is Microsoft.EntityFrameworkCore.DbUpdateException)
+            {
+                Logger.WriteLog(LogType.Error,
+                    $"Auction buyout for item {item.Id} failed atomically: {error.Message}");
+                BuyoutFailed(client, packet.ItemId,
+                    PlayerMessage.PmAuctionPendingTransaction);
                 return;
             }
 
-            if (auction.SellerId == client.Player.Id)
+            client.Player.Credits[CurencyType.Credits] = buyerAfter;
+            client.CallMethod(client.Player.EntityId,
+                new UpdateCreditsPacket(
+                    CurencyType.Credits, buyerAfter, 0));
+
+            if (seller != null)
             {
-                BuyoutFailed(client, packet.ItemId, PlayerMessage.PmAuctionCannotPurchaseOwnItem);
-                return;
+                seller.Player.Credits[CurencyType.Credits] = sellerAfter;
+                seller.CallMethod(seller.Player.EntityId,
+                    new UpdateCreditsPacket(
+                        CurencyType.Credits, sellerAfter, 0));
             }
 
-            // The price the buyer agreed to, checked against the price on the row: a listing can
-            // only be bought for what it says, however stale the window they clicked in.
-            if (packet.Price != auction.Price)
-            {
-                BuyoutFailed(client, packet.ItemId, PlayerMessage.PmAuctionPendingTransaction);
-                return;
-            }
-
-            if (client.Player.Credits[CurencyType.Credits] < auction.Price)
-            {
-                BuyoutFailed(client, packet.ItemId, PlayerMessage.PmAuctionInsufficientFunds);
-                return;
-            }
-
-            if (client.Player.Inventory.InboxItems.Count >= Inventory.MaxInboxItems)
-            {
-                BuyoutFailed(client, packet.ItemId, PlayerMessage.PmAuctionNoBuyoutInboxFull);
-                return;
-            }
-
-            if (!_currencyManager.LossCredits(client, (int)auction.Price))
-            {
-                BuyoutFailed(client, packet.ItemId, PlayerMessage.PmAuctionPendingTransaction);
-                return;
-            }
-
-            if (!PaySeller(unitOfWork, auction))
-            {
-                if (!_currencyManager.GainCredits(client, (int)auction.Price))
-                    Logger.WriteLog(LogType.Error,
-                        $"Auction buyout for item {item.Id} could not refund buyer {client.Player.Id}.");
-                BuyoutFailed(client, packet.ItemId, PlayerMessage.PmAuctionPendingTransaction);
-                return;
-            }
-
-            if (!InventoryManager.Instance.DeliverToInbox(unitOfWork, client.AccountEntry.Id, client.Player.Id, item))
-            {
-                if (!_currencyManager.GainCredits(client, (int)auction.Price))
-                    Logger.WriteLog(LogType.Error,
-                        $"Auction buyout for item {item.Id} could not refund buyer {client.Player.Id}.");
-                BuyoutFailed(client, packet.ItemId, PlayerMessage.PmAuctionNoBuyoutInboxFull);
-                return;
-            }
-
-            unitOfWork.Auctions.DeleteAuction(item.Id);
-            RemoveFromSellersAuctionList(auction.SellerId, item.EntityId, auction.Price);
-
-            client.CallMethod(SysEntity.ClientAuctionHouseManagerId, new AuctionBuyoutSuccessPacket(item.EntityId));
+            item.OwnerId = client.Player.Id;
+            item.OwnerSlotId = inboxSlot;
+            InventoryManager.Instance.PublishInboxDelivery(client, item);
+            RemoveFromSellersAuctionList(
+                auction.SellerId, item.EntityId, auction.Price);
+            client.CallMethod(SysEntity.ClientAuctionHouseManagerId,
+                new AuctionBuyoutSuccessPacket(item.EntityId));
         }
 
         /// <summary>
@@ -620,45 +693,6 @@ namespace Rasa.Managers
 
             unitOfWork.Auctions.DeleteAuction(auction.ItemId);
             RemoveFromSellersAuctionList(auction.SellerId, item.EntityId, null);
-        }
-
-        /// <summary>
-        /// Adds the proceeds to the seller's character row. Done through CharacterManager when
-        /// they are online so their purse and their client agree, and straight to the row when
-        /// they are not - the money has to arrive either way.
-        /// </summary>
-        private bool PaySeller(ICharUnitOfWork unitOfWork, AuctionEntry auction)
-        {
-            var seller = OnlineSeller(auction.SellerId);
-
-            if (seller != null)
-                return _characterManager.UpdateCharacter(
-                    seller, CharacterUpdate.Credits, (int)auction.Price);
-
-            var character = unitOfWork.Characters.Find(auction.SellerId);
-
-            // A listing outlives a deleted seller until the expiry sweep reaches it, so it can
-            // still be bought in the meantime. The buyer has the item and has been charged for
-            // it by this point; there is simply nobody left to pay, so the credits are destroyed
-            // rather than conjured onto a row that is not there.
-            if (character == null)
-            {
-                Logger.WriteLog(LogType.Error, $"Auction on item {auction.ItemId} sold but seller {auction.SellerId} no longer exists; proceeds dropped.");
-                return true;
-            }
-
-            try
-            {
-                unitOfWork.Characters.UpdateCharacterCredits(
-                    auction.SellerId, checked(character.Credit + (int)auction.Price));
-                return true;
-            }
-            catch (Exception error)
-            {
-                Logger.WriteLog(LogType.Error,
-                    $"Auction on item {auction.ItemId} could not pay seller {auction.SellerId}: {error.Message}");
-                return false;
-            }
         }
 
         /// <summary>

@@ -841,36 +841,39 @@ namespace Rasa.Managers
         {
             var recipient = Server.Clients.Find(c => c?.Player != null && c.Player.Id == characterId
                                                      && c.State == ClientState.Ingame);
+            if (!TryMoveToInbox(
+                    unitOfWork, accountId, characterId, item.Id, out var slot))
+                return false;
+
+            item.OwnerId = characterId;
+            item.OwnerSlotId = slot;
+            PublishInboxDelivery(recipient, item);
+            return true;
+        }
+
+        internal bool TryMoveToInbox(
+            ICharUnitOfWork unitOfWork,
+            uint accountId,
+            uint characterId,
+            uint itemId,
+            out uint slot)
+        {
             var used = new HashSet<uint>();
+            var stored = unitOfWork.CharacterInventories.GetItems(accountId)
+                .Where(row => row.CharacterId == characterId
+                              && row.InventoryType == (uint)InventoryType.InboxInventory)
+                .ToList();
 
-            if (recipient != null)
+            if (stored.Count >= Inventory.MaxInboxItems)
             {
-                if (recipient.Player.Inventory.InboxItems.Count >= Inventory.MaxInboxItems)
-                    return false;
-
-                foreach (var entityId in recipient.Player.Inventory.InboxItems)
-                {
-                    var held = EntityManager.Instance.GetItem(entityId);
-
-                    if (held != null)
-                        used.Add(held.OwnerSlotId);
-                }
-            }
-            else
-            {
-                var stored = unitOfWork.CharacterInventories.GetItems(accountId)
-                    .Where(row => row.CharacterId == characterId
-                                  && row.InventoryType == (uint)InventoryType.InboxInventory)
-                    .ToList();
-
-                if (stored.Count >= Inventory.MaxInboxItems)
-                    return false;
-
-                foreach (var row in stored)
-                    used.Add(row.SlotId);
+                slot = 0;
+                return false;
             }
 
-            var slot = 0u;
+            foreach (var row in stored)
+                used.Add(row.SlotId);
+
+            slot = 0;
 
             while (slot < Inventory.MaxInboxItems && used.Contains(slot))
                 slot++;
@@ -878,22 +881,21 @@ namespace Rasa.Managers
             if (slot >= Inventory.MaxInboxItems)
                 return false;
 
-            item.OwnerId = characterId;
-            item.OwnerSlotId = slot;
-
             unitOfWork.CharacterInventories.MoveInvItem(accountId, characterId,
-                (uint)InventoryType.InboxInventory, slot, item.Id);
-
-            if (recipient != null)
-            {
-                recipient.Player.Inventory.InboxItems.Add(item.EntityId);
-                // A buyer has never seen the item they just bought, so its entity has to exist
-                // on their client before the inbox row can render.
-                ItemManager.Instance.SendItemDataToClient(recipient, item, false);
-                recipient.CallMethod(SysEntity.ClientInventoryManagerId, new AddInboxItemPacket(item.EntityId));
-            }
-
+                (uint)InventoryType.InboxInventory, slot, itemId);
             return true;
+        }
+
+        internal void PublishInboxDelivery(Client recipient, Item item)
+        {
+            if (recipient == null ||
+                recipient.Player.Inventory.InboxItems.Contains(item.EntityId))
+                return;
+
+            recipient.Player.Inventory.InboxItems.Add(item.EntityId);
+            ItemManager.Instance.SendItemDataToClient(recipient, item, false);
+            recipient.CallMethod(SysEntity.ClientInventoryManagerId,
+                new AddInboxItemPacket(item.EntityId));
         }
 
         public void TransferCreditToLockbox(Client client, int amount)

@@ -24,6 +24,7 @@ namespace Rasa.Test.Gameplay
             using var world = new WorldTestContext();
             var client = world.CreateClient();
             CellManager.Instance.AddToWorld(client);
+            PrepareDirectDamageClient(client);
             var primary = AddTarget(world, new Vector3(10, 0, 0));
             var farther = AddTarget(world, new Vector3(16, 0, 0));
             var tiedA = AddTarget(world, new Vector3(13, 4, 0));
@@ -53,6 +54,7 @@ namespace Rasa.Test.Gameplay
             using var world = new WorldTestContext();
             var client = world.CreateClient();
             CellManager.Instance.AddToWorld(client);
+            PrepareDirectDamageClient(client);
             var primary = AddTarget(world, new Vector3(10, 0, 0));
             var friendly = AddTarget(world, new Vector3(11, 0, 0));
             friendly.Faction = Factions.AFS;
@@ -139,6 +141,7 @@ namespace Rasa.Test.Gameplay
             using var world = new WorldTestContext();
             var client = world.CreateClient();
             CellManager.Instance.AddToWorld(client);
+            PrepareDirectDamageClient(client);
             var primary = AddTarget(world, new Vector3(10, 0, 0));
             var arc = AddTarget(world, new Vector3(11, 0, 0));
             var manager = (AbilityManager)typeof(AbilityManager)
@@ -197,6 +200,173 @@ namespace Rasa.Test.Gameplay
                     EntityManager.Instance.RegisterCreature(primary);
                 Cleanup(world, primary, arc);
             }
+        }
+
+        [TestMethod]
+        public void LightningSecondPrimaryValidationDoesNotFallThroughToRadiusTargets()
+        {
+            using var world = new WorldTestContext();
+            var client = world.CreateClient();
+            CellManager.Instance.AddToWorld(client);
+            PrepareDirectDamageClient(client);
+            var primary = AddTarget(world, new Vector3(10, 0, 0));
+            var nearby = AddTarget(world, new Vector3(11, 0, 0));
+            var fallback = AddTarget(world, new Vector3(4, 0, 0));
+            var manager = CreateManager();
+            var info = LightningInfo(primaryDamage: 10, arcDamage: 5);
+            var actionInfo = LightningAction(info);
+            var action = new ActionData(client.Player, ActionId.AaRecruitLightning, 1,
+                primary.EntityId, 0);
+
+            Assert.AreEqual(1, AbilityManager.SelectLightningArcTargets(
+                world.Map, client.Player, primary, 5, 1).Count);
+            EntityManager.Instance.UnregisterCreature(primary.EntityId);
+
+            try
+            {
+                InvokeResolveDirectDamage(
+                    manager, world.Map, client, actionInfo, info, action);
+
+                Assert.AreEqual(100,
+                    primary.Attributes[Attributes.Health].Current);
+                Assert.AreEqual(100,
+                    nearby.Attributes[Attributes.Health].Current);
+                Assert.AreEqual(100,
+                    fallback.Attributes[Attributes.Health].Current);
+            }
+            finally
+            {
+                EntityManager.Instance.RegisterCreature(primary);
+                Cleanup(world, primary, nearby, fallback);
+            }
+        }
+
+        [TestMethod]
+        public void FatalLightningPrimaryStillArcsToTargetsValidAtLanding()
+        {
+            using var world = new WorldTestContext();
+            var client = world.CreateClient();
+            CellManager.Instance.AddToWorld(client);
+            PrepareDirectDamageClient(client);
+            var primary = AddTarget(world, new Vector3(10, 0, 0));
+            primary.Attributes[Attributes.Health].Current = 5;
+            var arc = AddTarget(world, new Vector3(11, 0, 0));
+            var info = LightningInfo(primaryDamage: 10, arcDamage: 7);
+            var actionInfo = LightningAction(info);
+            var action = new ActionData(client.Player, ActionId.AaRecruitLightning, 1,
+                primary.EntityId, 0);
+            CellManager.Instance.RemoveFromWorld(client);
+
+            InvokeResolveDirectDamage(
+                CreateManager(), world.Map, client, actionInfo, info, action);
+
+            Assert.AreEqual(0, primary.Attributes[Attributes.Health].Current);
+            Assert.AreEqual(93, arc.Attributes[Attributes.Health].Current);
+            Cleanup(world, primary, arc);
+        }
+
+        [TestMethod]
+        public void LightningArcIsRevalidatedAfterLandingSnapshotBeforeDamage()
+        {
+            using var world = new WorldTestContext();
+            var client = world.CreateClient();
+            CellManager.Instance.AddToWorld(client);
+            var primary = AddTarget(world, new Vector3(10, 0, 0));
+            var arc = AddTarget(world, new Vector3(11, 0, 0));
+            var snapshot = AbilityManager.SelectLightningArcTargets(
+                world.Map, client.Player, primary, 5, 1);
+            Assert.AreEqual(1, snapshot.Count);
+            arc.State = CharacterState.Dead;
+            var hit = new AbilityHit { EntityId = primary.EntityId };
+            var apply = typeof(AbilityManager).GetMethod(
+                "ApplyLightningArcs",
+                BindingFlags.Static | BindingFlags.NonPublic);
+
+            Assert.IsNotNull(apply);
+            apply.Invoke(null, new object[]
+            {
+                world.Map,
+                client.Player,
+                primary.EntityId,
+                primary.Position,
+                5f,
+                7,
+                DamageType.Electrical,
+                snapshot,
+                hit
+            });
+
+            Assert.AreEqual(100, arc.Attributes[Attributes.Health].Current);
+            Assert.AreEqual(0, hit.Arcs.Count);
+            Cleanup(world, primary, arc);
+        }
+
+        private static AbilityManager CreateManager() =>
+            (AbilityManager)typeof(AbilityManager)
+                .GetConstructor(BindingFlags.Instance | BindingFlags.NonPublic, null,
+                    new[] { typeof(Rasa.Repositories.UnitOfWork.IGameUnitOfWorkFactory) }, null)
+                .Invoke(new object[] { null });
+
+        private static void PrepareDirectDamageClient(Rasa.Game.Client client)
+        {
+            client.Player.Attributes[Attributes.Health] =
+                new ActorAttributes(Attributes.Health, 100, 100, 100, 0, 0);
+            client.Player.Attributes[Attributes.Armor] =
+                new ActorAttributes(Attributes.Armor, 0, 0, 0, 0, 0);
+            client.Player.Attributes[Attributes.Power] =
+                new ActorAttributes(Attributes.Power, 100, 100, 100, 0, 0);
+        }
+
+        private static ActionLevelInfo LightningInfo(int primaryDamage, int arcDamage)
+        {
+            var info = new ActionLevelInfo
+            {
+                ActionId = ActionId.AaRecruitLightning,
+                Level = 1,
+                MaxRange = 20
+            };
+            info.Properties[AbilityProperty.DamageAmountMin] = primaryDamage;
+            info.Properties[AbilityProperty.DamageAmountMax] = primaryDamage;
+            info.Properties[AbilityProperty.ArcRadius] = 5;
+            info.Properties[AbilityProperty.ArcDamage] = arcDamage;
+            info.Properties[AbilityProperty.RadiusAroundTarget] = 5;
+            return info;
+        }
+
+        private static ActionInfo LightningAction(ActionLevelInfo info)
+        {
+            var action = new ActionInfo
+            {
+                ActionId = ActionId.AaRecruitLightning,
+                Module = "abilities.lightning"
+            };
+            action.Levels[info.Level] = info;
+            return action;
+        }
+
+        private static void InvokeResolveDirectDamage(
+            AbilityManager manager,
+            MapChannel map,
+            Rasa.Game.Client client,
+            ActionInfo actionInfo,
+            ActionLevelInfo info,
+            ActionData action)
+        {
+            var method = typeof(AbilityManager).GetMethod(
+                "ResolveDirectDamage",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            var arguments = new List<object>
+            {
+                map,
+                client,
+                client.Player,
+                actionInfo,
+                info,
+                action
+            };
+            if (method.GetParameters().Length == 7)
+                arguments.Add(null);
+            method.Invoke(manager, arguments.ToArray());
         }
 
         private static Creature AddTarget(WorldTestContext world, Vector3 position)
