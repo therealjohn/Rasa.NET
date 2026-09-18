@@ -562,8 +562,9 @@ namespace Rasa.Managers
         /// at any distance, which with an unbounded Move is anything on the map. And the item
         /// that granted the ability could be traded or sold in the meantime.
         ///
-        /// What is not re-weighed: a target that died or despawned mid-windup. The ability was
-        /// performed, it costs what it costs, and it hits nothing - which is what happens now.
+        /// Target identity, life, hostility, map membership and range are re-weighed here before
+        /// costs are taken. Lightning then snapshots its still-valid primary and arc candidates
+        /// at landing and revalidates each arc immediately before applying its damage.
         /// </summary>
         private PlayerMessage? StillAllowed(
             MapChannel mapChannel,
