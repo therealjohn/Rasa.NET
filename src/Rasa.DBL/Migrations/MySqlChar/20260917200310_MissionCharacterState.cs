@@ -11,6 +11,12 @@ namespace Rasa.Migrations.MySqlChar
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.Sql(
+                "DELETE FROM `character_mission` " +
+                "WHERE NOT EXISTS (" +
+                "SELECT 1 FROM `character` " +
+                "WHERE `character`.`id` = `character_mission`.`character_id`)");
+
             migrationBuilder.AlterColumn<uint>(
                 name: "character_id",
                 table: "character_mission",
@@ -42,7 +48,7 @@ namespace Rasa.Migrations.MySqlChar
                 column: "character_id",
                 principalTable: "character",
                 principalColumn: "id",
-                onDelete: ReferentialAction.Restrict);
+                onDelete: ReferentialAction.Cascade);
         }
 
         /// <inheritdoc />

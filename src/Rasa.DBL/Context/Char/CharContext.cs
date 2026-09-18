@@ -257,7 +257,7 @@ namespace Rasa.Context.Char
                 .HasOne<CharacterEntry>()
                 .WithMany()
                 .HasForeignKey(e => e.CharacterId)
-                .OnDelete(DeleteBehavior.Restrict);
+                .OnDelete(DeleteBehavior.Cascade);
             modelBuilder.Entity<CharacterMissionEntry>()
                 .Property(e => e.Completeable)
                 .HasDefaultValue(false);

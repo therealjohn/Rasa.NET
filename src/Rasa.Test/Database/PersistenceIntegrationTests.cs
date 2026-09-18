@@ -51,6 +51,14 @@ namespace Rasa.Test.Database
         [TestMethod]
         public void CombinedCharacterPersistenceContractsAreExposed()
         {
+            var accountSlotLookup = typeof(ICharacterMissionRepository).GetMethod(
+                "Get",
+                new[] { typeof(uint), typeof(uint) });
+            Assert.IsNotNull(accountSlotLookup);
+            Assert.AreEqual(typeof(List<CharacterMissionEntry>), accountSlotLookup.ReturnType);
+            Assert.IsNotNull(typeof(ICharacterMissionRepository).GetMethod(
+                "GetByCharacterAndMission",
+                new[] { typeof(uint), typeof(uint) }));
             Assert.IsNotNull(typeof(Rasa.Structures.Char.CharacterEntry)
                 .GetProperty("CurrentAbilitySlot"));
             Assert.IsNotNull(typeof(ICharacterRepository).GetMethod(
@@ -87,6 +95,10 @@ namespace Rasa.Test.Database
                 new[] { "CharacterId", "MissionId" },
                 mission.FindPrimaryKey()?.Properties.Select(property => property.Name).ToArray());
             Assert.AreEqual(false, mission.FindProperty("Completeable")?.GetDefaultValue());
+            Assert.AreEqual(
+                DeleteBehavior.Cascade,
+                mission.GetForeignKeys().Single(foreignKey =>
+                    foreignKey.PrincipalEntityType.ClrType == typeof(CharacterEntry)).DeleteBehavior);
             CollectionAssert.AreEqual(
                 new[] { "CharacterId", "MissionId", "ObjectiveId" },
                 objective.FindPrimaryKey()?.Properties.Select(property => property.Name).ToArray());
@@ -226,6 +238,34 @@ namespace Rasa.Test.Database
         }
 
         [TestMethod]
+        [DataRow(typeof(MySqlCharContext))]
+        [DataRow(typeof(SqliteCharContext))]
+        public void MissionMigrationDeletesOnlyOrphansBeforeAddingCascadeForeignKey(Type contextType)
+        {
+            using var context = CreateContext(contextType, "unused");
+            var assembly = context.GetService<IMigrationsAssembly>();
+            var migration = assembly.Migrations.Values
+                .Select(type => assembly.CreateMigration(type, context.Database.ProviderName))
+                .Single(candidate => candidate.GetType().Name == "MissionCharacterState");
+
+            var orphanCleanup = migration.UpOperations
+                .Select((operation, index) => (operation, index))
+                .Single(item => item.operation is SqlOperation sql &&
+                    sql.Sql.Contains("DELETE FROM", StringComparison.OrdinalIgnoreCase) &&
+                    sql.Sql.Contains("character_mission", StringComparison.OrdinalIgnoreCase) &&
+                    sql.Sql.Contains("NOT EXISTS", StringComparison.OrdinalIgnoreCase));
+            var foreignKey = migration.UpOperations
+                .Select((operation, index) => (operation, index))
+                .Single(item => item.operation is AddForeignKeyOperation key &&
+                    key.Table == "character_mission");
+
+            Assert.IsTrue(orphanCleanup.index < foreignKey.index);
+            Assert.AreEqual(
+                ReferentialAction.Cascade,
+                ((AddForeignKeyOperation)foreignKey.operation).OnDelete);
+        }
+
+        [TestMethod]
         [DataRow(typeof(MySqlAuthContext))]
         [DataRow(typeof(MySqlCharContext))]
         [DataRow(typeof(MySqlWorldContext))]
@@ -295,6 +335,9 @@ namespace Rasa.Test.Database
                 context.Database.ExecuteSqlRaw(
                     "INSERT INTO character_mission (character_id, mission_id, mission_state) " +
                     "VALUES (123, 321, 0)");
+                context.Database.ExecuteSqlRaw(
+                    "INSERT INTO character_mission (character_id, mission_id, mission_state) " +
+                    "VALUES (999, 654, 0)");
 
                 context.Database.Migrate();
                 context.Database.ExecuteSqlRaw(
@@ -323,6 +366,8 @@ namespace Rasa.Test.Database
                     "SELECT current_ability_slot AS Value FROM character WHERE id = 123").Single());
                 Assert.AreEqual(2, reopened.Database.SqlQueryRaw<int>(
                     "SELECT COUNT(*) AS Value FROM character_mission WHERE character_id = 123").Single());
+                Assert.AreEqual(0, reopened.Database.SqlQueryRaw<int>(
+                    "SELECT COUNT(*) AS Value FROM character_mission WHERE character_id = 999").Single());
                 Assert.AreEqual(7, reopened.Database.SqlQueryRaw<int>(
                     "SELECT counter_value AS Value FROM character_mission_objective_counter " +
                     "WHERE character_id = 123 AND mission_id = 429 AND objective_id = 5 " +
@@ -332,6 +377,30 @@ namespace Rasa.Test.Database
                     "WHERE character_id = 123 AND mission_id = 429 AND objective_id = 5 " +
                     "AND item_class_id = 200").Single());
                 Assert.IsFalse(reopened.Database.GetPendingMigrations().Any());
+            });
+        }
+
+        [TestMethod]
+        public void SqliteMissionMigrationDowngradesAfterValidUpgrade()
+        {
+            WithDisposableSqlite((context, database) =>
+            {
+                context.Database.Migrate();
+                SeedCharacter(context, 17, 123, 1);
+                context.Database.ExecuteSqlRaw(
+                    "INSERT INTO character_mission " +
+                    "(character_id, mission_id, mission_state, completeable) " +
+                    "VALUES (123, 429, 4, 1)");
+
+                context.GetService<IMigrator>()
+                    .Migrate("20260917130621_AbilityTraySelection");
+
+                Assert.AreEqual(1, context.Database.SqlQueryRaw<int>(
+                    "SELECT COUNT(*) AS Value FROM character_mission " +
+                    "WHERE character_id = 123 AND mission_id = 429 AND mission_state = 4").Single());
+                Assert.AreEqual(
+                    "20260917130621_AbilityTraySelection",
+                    context.Database.GetAppliedMigrations().Last());
             });
         }
 
@@ -396,7 +465,7 @@ namespace Rasa.Test.Database
                         .ToArray());
                 CollectionAssert.AreEquivalent(
                     new uint[] { 321, 429 },
-                    reopened.CharacterMissions.Get(17, (byte)1)
+                    reopened.CharacterMissions.Get(17, 1)
                         .Select(entry => entry.MissionId)
                         .ToArray());
                 var objective = reopened.CharacterMissionProgress.Get(123, 429)
@@ -404,6 +473,56 @@ namespace Rasa.Test.Database
                 Assert.AreEqual((byte)1, objective.State);
                 Assert.AreEqual(7U, objective.Counters[3]);
                 Assert.AreEqual(8U, objective.ItemCounters[200]);
+            });
+        }
+
+        [TestMethod]
+        public void CharacterDeletionCascadesMissionAndObjectiveProgressAtomically()
+        {
+            WithDisposableSqlite((context, database) =>
+            {
+                context.Database.Migrate();
+                SeedCharacter(context, 17, 123, 1);
+                using (var seed = CreateUnit(context))
+                {
+                    seed.CharacterMissions.Add(new CharacterMissionEntry(123, 429, 0));
+                    seed.CharacterMissionProgress.AddObjectives(new[]
+                    {
+                        new CharacterMissionObjectiveEntry(123, 429, 5, 1)
+                        {
+                            Counters =
+                            {
+                                new CharacterMissionObjectiveCounterEntry(123, 429, 5, 3, 4)
+                            },
+                            ItemCounters =
+                            {
+                                new CharacterMissionObjectiveItemCounterEntry(123, 429, 5, 200, 6)
+                            }
+                        }
+                    });
+                }
+
+                using (var deleteContext = (SqliteCharContext)CreateContext(
+                    typeof(SqliteCharContext),
+                    database))
+                using (var delete = CreateUnit(deleteContext))
+                {
+                    delete.Characters.Delete(123);
+                    delete.Complete();
+                }
+
+                using var reopened = (SqliteCharContext)CreateContext(
+                    typeof(SqliteCharContext),
+                    database);
+                Assert.AreEqual(0, reopened.CharacterEntries.Count(entry => entry.Id == 123));
+                Assert.AreEqual(0, reopened.CharacterMissionEntries.Count(
+                    entry => entry.CharacterId == 123));
+                Assert.AreEqual(0, reopened.CharacterMissionObjectiveEntries.Count(
+                    entry => entry.CharacterId == 123));
+                Assert.AreEqual(0, reopened.CharacterMissionObjectiveCounterEntries.Count(
+                    entry => entry.CharacterId == 123));
+                Assert.AreEqual(0, reopened.CharacterMissionObjectiveItemCounterEntries.Count(
+                    entry => entry.CharacterId == 123));
             });
         }
 
@@ -436,7 +555,7 @@ namespace Rasa.Test.Database
                                 StackSize = 3
                             });
                             unit.CharacterInventories.AddInvItem(17, 123, 1, 50, itemId);
-                            var mission = unit.CharacterMissions.Get(123, 429);
+                            var mission = unit.CharacterMissions.GetByCharacterAndMission(123, 429);
                             mission.MissionState = 4;
                             mission.Completeable = false;
                             throw new InvalidOperationException("Injected reward failure.");
@@ -454,7 +573,7 @@ namespace Rasa.Test.Database
                 Assert.AreEqual(50, character.Prestige);
                 Assert.AreEqual(0, reopened.CharacterInventories.GetItems(17).Count);
                 Assert.AreEqual(0, reopenedContext.ItemEntries.Count());
-                var mission = reopened.CharacterMissions.Get(123, 429);
+                var mission = reopened.CharacterMissions.GetByCharacterAndMission(123, 429);
                 Assert.AreEqual(0U, mission.MissionState);
                 Assert.IsTrue(mission.Completeable);
             });
@@ -543,7 +662,7 @@ namespace Rasa.Test.Database
                     {
                         contender.ExecuteTransaction(() =>
                         {
-                            var mission = contender.CharacterMissions.Get(123, 429);
+                            var mission = contender.CharacterMissions.GetByCharacterAndMission(123, 429);
                             if (mission?.MissionState != 0 || !mission.Completeable)
                                 return;
 
@@ -577,7 +696,7 @@ namespace Rasa.Test.Database
                 Assert.AreEqual((byte)10, character.Level);
                 Assert.AreEqual(107, character.Credit);
                 Assert.AreEqual(53, character.Prestige);
-                var mission = reopened.CharacterMissions.Get(123, 429);
+                var mission = reopened.CharacterMissions.GetByCharacterAndMission(123, 429);
                 Assert.AreEqual(4U, mission.MissionState);
                 Assert.IsFalse(mission.Completeable);
             });

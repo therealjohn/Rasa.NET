@@ -22,7 +22,7 @@ namespace Rasa.Repositories.Char.CharacterMission
             return query.Where(entry => entry.CharacterId == characterId).ToList();
         }
 
-        public List<CharacterMissionEntry> Get(uint accountId, byte characterSlot)
+        public List<CharacterMissionEntry> Get(uint accountId, uint characterSlot)
         {
             var characterId = _charContext.CharacterEntries
                 .Where(entry => entry.AccountId == accountId && entry.Slot == characterSlot)
@@ -37,7 +37,7 @@ namespace Rasa.Repositories.Char.CharacterMission
             _charContext.CharacterMissionEntries.Count(entry => entry.CharacterId == characterId);
 
         [CanBeNull]
-        public CharacterMissionEntry Get(uint characterId, uint missionId)
+        public CharacterMissionEntry GetByCharacterAndMission(uint characterId, uint missionId)
         {
             return _charContext.CharacterMissionEntries.SingleOrDefault(
                 entry => entry.CharacterId == characterId && entry.MissionId == missionId);
@@ -51,21 +51,21 @@ namespace Rasa.Repositories.Char.CharacterMission
 
         public void SetCompletable(uint characterId, uint missionId, bool value)
         {
-            var mission = Get(characterId, missionId);
+            var mission = GetByCharacterAndMission(characterId, missionId);
             mission.Completeable = value;
             _charContext.SaveChanges();
         }
 
         public void SetState(uint characterId, uint missionId, uint state)
         {
-            var mission = Get(characterId, missionId);
+            var mission = GetByCharacterAndMission(characterId, missionId);
             mission.MissionState = state;
             _charContext.SaveChanges();
         }
 
         public void Remove(uint characterId, uint missionId)
         {
-            var mission = Get(characterId, missionId);
+            var mission = GetByCharacterAndMission(characterId, missionId);
             if (mission == null)
                 return;
 

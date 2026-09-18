@@ -939,7 +939,7 @@ namespace Rasa.Migrations.SqliteChar
                     b.HasOne("Rasa.Structures.Char.CharacterEntry", null)
                         .WithMany()
                         .HasForeignKey("CharacterId")
-                        .OnDelete(DeleteBehavior.Restrict)
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 
