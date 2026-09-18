@@ -17,6 +17,35 @@ The fixtures use isolated in-memory worlds, actual outgoing packet queues,
 deterministic clocks/random sources and disposable SQLite files. They do not
 connect to a developer database or require the game client.
 
+## Mission protocol boundary
+
+The mission request boundary matches the local 1.16.5.0 client scripts:
+
+- `AbandonMission` (392): `(missionId,)`
+- `AssignNPCMission` (407): `(npcId, missionId)`
+- `CompleteNPCMission` (430): `(npcId, missionId, selectionIdx, rating)`
+- `CompleteNPCObjective` (431): `(npcId, missionId, objectiveId, playerFlagId)`
+- `RewardNPCMission` (540): `(npcId, missionId, selectionIdx, rating)`
+
+`selectionIdx` and `rating` accept only Python `int` or `None`; boolean structs,
+longs, and incorrect tuple sizes are rejected. Registering these handlers does
+not activate source-only mission definitions. Unknown and inactive requests do
+not mutate runtime or durable state and do not publish success packets.
+
+Objective updates use the client receiver tuple layouts for
+`ObjectiveRevealed`, `ObjectiveActivated`, `ObjectiveCompleted`,
+`ObjectiveFailed`, `UpdateObjectiveCounter`, and
+`UpdateObjectiveItemCounter`. Each serialized objective has eight fields,
+including separate generic and item counter dictionaries, nullable remaining
+time, and complete X/Y/Z indicator coordinates. Objective persistence and
+production mission activation remain separate work.
+
+Run the focused boundary checks with:
+
+```powershell
+dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~Rasa.Test.Missions.MissionProtocolTests|FullyQualifiedName~Rasa.Test.Missions.MissionTrackerTests|FullyQualifiedName~Rasa.Test.Missions.MissionRewardTests.UnverifiedWireSelectionCannotGrantRewards"
+```
+
 ## Movement and visibility
 
 Movement is accepted only for an active, assigned player in a world cell, with

@@ -110,6 +110,22 @@ namespace Rasa.Memory
             };
         }
 
+        public int? ReadNullableInt()
+        {
+            return PeekType() switch
+            {
+                PythonType.Int => ReadInt(),
+                PythonType.Structs => ReadNone(),
+                _ => throw new InvalidDataException("Expected Python int or None.")
+            };
+        }
+
+        private int? ReadNone()
+        {
+            ReadNoneStruct();
+            return null;
+        }
+
         public uint ReadUInt()
         {
             var type = Reader.ReadByte();

@@ -64,10 +64,25 @@ namespace Rasa.Managers
 
         public void CompleteNPCMission(Client client, CompleteNPCMissionPacket packet)
         {
-            // SelectionIdx is still decoded from an unverified boolean wire field. Do not grant rewards
-            // until source/client evidence establishes the integer selection encoding.
             Logger.WriteLog(LogType.Network,
-                $"Rejected mission {packet?.MissionId ?? 0} turn-in: reward selection wire encoding is unverified.");
+                $"Rejected mission {packet?.MissionId ?? 0} turn-in: objective lifecycle integration is not available.");
+        }
+
+        public void CompleteNPCObjective(Client client, CompleteNPCObjectivePacket packet)
+        {
+            MissionManager.Instance.TryCompleteNpcObjective(
+                client, packet.EntityId, packet.MissionId, packet.ObjectiveId, packet.PlayerFlagId);
+        }
+
+        public void RewardNPCMission(Client client, RewardNPCMissionPacket packet)
+        {
+            MissionManager.Instance.TryRewardNpcMission(
+                client, packet.EntityId, packet.MissionId, packet.SelectionIdx, packet.Rating);
+        }
+
+        public void AbandonMission(Client client, AbandonMissionPacket packet)
+        {
+            MissionManager.Instance.TryAbandon(client, packet.MissionId);
         }
 
         public void RequestNpcConverse(Client client, RequestNPCConversePacket packet)

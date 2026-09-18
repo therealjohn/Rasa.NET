@@ -437,9 +437,9 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
-        [DataRow(false)]
-        [DataRow(true)]
-        public void UnverifiedWireSelectionCannotGrantRewards(bool selectionIndex)
+        [DataRow(null)]
+        [DataRow(0)]
+        public void UnverifiedWireSelectionCannotGrantRewards(int? selectionIndex)
         {
             using var context = MissionTestContext.WithCompletableMission(429);
             var before = context.ReadRewardTotals();
@@ -448,11 +448,12 @@ namespace Rasa.Test.Missions
             {
                 EntityId = context.Receiver.EntityId,
                 MissionId = 429,
-                SelectionIdx = selectionIndex
+                SelectionIdx = selectionIndex,
+                Rating = null
             });
 
             AssertUnchanged(context, before);
-            Assert.AreEqual(typeof(bool),
+            Assert.AreEqual(typeof(int?),
                 typeof(CompleteNPCMissionPacket).GetProperty(nameof(CompleteNPCMissionPacket.SelectionIdx))!.PropertyType);
         }
 

@@ -411,6 +411,48 @@ namespace Rasa.Managers
             }
         }
 
+        internal bool TryCompleteNpcObjective(
+            Client client,
+            ulong npcEntityId,
+            uint missionId,
+            uint objectiveId,
+            uint playerFlagId)
+        {
+            if (client == null)
+                return false;
+
+            lock (client.SyncRoot)
+            {
+                if (!IsActivePlayer(client))
+                    return Reject($"Rejected mission {missionId} objective completion: character is not active in the world.");
+                if (!TryGetOperationalMission(missionId, out _))
+                    return Reject($"Rejected mission {missionId} objective completion: definition is not operational.");
+
+                return Reject($"Rejected mission {missionId} objective {objectiveId}: objective lifecycle is not available.");
+            }
+        }
+
+        internal bool TryRewardNpcMission(
+            Client client,
+            ulong npcEntityId,
+            uint missionId,
+            int? selectionIndex,
+            int? rating)
+        {
+            if (client == null)
+                return false;
+
+            lock (client.SyncRoot)
+            {
+                if (!IsActivePlayer(client))
+                    return Reject($"Rejected mission {missionId} reward: character is not active in the world.");
+                if (!TryGetOperationalMission(missionId, out _))
+                    return Reject($"Rejected mission {missionId} reward: definition is not operational.");
+
+                return Reject($"Rejected mission {missionId} reward: reward recovery is not available.");
+            }
+        }
+
         internal bool TryAbandon(Client client, uint missionId)
         {
             if (client == null)
@@ -419,6 +461,7 @@ namespace Rasa.Managers
             lock (client.SyncRoot)
             {
                 if (!IsActivePlayer(client) ||
+                    !TryGetOperationalMission(missionId, out _) ||
                     !client.Player.Missions.TryGetValue(missionId, out var log) ||
                     log.State != MissionState.Active)
                     return false;
@@ -454,7 +497,7 @@ namespace Rasa.Managers
 
         private static bool IsPublishedState(MissionState state) =>
             state == MissionState.Active ||
-            state == MissionState.Failded ||
+            state == MissionState.Failed ||
             state == MissionState.Completed;
 
         internal bool TryGetOperationalMission(uint missionId, out Mission mission)

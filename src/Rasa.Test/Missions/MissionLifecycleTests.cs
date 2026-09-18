@@ -79,10 +79,10 @@ namespace Rasa.Test.Missions
             using var context = MissionTestContext.WithDefinitions(321, 429, 666, 777, 888);
             context.SeedMission(context.Client.Player.Id, 321, (uint)MissionState.Active, false);
             context.SeedMission(context.Client.Player.Id, 429, (uint)MissionState.Active, true);
-            context.SeedMission(context.Client.Player.Id, 666, (uint)MissionState.Failded, true);
+            context.SeedMission(context.Client.Player.Id, 666, (uint)MissionState.Failed, true);
             context.SeedMission(context.Client.Player.Id, 777, (uint)MissionState.Completed, false);
             context.SeedMission(context.Client.Player.Id, 888, (uint)MissionState.Success, false);
-            context.SeedMission(context.Client.Player.Id, 999, (uint)MissionState.Failded, false);
+            context.SeedMission(context.Client.Player.Id, 999, (uint)MissionState.Failed, false);
             context.ReloadPlayerMissions();
 
             context.Manager.PublishInitialState(context.Client);
@@ -94,7 +94,7 @@ namespace Rasa.Test.Missions
             Assert.IsFalse(packet.MissionStatusDict[321].Completeable);
             Assert.AreEqual(MissionState.Active, packet.MissionStatusDict[429].MissionState);
             Assert.IsTrue(packet.MissionStatusDict[429].Completeable);
-            Assert.AreEqual(MissionState.Failded, packet.MissionStatusDict[666].MissionState);
+            Assert.AreEqual(MissionState.Failed, packet.MissionStatusDict[666].MissionState);
             Assert.IsFalse(packet.MissionStatusDict[666].Completeable);
             Assert.AreEqual(MissionState.Completed, packet.MissionStatusDict[777].MissionState);
             Assert.IsFalse(packet.MissionStatusDict[777].Completeable);
