@@ -57,6 +57,7 @@ namespace Rasa.Managers
         private static ClanManager _instance;
         private static readonly object InstanceLock = new object();
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
+        private readonly ManifestationManager _currencyManager;
 
         // Matches game client limits
         private readonly uint _minClanNameLength = 3;
@@ -88,6 +89,7 @@ namespace Rasa.Managers
         private ClanManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
+            _currencyManager = new ManifestationManager(gameUnitOfWorkFactory);
         }
 
         #endregion
@@ -388,10 +390,20 @@ namespace Rasa.Managers
             if (!CanCreateClan(client, packet, client.Player.Id))
                 return;
 
+            if (!_currencyManager.LossCredits(
+                    client, _requiredCreditsForClanCreation))
+                return;
+
             ClanEntry clan = unitOfWork.Clans.CreateClan(packet.ClanName, packet.IsPvP);
 
             if (clan == null)
+            {
+                if (!_currencyManager.GainCredits(
+                        client, _requiredCreditsForClanCreation))
+                    Logger.WriteLog(LogType.Error,
+                        $"CreateClan: could not refund creation fee to character {client.Player.Id}.");
                 return;
+            }
 
             // Wrap the database data to what the client expects
             var clanData = new ClanData(clan);
@@ -410,12 +422,12 @@ namespace Rasa.Managers
             {
                 Logger.WriteLog(LogType.Error, $"CreateClan: could not add character {client.Player.Id} as leader of new clan {clan.Id} ({packet.ClanName}); removing the clan: {e}");
                 unitOfWork.Clans.DeleteClan(clan.Id);
+                if (!_currencyManager.GainCredits(
+                        client, _requiredCreditsForClanCreation))
+                    Logger.WriteLog(LogType.Error,
+                        $"CreateClan: could not refund creation fee to character {client.Player.Id}.");
                 return;
             }
-
-            // Pay for the clan creation - only now that there is a clan to pay for. Checked
-            // before the row was written, charged after.
-            CharacterManager.Instance.UpdateCharacter(client, CharacterUpdate.Credits, -_requiredCreditsForClanCreation);
 
             // Signals the client to set the default rank titles for a clan
             client.CallMethod(SysEntity.ClientClanManagerId, new ClanCreatedPacket(clanData.Id));

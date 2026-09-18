@@ -16,6 +16,7 @@ namespace Rasa.Test.Gameplay
     using Rasa.Repositories.Char.Character;
     using Rasa.Repositories.Char.CharacterAppearance;
     using Rasa.Repositories.Char.CharacterInventory;
+    using Rasa.Repositories.Char.Auction;
     using Rasa.Repositories.Char.Items;
     using Rasa.Repositories.UnitOfWork;
     using Rasa.Repositories.World;
@@ -126,6 +127,57 @@ namespace Rasa.Test.Gameplay
             item.OwnerId = 0;
             item.OwnerSlotId = 0;
             return item;
+        }
+
+        internal void AddCorruptPersonalInventoryRow(uint slot)
+        {
+            using var context = Open();
+            var item = new ItemEntry
+            {
+                ItemId = (uint)(_items.Count + 1000),
+                ItemTemplateId = 28,
+                StackSize = 1,
+                CrafterName = ""
+            };
+            context.ItemEntries.Add(item);
+            context.CharacterInventoryEntries.Add(new CharacterInventoryEntry(
+                Client.AccountEntry.Id,
+                Client.Player.Id,
+                (uint)InventoryType.Personal,
+                slot,
+                item.ItemId));
+            context.SaveChanges();
+        }
+
+        internal void AddAuction(Item item, uint sellerId, uint price)
+        {
+            using var context = Open();
+            var sellerAccount = new GameAccountEntry
+            {
+                Id = 2,
+                Name = "seller",
+                Email = "seller@example.invalid",
+                FamilyName = "Seller"
+            };
+            context.GameAccountEntries.Add(sellerAccount);
+            context.CharacterEntries.Add(new CharacterEntry
+            {
+                Id = sellerId,
+                GameAccount = sellerAccount,
+                Name = "Seller",
+                Level = 1
+            });
+            context.CharacterInventoryEntries.Add(new CharacterInventoryEntry(
+                sellerAccount.Id,
+                sellerId,
+                (uint)InventoryType.AuctionInventory,
+                0,
+                item.Id));
+            context.AuctionEntries.Add(new AuctionEntry(
+                item.Id, sellerId, "Seller", price, 0, 12));
+            context.SaveChanges();
+            item.OwnerId = sellerId;
+            item.OwnerSlotId = 0;
         }
 
         internal Item AddPersonalWeapon(uint clip, uint slot = 0)
@@ -243,7 +295,7 @@ namespace Rasa.Test.Gameplay
                 characterMissionProgress: null,
                 characterOptions: null,
                 characterSkills: new Rasa.Repositories.Char.CharacterSkills.CharacterSkillsRepository(context), characterTeleporters: null,
-                characterTitles: null, auctions: null, clans: null, clanInventories: null, clanMembers: null,
+                characterTitles: null, auctions: new AuctionRepository(context), clans: null, clanInventories: null, clanMembers: null,
                 clanLockboxLogs: null, friends: null, ignoreds: null, items: new ItemRepository(context),
                 petitions: null, userOptions: null);
         }

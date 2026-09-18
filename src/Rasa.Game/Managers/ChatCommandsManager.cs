@@ -338,10 +338,16 @@ namespace Rasa.Managers
 
             // The command takes a signed amount; the two primitives do not. Positive is a gain,
             // negative is a charge of that size, already clamped to what they have above.
-            if (amount > 0)
-                ManifestationManager.Instance.GainCredits(target, amount);
-            else
-                ManifestationManager.Instance.LossCredits(target, -amount);
+            var changed = amount > 0
+                ? ManifestationManager.Instance.GainCredits(target, amount)
+                : ManifestationManager.Instance.LossCredits(target, -amount);
+
+            if (!changed)
+            {
+                communicator.SystemMessage(_client,
+                    $"Could not persist the credit change for {target.Player.FamilyName}.");
+                return;
+            }
 
             var after = target.Player.Credits[CurencyType.Credits];
             var who = target == _client ? "You" : target.Player.FamilyName;

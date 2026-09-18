@@ -468,7 +468,7 @@ namespace Rasa.Managers
 
             // The request said they could start; this says it still lands. A windup is time the
             // world goes on in, and everything the request weighed can have changed inside it.
-            var refusal = StillAllowed(mapChannel, client, player, action, info);
+            var refusal = StillAllowed(mapChannel, client, player, action, actionInfo, info);
 
             if (refusal.HasValue)
             {
@@ -529,7 +529,13 @@ namespace Rasa.Managers
         /// What is not re-weighed: a target that died or despawned mid-windup. The ability was
         /// performed, it costs what it costs, and it hits nothing - which is what happens now.
         /// </summary>
-        private PlayerMessage? StillAllowed(MapChannel mapChannel, Client client, Manifestation player, ActionData action, ActionLevelInfo info)
+        private PlayerMessage? StillAllowed(
+            MapChannel mapChannel,
+            Client client,
+            Manifestation player,
+            ActionData action,
+            ActionInfo actionInfo,
+            ActionLevelInfo info)
         {
             // Asked for with an item, so it is the item that has to still grant it - a skill the
             // player also happens to have does not stand in for the one they used.
@@ -560,11 +566,25 @@ namespace Rasa.Managers
                 if (InventoryManager.Instance.CountItemsByClass(client, requirement.ItemClass) < requirement.Quantity)
                     return PlayerMessage.PmMissingReqItem;
 
-            if (action.TargetId != 0 && info.MaxRange > 0)
+            if (action.TargetId != 0)
             {
                 var target = ResolveTarget(mapChannel, action.TargetId);
 
-                if (target != null && Vector3.Distance(player.Position, target.Position) > info.MaxRange + RangeSlack)
+                if (target == null)
+                    return PlayerMessage.PmActionFailedNoTarget;
+
+                if (IsDirectDamage(actionInfo, info) &&
+                    !IsValidPrimaryTarget(mapChannel, player, target))
+                    return target.State == CharacterState.Dead ||
+                           target.State == CharacterState.Dying ||
+                           !target.Attributes.TryGetValue(Attributes.Health, out var health) ||
+                           health.Current <= 0
+                        ? PlayerMessage.PmActionFailedTargetDead
+                        : PlayerMessage.PmActionFailedActorFriendly;
+
+                var distance = Vector3.Distance(player.Position, target.Position);
+                if (!float.IsFinite(distance) ||
+                    info.MaxRange > 0 && distance > info.MaxRange + RangeSlack)
                     return PlayerMessage.PmTargetOutOfRange;
             }
 
@@ -632,7 +652,7 @@ namespace Rasa.Managers
             var primary = action.TargetId != 0 ? ResolveTarget(mapChannel, action.TargetId) as Creature : null;
             var lightning = actionInfo.Module == "abilities.lightning";
 
-            if (lightning && primary != null)
+            if (lightning && IsValidPrimaryTarget(mapChannel, player, primary))
             {
                 targets.Add(primary);
             }
@@ -744,7 +764,8 @@ namespace Rasa.Managers
         {
             if (mapChannel == null || player == null || primary == null ||
                 maximumTargets <= 0 || !float.IsFinite(radius) || radius <= 0 ||
-                primary.MapContextId != mapChannel.MapInfo.MapContextId)
+                !IsValidPrimaryTarget(mapChannel, player, primary) ||
+                !IsFinite(primary.Position))
                 return new List<Creature>();
 
             var radiusSquared = radius * radius;
@@ -773,6 +794,27 @@ namespace Rasa.Managers
                 .Select(entry => entry.Target)
                 .ToList();
         }
+
+        private static bool IsValidPrimaryTarget(
+            MapChannel mapChannel,
+            Manifestation player,
+            Actor target)
+        {
+            return target is Creature creature &&
+                   mapChannel != null &&
+                   player != null &&
+                   creature.MapContextId == mapChannel.MapInfo.MapContextId &&
+                   EntityManager.Instance.GetEntityType(creature.EntityId) == EntityType.Creature &&
+                   EntityManager.Instance.Creatures.TryGetValue(
+                       creature.EntityId, out var registered) &&
+                   ReferenceEquals(creature, registered) &&
+                   IsHostile(player, creature);
+        }
+
+        private static bool IsFinite(Vector3 position) =>
+            float.IsFinite(position.X) &&
+            float.IsFinite(position.Y) &&
+            float.IsFinite(position.Z);
 
         #endregion
 

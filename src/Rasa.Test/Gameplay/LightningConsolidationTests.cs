@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Reflection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace Rasa.Test.Gameplay
@@ -130,6 +131,72 @@ namespace Rasa.Test.Gameplay
             Assert.AreEqual(12f, spec.Radius);
             Assert.AreEqual(210, spec.Damage);
             Assert.AreEqual(1, spec.MaximumTargets);
+        }
+
+        [TestMethod]
+        public void LightningLandingRejectsPrimaryThatBecameInvalidDuringWindup()
+        {
+            using var world = new WorldTestContext();
+            var client = world.CreateClient();
+            CellManager.Instance.AddToWorld(client);
+            var primary = AddTarget(world, new Vector3(10, 0, 0));
+            var arc = AddTarget(world, new Vector3(11, 0, 0));
+            var manager = (AbilityManager)typeof(AbilityManager)
+                .GetConstructor(BindingFlags.Instance | BindingFlags.NonPublic, null,
+                    new[] { typeof(Rasa.Repositories.UnitOfWork.IGameUnitOfWorkFactory) }, null)
+                .Invoke(new object[] { null });
+            var actions = (Dictionary<ActionId, ActionInfo>)typeof(AbilityManager)
+                .GetField("_actions", BindingFlags.Instance | BindingFlags.NonPublic)
+                .GetValue(manager);
+            var info = new ActionLevelInfo
+            {
+                ActionId = ActionId.AaRecruitLightning,
+                Level = 1,
+                MaxRange = 20
+            };
+            info.Properties[AbilityProperty.DamageAmountMin] = 10;
+            info.Properties[AbilityProperty.DamageAmountMax] = 10;
+            info.Properties[AbilityProperty.ArcRadius] = 5;
+            info.Properties[AbilityProperty.ArcDamage] = 5;
+            info.Properties[AbilityProperty.RadiusAroundTarget] = 5;
+            var actionInfo = new ActionInfo
+            {
+                ActionId = ActionId.AaRecruitLightning,
+                Module = "abilities.lightning"
+            };
+            actionInfo.Levels[1] = info;
+            actions[actionInfo.ActionId] = actionInfo;
+            client.Player.Skills[(SkillId)1] =
+                new SkillsData((SkillId)1, (int)ActionId.AaRecruitLightning, 1);
+            var action = new ActionData(client.Player, ActionId.AaRecruitLightning, 1,
+                primary.EntityId, 0);
+            lock (Rasa.Game.Server.Clients)
+                Rasa.Game.Server.Clients.Add(client);
+
+            try
+            {
+                var primaryHealth = primary.Attributes[Attributes.Health];
+                var arcHealth = arc.Attributes[Attributes.Health];
+                EntityManager.Instance.UnregisterCreature(primary.EntityId);
+                manager.PerformRecovery(world.Map, action);
+
+                Assert.AreEqual(100, primaryHealth.Current);
+                Assert.AreEqual(100, arcHealth.Current);
+                Assert.AreEqual(0, WorldTestContext.Drain(client)
+                    .Select(packet => packet.Message)
+                    .OfType<Rasa.Packets.Protocol.CallMethodMessage>()
+                    .Select(message => message.Packet)
+                    .OfType<AbilityRecoveryPacket>()
+                    .Count());
+            }
+            finally
+            {
+                lock (Rasa.Game.Server.Clients)
+                    Rasa.Game.Server.Clients.Remove(client);
+                if (!EntityManager.Instance.Creatures.ContainsKey(primary.EntityId))
+                    EntityManager.Instance.RegisterCreature(primary);
+                Cleanup(world, primary, arc);
+            }
         }
 
         private static Creature AddTarget(WorldTestContext world, Vector3 position)

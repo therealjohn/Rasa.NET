@@ -830,7 +830,7 @@ namespace Rasa.Managers
             return (int)balance;
         }
 
-        public void UpdateCharacter(Client client, CharacterUpdate job, object value = null)
+        public bool UpdateCharacter(Client client, CharacterUpdate job, object value = null)
         {
             using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
             switch (job)
@@ -848,8 +848,7 @@ namespace Rasa.Managers
                     break;
 
                 case CharacterUpdate.Credits:
-                    PersistCurrency(client, unitOfWork, CurencyType.Credits, (int)value);
-                    break;
+                    return PersistCurrency(client, unitOfWork, CurencyType.Credits, (int)value);
 
                 case CharacterUpdate.Expirience:
                     unitOfWork.Characters.UpdateCharacterExpirience(client.Player.Id, client.Player.Experience);
@@ -898,8 +897,7 @@ namespace Rasa.Managers
                     break;
 
                 case CharacterUpdate.Prestige:
-                    PersistCurrency(client, unitOfWork, CurencyType.Prestige, (int)value);
-                    break;
+                    return PersistCurrency(client, unitOfWork, CurencyType.Prestige, (int)value);
 
                 case CharacterUpdate.Stats:
                     break;
@@ -916,16 +914,18 @@ namespace Rasa.Managers
                 default:
                     break;
             }
+
+            return true;
         }
 
-        private static void PersistCurrency(
+        private static bool PersistCurrency(
             Client client,
             ICharUnitOfWork unitOfWork,
             CurencyType type,
             int change)
         {
             if (client?.Player == null || !client.Player.Credits.TryGetValue(type, out var current))
-                return;
+                return false;
 
             var next = ClampCurrency(client, type, change);
 
@@ -955,12 +955,13 @@ namespace Rasa.Managers
             {
                 Logger.WriteLog(LogType.Error,
                     $"Could not persist {type} for character {client.Player.Id}: {error.Message}");
-                return;
+                return false;
             }
 
             client.Player.Credits[type] = next;
             client.CallMethod(client.Player.EntityId,
                 new UpdateCreditsPacket(type, next, 0));
+            return true;
         }
     }
 }

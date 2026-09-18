@@ -73,6 +73,8 @@ namespace Rasa.Managers
         private static InventoryManager _instance;
         private static readonly object InstanceLock = new object();
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
+        private readonly ManifestationManager _currencyManager;
+        private readonly CharacterManager _characterManager;
         public static InventoryManager Instance
         {
             get
@@ -94,6 +96,8 @@ namespace Rasa.Managers
         internal InventoryManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
+            _currencyManager = new ManifestationManager(gameUnitOfWorkFactory);
+            _characterManager = new CharacterManager(gameUnitOfWorkFactory);
         }
 
         #region Handlers
@@ -248,7 +252,7 @@ namespace Rasa.Managers
                 return;
             }
 
-            if (!ManifestationManager.Instance.LossCredits(client, price))
+            if (!_currencyManager.LossCredits(client, price))
                 return;
 
             // update Player
@@ -914,7 +918,7 @@ namespace Rasa.Managers
                     // The lockbox is credited only if the purse was actually debited. The check
                     // above already covers it, but the two halves are written separately here and
                     // a lockbox that gains what nobody lost is credits made out of nothing.
-                    if (!ManifestationManager.Instance.LossCredits(client, amount))
+                    if (!_currencyManager.LossCredits(client, amount))
                         return;
 
                     client.CallMethod(client.Player.EntityId, new LockboxFundsPacket(deposit));
@@ -932,7 +936,9 @@ namespace Rasa.Managers
                 {
                     var withdraw = client.Player.LockboxCredits + amount;
 
-                    ManifestationManager.Instance.GainCredits(client, -amount);
+                    if (!_currencyManager.GainCredits(client, -amount))
+                        return;
+
                     client.CallMethod(client.Player.EntityId, new LockboxFundsPacket(withdraw));
 
                     client.Player.LockboxCredits = withdraw;
@@ -1173,7 +1179,9 @@ namespace Rasa.Managers
             // amount was boxed and unboxed as an int, an InvalidCastException, so the clan
             // kept every deposit, the depositor kept the money, and the client was
             // disconnected. If the second step fails now the player is short, not the clan.
-            CharacterManager.Instance.UpdateCharacter(client, characterUpdate, (int)(-amount));
+            if (!_characterManager.UpdateCharacter(
+                    client, characterUpdate, (int)(-amount)))
+                return;
 
             if (creditType == 1)
                 unitOfWork.Clans.UpdateCredits(client.Player.ClanId, (uint)lockboxAfter);

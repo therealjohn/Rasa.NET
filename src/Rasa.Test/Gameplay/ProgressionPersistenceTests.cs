@@ -31,11 +31,31 @@ namespace Rasa.Test.Gameplay
             }
             context.BeforeSave = _ => throw new DbUpdateException("Injected currency failure.");
 
-            manager.UpdateCharacter(context.Client, CharacterUpdate.Credits, 7);
+            Assert.IsFalse(manager.UpdateCharacter(
+                context.Client, CharacterUpdate.Credits, 7));
 
             Assert.AreEqual(100, context.Client.Player.Credits[CurencyType.Credits]);
             using (var verify = context.Open())
                 Assert.AreEqual(100, verify.CharacterEntries.AsNoTracking().Single().Credit);
+            Assert.AreEqual(0, WorldTestContext.Drain(context.Client).Count);
+        }
+
+        [TestMethod]
+        public void FailedCreditGainDoesNotPublishARewardMessage()
+        {
+            using var context = new WeaponAmmoContext();
+            context.Client.Player.Credits[CurencyType.Credits] = 100;
+            using (var database = context.Open())
+            {
+                database.CharacterEntries.Single().Credit = 100;
+                database.SaveChanges();
+            }
+            context.BeforeSave = _ => throw new DbUpdateException("Injected reward failure.");
+
+            Assert.IsFalse(new ManifestationManager(context)
+                .GainCredits(context.Client, 7));
+
+            Assert.AreEqual(100, context.Client.Player.Credits[CurencyType.Credits]);
             Assert.AreEqual(0, WorldTestContext.Drain(context.Client).Count);
         }
 

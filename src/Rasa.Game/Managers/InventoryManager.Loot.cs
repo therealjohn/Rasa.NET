@@ -50,6 +50,10 @@ namespace Rasa.Managers
                     row.CharacterId == client.Player.Id &&
                     row.InventoryType == (uint)InventoryType.Personal).ToArray();
 
+                if (personalRows.Any(row => row.SlotId >= inventory.Count))
+                    throw new GameplayRejectionException(
+                        "Persisted personal inventory has an out-of-range slot.");
+
                 if (personalRows.Select(row => row.SlotId).Distinct().Count() != personalRows.Length)
                     throw new GameplayRejectionException("Persisted personal inventory has duplicate slots.");
 

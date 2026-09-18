@@ -55,6 +55,8 @@ namespace Rasa.Managers
         private static readonly object InstanceLock = new object();
 
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
+        private readonly ManifestationManager _currencyManager;
+        private readonly CharacterManager _characterManager;
 
         /// <summary>
         /// Deposit charged to list an item, in tenths of a percent, by the duration the seller
@@ -91,6 +93,8 @@ namespace Rasa.Managers
         private AuctionHouseManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
+            _currencyManager = new ManifestationManager(gameUnitOfWorkFactory);
+            _characterManager = new CharacterManager(gameUnitOfWorkFactory);
         }
 
         #region Handlers
@@ -146,17 +150,31 @@ namespace Rasa.Managers
                 return;
             }
 
-            // Delivered before anyone is charged: if the inbox will not take it, nothing else
-            // has happened yet and the auction is still standing.
+            if (!_currencyManager.LossCredits(client, (int)auction.Price))
+            {
+                BuyoutFailed(client, packet.ItemId, PlayerMessage.PmAuctionPendingTransaction);
+                return;
+            }
+
+            if (!PaySeller(unitOfWork, auction))
+            {
+                if (!_currencyManager.GainCredits(client, (int)auction.Price))
+                    Logger.WriteLog(LogType.Error,
+                        $"Auction buyout for item {item.Id} could not refund buyer {client.Player.Id}.");
+                BuyoutFailed(client, packet.ItemId, PlayerMessage.PmAuctionPendingTransaction);
+                return;
+            }
+
             if (!InventoryManager.Instance.DeliverToInbox(unitOfWork, client.AccountEntry.Id, client.Player.Id, item))
             {
+                if (!_currencyManager.GainCredits(client, (int)auction.Price))
+                    Logger.WriteLog(LogType.Error,
+                        $"Auction buyout for item {item.Id} could not refund buyer {client.Player.Id}.");
                 BuyoutFailed(client, packet.ItemId, PlayerMessage.PmAuctionNoBuyoutInboxFull);
                 return;
             }
 
             unitOfWork.Auctions.DeleteAuction(item.Id);
-            CharacterManager.Instance.UpdateCharacter(client, CharacterUpdate.Credits, -(int)auction.Price);
-            PaySeller(unitOfWork, auction);
             RemoveFromSellersAuctionList(auction.SellerId, item.EntityId, auction.Price);
 
             client.CallMethod(SysEntity.ClientAuctionHouseManagerId, new AuctionBuyoutSuccessPacket(item.EntityId));
@@ -301,6 +319,12 @@ namespace Rasa.Managers
                 return;
             }
 
+            if (!_currencyManager.LossCredits(client, (int)deposit))
+            {
+                Fail(client, packet.ItemEntityId, PlayerMessage.PmAuctionNotEnoughCreditsForDeposit);
+                return;
+            }
+
             using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
             var auction = new AuctionEntry(item.Id, client.Player.Id, client.Player.Name, packet.Price,
                 deposit, DurationHours[packet.Duration]);
@@ -309,11 +333,12 @@ namespace Rasa.Managers
             // the player keeps their credits and their item.
             if (!unitOfWork.Auctions.CreateAuction(auction))
             {
+                if (!_currencyManager.GainCredits(client, (int)deposit))
+                    Logger.WriteLog(LogType.Error,
+                        $"Auction listing for item {item.Id} could not refund character {client.Player.Id}.");
                 Fail(client, packet.ItemEntityId, PlayerMessage.PmAuctionInternalError);
                 return;
             }
-
-            CharacterManager.Instance.UpdateCharacter(client, CharacterUpdate.Credits, -(int)deposit);
 
             // Out of the pack, into the auction inventory. RemoveItemBySlot does no database work
             // of its own, so the row is moved here.
@@ -602,15 +627,13 @@ namespace Rasa.Managers
         /// they are online so their purse and their client agree, and straight to the row when
         /// they are not - the money has to arrive either way.
         /// </summary>
-        private static void PaySeller(ICharUnitOfWork unitOfWork, AuctionEntry auction)
+        private bool PaySeller(ICharUnitOfWork unitOfWork, AuctionEntry auction)
         {
             var seller = OnlineSeller(auction.SellerId);
 
             if (seller != null)
-            {
-                CharacterManager.Instance.UpdateCharacter(seller, CharacterUpdate.Credits, (int)auction.Price);
-                return;
-            }
+                return _characterManager.UpdateCharacter(
+                    seller, CharacterUpdate.Credits, (int)auction.Price);
 
             var character = unitOfWork.Characters.Find(auction.SellerId);
 
@@ -621,10 +644,21 @@ namespace Rasa.Managers
             if (character == null)
             {
                 Logger.WriteLog(LogType.Error, $"Auction on item {auction.ItemId} sold but seller {auction.SellerId} no longer exists; proceeds dropped.");
-                return;
+                return true;
             }
 
-            unitOfWork.Characters.UpdateCharacterCredits(auction.SellerId, character.Credit + (int)auction.Price);
+            try
+            {
+                unitOfWork.Characters.UpdateCharacterCredits(
+                    auction.SellerId, checked(character.Credit + (int)auction.Price));
+                return true;
+            }
+            catch (Exception error)
+            {
+                Logger.WriteLog(LogType.Error,
+                    $"Auction on item {auction.ItemId} could not pay seller {auction.SellerId}: {error.Message}");
+                return false;
+            }
         }
 
         /// <summary>

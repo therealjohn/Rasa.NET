@@ -27,6 +27,7 @@ namespace Rasa.Managers
         private static NpcManager _instance;
         private static readonly object InstanceLock = new object();
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
+        private readonly ManifestationManager _currencyManager;
 
         public static NpcManager Instance
         {
@@ -49,6 +50,7 @@ namespace Rasa.Managers
         private NpcManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
+            _currencyManager = new ManifestationManager(gameUnitOfWorkFactory);
         }
 
         #region NPC
@@ -484,6 +486,10 @@ namespace Rasa.Managers
             }
 
             var quantity = item.StackSize;
+
+            if (!_currencyManager.LossCredits(client, (int)price))
+                return;
+
             var placedItem = InventoryManager.Instance.AddItemToInventory(client, item);
 
             if (placedItem == null)
@@ -494,10 +500,18 @@ namespace Rasa.Managers
 
                 if (placed == 0)
                 {
+                    if (!_currencyManager.GainCredits(client, (int)price))
+                        Logger.WriteLog(LogType.Error,
+                            $"Could not refund failed buyback purchase for character {client.Player.Id}.");
                     client.CallMethod(SysEntity.CommunicatorId, new DisplayClientMessagePacket(PlayerMessage.PmInventoryFull, new Dictionary<string, string>(), MsgFilterId.GeneralSystemMessages));
                     return;
                 }
 
+                var refund = price - (long)unitPrice * placed;
+                if (refund > 0 &&
+                    !_currencyManager.GainCredits(client, (int)refund))
+                    Logger.WriteLog(LogType.Error,
+                        $"Could not refund partial buyback purchase for character {client.Player.Id}.");
                 price = (long) unitPrice * placed;
             }
             else
@@ -506,8 +520,6 @@ namespace Rasa.Managers
                 client.CallMethod(SysEntity.ClientInventoryManagerId, new RemoveBuybackItemPacket(packet.ItemEntityId));
             }
 
-            // remove credits
-            ManifestationManager.Instance.LossCredits(client, (int) price);
         }
 
         public void RequestVendorPurchase(Client client, RequestVendorPurchasePacket packet)
@@ -564,11 +576,19 @@ namespace Rasa.Managers
                 return;
             }
 
+            if (!_currencyManager.LossCredits(client, (int)total))
+                return;
+
             // A fresh item with its own row in the items table, holding the whole quantity.
             var boughtItem = ItemManager.Instance.DuplicateItem(client, packet);
 
             if (boughtItem == null)
+            {
+                if (!_currencyManager.GainCredits(client, (int)total))
+                    Logger.WriteLog(LogType.Error,
+                        $"Could not refund failed vendor purchase for character {client.Player.Id}.");
                 return;
+            }
 
             var quantity = boughtItem.StackSize;
 
@@ -594,19 +614,25 @@ namespace Rasa.Managers
 
                 if (placed == 0)
                 {
+                    if (!_currencyManager.GainCredits(client, (int)total))
+                        Logger.WriteLog(LogType.Error,
+                            $"Could not refund failed vendor purchase for character {client.Player.Id}.");
                     client.CallMethod(SysEntity.CommunicatorId, new DisplayClientMessagePacket(PlayerMessage.PmInventoryFull, new Dictionary<string, string>(), MsgFilterId.GeneralSystemMessages));
                     return;
                 }
 
                 quantity = placed;
+                var charged = total;
                 total = (long) unitPrice * quantity;
+                var refund = charged - total;
+                if (refund > 0 &&
+                    !_currencyManager.GainCredits(client, (int)refund))
+                    Logger.WriteLog(LogType.Error,
+                        $"Could not refund partial vendor purchase for character {client.Player.Id}.");
             }
 
             // send player message
             client.CallMethod(SysEntity.CommunicatorId, new DisplayClientMessagePacket(PlayerMessage.PmGotLootFromUnknown, new Dictionary<string, string> { { "quantity", quantity.ToString() }, { "loot", vendorItem.ItemTemplate.Class.ToString() } }, MsgFilterId.LootObtained));
-
-            // remove credits
-            ManifestationManager.Instance.LossCredits(client, (int) total);
         }
 
         /// <summary>
@@ -715,8 +741,10 @@ namespace Rasa.Managers
                 return RepairResult.Unaffordable;
             }
 
+            if (!_currencyManager.LossCredits(client, cost))
+                return RepairResult.Unaffordable;
+
             item.CurrentHitPoints = maxHitPoints;
-            ManifestationManager.Instance.LossCredits(client, cost);
             ItemManager.Instance.SendItemDataToClient(client, item, true);
 
             // The condition change itself. SendItemDataToClient carries the new hit points in
@@ -768,6 +796,10 @@ namespace Rasa.Managers
             var quantity = (uint) Math.Min(packet.Quantity, soldItem.StackSize);
             var sellPrice = Math.Min((long) Math.Max(soldItem.ItemTemplate.SellPrice, 0) * quantity, int.MaxValue);
 
+            if (sellPrice > 0 &&
+                !_currencyManager.GainCredits(client, (int)sellPrice))
+                return;
+
             using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
 
             if (quantity < soldItem.StackSize)
@@ -795,9 +827,6 @@ namespace Rasa.Managers
                 InventoryManager.Instance.RemoveItemBySlot(client, InventoryType.Personal, slotIndex);
                 unitOfWork.CharacterInventories.DeleteInvItemByItemId(soldItem.Id);
             }
-
-            // add credits to player
-            ManifestationManager.Instance.GainCredits(client, (int) sellPrice);
 
             // add item to buyback list, retiring the oldest if it is full
             var buyback = client.Player.Inventory.BuybackItems;

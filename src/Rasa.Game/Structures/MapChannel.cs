@@ -49,6 +49,11 @@ namespace Rasa.Structures
 
         // Dictionary<uniqueLootDispenserId, dataAboutLootDispenser> LootDispensers
         public Dictionary<ulong, LootDispenser> LootDispensers = new Dictionary<ulong, LootDispenser>();
+        /// <summary>
+        /// Protects loot dispensers, corpse lifetime decisions, and looter state. When both are
+        /// needed, acquire Client.SyncRoot before this lock; never acquire a client lock while
+        /// holding this one.
+        /// </summary>
         internal object LootSyncRoot { get; } = new object();
 
         // Missiles on this mapChannel

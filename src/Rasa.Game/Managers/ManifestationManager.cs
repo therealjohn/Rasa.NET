@@ -103,6 +103,7 @@ namespace Rasa.Managers
         private static ManifestationManager _instance;
         private static readonly object InstanceLock = new object();
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
+        private readonly CharacterManager _characterManager;
 
         private static List<AutoFireTimer> AutoFire = new List<AutoFireTimer>();
 
@@ -159,6 +160,7 @@ namespace Rasa.Managers
         internal ManifestationManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
+            _characterManager = new CharacterManager(gameUnitOfWorkFactory);
         }
 
         // constant skillId data
@@ -1312,17 +1314,20 @@ namespace Rasa.Managers
         /// instead, so the four lockbox tabs paid the player 100 K to 100 M credits each.
         /// The names mean what they say now, and the sign is not the caller's to choose.
         /// </remarks>
-        public void GainCredits(Client client, int credits)
+        public bool GainCredits(Client client, int credits)
         {
             if (credits <= 0)
             {
                 Logger.WriteLog(LogType.Error, $"GainCredits({credits}) for {client.Player?.FamilyName}: credits are gained in positive amounts. Nothing moved.");
-                return;
+                return false;
             }
 
-            CharacterManager.Instance.UpdateCharacter(client, CharacterUpdate.Credits, credits);
+            if (!_characterManager.UpdateCharacter(client, CharacterUpdate.Credits, credits))
+                return false;
+
             // send player message
             client.CallMethod(SysEntity.CommunicatorId, new DisplayClientMessagePacket(PlayerMessage.PmGotMoneyLootFromUnknown, new Dictionary<string, string> { { "amount", credits.ToString() } }, MsgFilterId.LootObtained));
+            return true;
         }
 
         /// <summary>
@@ -1344,8 +1349,8 @@ namespace Rasa.Managers
             if (client.Player.Credits[CurencyType.Credits] < credits)
                 return false;
 
-            CharacterManager.Instance.UpdateCharacter(client, CharacterUpdate.Credits, -credits);
-            return true;
+            return _characterManager.UpdateCharacter(
+                client, CharacterUpdate.Credits, -credits);
         }
 
         public int GetAvailableAttributePoints(Manifestation player)

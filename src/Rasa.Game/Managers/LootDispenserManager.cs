@@ -42,6 +42,24 @@ namespace Rasa.Managers
         private static readonly object InstanceLock = new object();
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
         private readonly Func<Client, double> _distance;
+        private readonly object _retirementSyncRoot = new object();
+        private readonly Dictionary<ulong, PendingRetirement> _pendingRetirements = new();
+
+        private sealed class PendingRetirement
+        {
+            internal IGameUnitOfWorkFactory Factory;
+            internal uint[] ItemIds;
+            internal ulong[] EntityIds;
+            internal bool InProgress;
+        }
+
+        private sealed class RetirementNotice
+        {
+            internal Client Client;
+            internal ulong LootEntityId;
+            internal CanLootItemsPacket CanLoot;
+            internal DestroyPhysicalEntityPacket Destroy;
+        }
 
         public static LootDispenserManager Instance
         {
@@ -115,23 +133,26 @@ namespace Rasa.Managers
         /// </summary>
         internal bool MayDespawn(MapChannel mapChannel, Creature creature, long deadTime)
         {
-            if (mapChannel == null || creature.CorpseLootEntityId == 0
-                || !mapChannel.LootDispensers.TryGetValue(creature.CorpseLootEntityId, out var loot))
-                return deadTime >= EmptyCorpseMs;
+            RetryPendingRetirements();
 
-            // Someone has it open. Their window closing clears this, and the cap is there so a
-            // player who walks away with it open cannot hold a corpse for ever.
-            if (loot.CurrentLooter != 0)
-                return deadTime >= BeingLootedCorpseMs;
+            if (mapChannel == null || creature == null)
+                return true;
 
-            if (loot.HasLoot)
-                return deadTime >= LootableCorpseMs;
+            lock (mapChannel.LootSyncRoot)
+            {
+                if (creature.CorpseLootEntityId == 0 ||
+                    !mapChannel.LootDispensers.TryGetValue(
+                        creature.CorpseLootEntityId, out var loot))
+                    return Math.Max(deadTime, creature.Controller?.DeadTime ?? 0) >=
+                           EmptyCorpseMs;
 
-            return deadTime >= EmptyCorpseMs;
+                return HasExpired(loot, creature, deadTime);
+            }
         }
 
         internal LootDispenser Create(Client killer, Creature creature)
         {
+            RetryPendingRetirements();
             var mapChannel = killer.Player.MapChannel;
             var loot = new LootDispenser();
             loot.IsLootable = true;
@@ -147,11 +168,11 @@ namespace Rasa.Managers
 
             CreateLoot(killer, loot);
 
-            mapChannel.LootDispensers.Add(loot.EntityId, loot);
-
-            // So the despawn check can find it without walking every dispenser on the map on
-            // every creature on every tick.
-            creature.CorpseLootEntityId = loot.EntityId;
+            lock (mapChannel.LootSyncRoot)
+            {
+                mapChannel.LootDispensers.Add(loot.EntityId, loot);
+                creature.CorpseLootEntityId = loot.EntityId;
+            }
 
             return loot;
         }
@@ -210,11 +231,14 @@ namespace Rasa.Managers
             if (mapChannel == null || creature == null)
                 return;
 
+            RetryPendingRetirements();
+            var notices = new List<RetirementNotice>();
             lock (mapChannel.LootSyncRoot)
                 foreach (var loot in mapChannel.LootDispensers.Values
                              .Where(entry => ReferenceEquals(entry.Corpse, creature) ||
                                              entry.AttachedTo == creature.EntityId).ToArray())
-                    Retire(mapChannel, loot, true);
+                    notices.Add(Retire(mapChannel, loot, true));
+            Publish(notices);
         }
 
         internal void RemoveForOwner(MapChannel mapChannel, Client client)
@@ -222,11 +246,17 @@ namespace Rasa.Managers
             if (mapChannel == null || client == null)
                 return;
 
-            lock (mapChannel.LootSyncRoot)
-                foreach (var loot in mapChannel.LootDispensers.Values
-                             .Where(entry => ReferenceEquals(entry.OwnerClient, client) ||
-                                             entry.Owner == client.Player?.EntityId).ToArray())
-                    Retire(mapChannel, loot, true);
+            RetryPendingRetirements();
+            var notices = new List<RetirementNotice>();
+            lock (client.SyncRoot)
+            {
+                lock (mapChannel.LootSyncRoot)
+                    foreach (var loot in mapChannel.LootDispensers.Values
+                                 .Where(entry => ReferenceEquals(entry.OwnerClient, client) ||
+                                                 entry.Owner == client.Player?.EntityId).ToArray())
+                        notices.Add(Retire(mapChannel, loot, true));
+                Publish(notices);
+            }
         }
 
         /// <summary>
@@ -271,14 +301,20 @@ namespace Rasa.Managers
         /// </summary>
         internal void CancelCorpseLooting(Client client, CancelCorpseLootingPacket packet)
         {
-            var dispensers = client?.Player?.MapChannel?.LootDispensers;
-
-            if (dispensers == null || !dispensers.TryGetValue(packet.EntityId, out var loot))
+            if (client == null || packet == null)
                 return;
 
-            // Only the player who has it open may close it.
-            if (loot.CurrentLooter == client.Player.EntityId)
-                loot.CurrentLooter = 0;
+            lock (client.SyncRoot)
+            {
+                var map = client.Player?.MapChannel;
+                if (map == null)
+                    return;
+
+                lock (map.LootSyncRoot)
+                    if (map.LootDispensers.TryGetValue(packet.EntityId, out var loot) &&
+                        loot.CurrentLooter == client.Player.EntityId)
+                        loot.CurrentLooter = 0;
+            }
         }
 
         /// <summary>Takes one item off a corpse.</summary>
@@ -503,7 +539,8 @@ namespace Rasa.Managers
                 corpseHealth.Current > 0 ||
                 corpse.MapContextId != player.MapContextId ||
                 !map.MapCellInfo.Cells.Values.Any(cell => cell.CreatureList.Contains(corpse)) ||
-                !IsFinite(player.Position) || !IsFinite(corpse.Position))
+                !IsFinite(player.Position) || !IsFinite(corpse.Position) ||
+                HasExpired(loot, corpse))
                 return false;
 
             return Vector3.Distance(player.Position, corpse.Position) <= limit;
@@ -514,18 +551,19 @@ namespace Rasa.Managers
             float.IsFinite(value.Y) &&
             float.IsFinite(value.Z);
 
-        private void Retire(MapChannel map, LootDispenser loot, bool notify)
+        private RetirementNotice Retire(MapChannel map, LootDispenser loot, bool notify)
         {
             if (!map.LootDispensers.TryGetValue(loot.EntityId, out var current) ||
                 !ReferenceEquals(current, loot))
-                return;
+                return null;
 
             var unclaimed = loot.LootItems
                 .Where(item => !item.Taken && item.Item?.Id > 0)
-                .Select(item => item.Item.Id)
+                .Select(item => (ItemId: item.Item.Id, EntityId: item.EntityId))
                 .Distinct()
                 .ToArray();
 
+            var durableCleanupSucceeded = true;
             if (unclaimed.Length > 0)
             {
                 try
@@ -537,10 +575,10 @@ namespace Rasa.Managers
                     using var unitOfWork = factory.CreateChar();
                     unitOfWork.ExecuteTransaction(() =>
                     {
-                        foreach (var itemId in unclaimed)
+                        foreach (var item in unclaimed)
                         {
-                            unitOfWork.CharacterInventories.DeleteInvItemByItemId(itemId);
-                            unitOfWork.Items.DeleteItem(itemId);
+                            unitOfWork.CharacterInventories.DeleteInvItemByItemId(item.ItemId);
+                            unitOfWork.Items.DeleteItem(item.ItemId);
                         }
                     });
                 }
@@ -549,6 +587,7 @@ namespace Rasa.Managers
                     error is DbUpdateException ||
                     error is DbException)
                 {
+                    durableCleanupSucceeded = false;
                     Logger.WriteLog(LogType.Error,
                         $"Could not delete {unclaimed.Length} unclaimed loot item row(s): {error.Message}");
                 }
@@ -560,17 +599,29 @@ namespace Rasa.Managers
 
             var owner = loot.OwnerClient ??
                         map.ClientList.Find(client => client.Player?.EntityId == loot.Owner);
-            if (notify && owner?.State == ClientState.Ingame)
-            {
-                owner.CallMethod(loot.EntityId,
-                    new CanLootItemsPacket(false, loot.LootItems));
-                owner.CallMethod(SysEntity.ClientMethodId,
-                    new DestroyPhysicalEntityPacket(loot.EntityId));
-            }
+            var notice = notify && owner != null
+                ? new RetirementNotice
+                {
+                    Client = owner,
+                    LootEntityId = loot.EntityId,
+                    CanLoot = new CanLootItemsPacket(false, loot.LootItems),
+                    Destroy = new DestroyPhysicalEntityPacket(loot.EntityId)
+                }
+                : null;
 
             foreach (var item in loot.LootItems)
                 if (!item.Taken && item.Item != null)
-                    EntityManager.Instance.ReleaseEntity(item.EntityId, EntityType.Item);
+                {
+                    EntityManager.Instance.UnregisterEntity(item.EntityId);
+                    EntityManager.Instance.UnregisterItem(item.EntityId);
+                    if (durableCleanupSucceeded)
+                        EntityManager.Instance.FreeEntity(item.EntityId);
+                }
+
+            if (!durableCleanupSucceeded)
+                QueueRetirement(loot.EntityId, loot.UnitOfWorkFactory ?? _gameUnitOfWorkFactory,
+                    unclaimed.Select(item => item.ItemId).ToArray(),
+                    unclaimed.Select(item => item.EntityId).ToArray());
 
             loot.LootItems.Clear();
             loot.Credits = 0;
@@ -578,6 +629,107 @@ namespace Rasa.Managers
 
             if (loot.Corpse?.CorpseLootEntityId == loot.EntityId)
                 loot.Corpse.CorpseLootEntityId = 0;
+
+            return notice;
+        }
+
+        private static long LifetimeLimit(LootDispenser loot)
+        {
+            if (loot.CurrentLooter != 0)
+                return BeingLootedCorpseMs;
+            return loot.HasLoot ? LootableCorpseMs : EmptyCorpseMs;
+        }
+
+        private static bool HasExpired(
+            LootDispenser loot,
+            Creature corpse,
+            long observedDeadTime = 0) =>
+            loot == null ||
+            corpse?.Controller == null ||
+            Math.Max(observedDeadTime, corpse.Controller.DeadTime) >=
+            LifetimeLimit(loot);
+
+        private void QueueRetirement(
+            ulong lootEntityId,
+            IGameUnitOfWorkFactory factory,
+            uint[] itemIds,
+            ulong[] entityIds)
+        {
+            lock (_retirementSyncRoot)
+                _pendingRetirements[lootEntityId] = new PendingRetirement
+                {
+                    Factory = factory,
+                    ItemIds = itemIds,
+                    EntityIds = entityIds
+                };
+        }
+
+        private void RetryPendingRetirements()
+        {
+            PendingRetirement[] pending;
+            lock (_retirementSyncRoot)
+            {
+                pending = _pendingRetirements.Values
+                    .Where(entry => !entry.InProgress)
+                    .ToArray();
+                foreach (var entry in pending)
+                    entry.InProgress = true;
+            }
+
+            foreach (var entry in pending)
+            {
+                var succeeded = false;
+                try
+                {
+                    if (entry.Factory == null)
+                        throw new GameplayRejectionException(
+                            "No character persistence factory is available for loot cleanup retry.");
+                    using var unitOfWork = entry.Factory.CreateChar();
+                    unitOfWork.ExecuteTransaction(() =>
+                    {
+                        foreach (var itemId in entry.ItemIds)
+                        {
+                            unitOfWork.CharacterInventories.DeleteInvItemByItemId(itemId);
+                            unitOfWork.Items.DeleteItem(itemId);
+                        }
+                    });
+                    succeeded = true;
+                }
+                catch (Exception error) when (
+                    error is GameplayRejectionException ||
+                    error is DbUpdateException ||
+                    error is DbException)
+                {
+                    Logger.WriteLog(LogType.Error,
+                        $"Could not retry unclaimed loot cleanup: {error.Message}");
+                }
+
+                lock (_retirementSyncRoot)
+                {
+                    var pair = _pendingRetirements.FirstOrDefault(candidate =>
+                        ReferenceEquals(candidate.Value, entry));
+                    if (succeeded && pair.Value != null)
+                    {
+                        _pendingRetirements.Remove(pair.Key);
+                        foreach (var entityId in entry.EntityIds)
+                            EntityManager.Instance.FreeEntity(entityId);
+                    }
+                    else
+                    {
+                        entry.InProgress = false;
+                    }
+                }
+            }
+        }
+
+        private static void Publish(IEnumerable<RetirementNotice> notices)
+        {
+            foreach (var notice in notices.Where(entry => entry?.Client != null))
+                if (notice.Client.State == ClientState.Ingame)
+                {
+                    notice.Client.CallMethod(notice.LootEntityId, notice.CanLoot);
+                    notice.Client.CallMethod(SysEntity.ClientMethodId, notice.Destroy);
+                }
         }
 
         /// <summary>The rows TakenInfo should mark; the client keys off the ones it is sent.</summary>
