@@ -14,8 +14,20 @@ namespace Rasa.Login
 
         public void LoginSocket(LengthedSocket socket)
         {
+            var client = new LoginClient(this, socket);
+
             lock (Clients)
-                Clients.Add(new LoginClient(this, socket));
+                Clients.Add(client);
+
+            try
+            {
+                client.Start();
+            }
+            catch
+            {
+                client.Close();
+                throw;
+            }
         }
 
         public void ExchangeDone(LoginClient client)

@@ -153,6 +153,84 @@ namespace Rasa.Test.Networking
         }
 
         [TestMethod]
+        public async Task PreloadedLoginSuccessCompletesDuringStartOutsideTheClientListLock()
+        {
+            var (sender, accepted) = await ConnectAsync();
+            using (sender)
+            {
+                var handshake = CreateLoginHandshake(1, new byte[] { 1 });
+                await sender.SendAsync(handshake);
+                Assert.IsTrue(SpinWait.SpinUntil(
+                    () => accepted.Available == handshake.Length,
+                    TimeSpan.FromSeconds(5)));
+
+                var manager = new LoginManager();
+                LoginClient completedClient = null;
+                var callbacks = 0;
+                var callbackUnderLock = true;
+                var loginSocketReturned = false;
+                var callbackBeforeReturn = false;
+                manager.OnLogin = client =>
+                {
+                    callbacks++;
+                    completedClient = client;
+                    callbackUnderLock = Monitor.IsEntered(manager.Clients);
+                    callbackBeforeReturn = !loginSocketReturned;
+                };
+
+                manager.LoginSocket(new LengthedSocket(accepted, SizeType.Dword, false));
+                loginSocketReturned = true;
+
+                Assert.AreEqual(1, callbacks);
+                Assert.IsTrue(callbackBeforeReturn);
+                Assert.IsFalse(callbackUnderLock);
+                Assert.AreEqual(0, manager.Clients.Count);
+
+                completedClient.Socket.Close();
+            }
+        }
+
+        [TestMethod]
+        public async Task PreloadedMalformedLoginFailsDuringStartOutsideTheClientListLock()
+        {
+            var (sender, accepted) = await ConnectAsync();
+            using (sender)
+            {
+                var handshake = CreateLoginHandshake(0, Array.Empty<byte>());
+                await sender.SendAsync(handshake);
+                Assert.IsTrue(SpinWait.SpinUntil(
+                    () => accepted.Available == handshake.Length,
+                    TimeSpan.FromSeconds(5)));
+
+                var manager = new LoginManager();
+                LoginClient failedClient = null;
+                var callbacks = 0;
+                var callbackUnderLock = true;
+                var loginSocketReturned = false;
+                var callbackBeforeReturn = false;
+                manager.OnFail = client =>
+                {
+                    callbacks++;
+                    failedClient = client;
+                    callbackUnderLock = Monitor.IsEntered(manager.Clients);
+                    callbackBeforeReturn = !loginSocketReturned;
+                };
+
+                manager.LoginSocket(new LengthedSocket(accepted, SizeType.Dword, false));
+                loginSocketReturned = true;
+
+                Assert.AreEqual(1, callbacks);
+                Assert.IsTrue(callbackBeforeReturn);
+                Assert.IsFalse(callbackUnderLock);
+                Assert.AreEqual(0, manager.Clients.Count);
+                Assert.IsTrue(failedClient.Socket.Socket.SafeHandle.IsClosed);
+
+                failedClient.Close();
+                Assert.AreEqual(1, callbacks);
+            }
+        }
+
+        [TestMethod]
         public async Task QueueDisconnectWinningAdmissionRaceDoesNotEnqueue()
         {
             var (sender, accepted) = await ConnectAsync();
@@ -334,6 +412,17 @@ namespace Rasa.Test.Networking
                 UserId = userId,
                 OneTimeKey = oneTimeKey
             }.Write(writer));
+            return output.ToArray();
+        }
+
+        private static byte[] CreateLoginHandshake(int keyLength, byte[] key)
+        {
+            using var output = new MemoryStream();
+            WriteFrame(output, writer =>
+            {
+                writer.Write(keyLength);
+                writer.Write(key);
+            });
             return output.ToArray();
         }
 

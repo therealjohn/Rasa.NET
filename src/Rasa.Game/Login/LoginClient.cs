@@ -19,6 +19,7 @@ namespace Rasa.Login
         public BigNum PrivateKey { get; } = new BigNum();
         public BigNum PublicKey { get; } = new BigNum();
         public BigNum K { get; } = new BigNum();
+        private int _started;
         private int _lifecycle;
 
         public LoginClient(LoginManager manager, LengthedSocket socket)
@@ -30,6 +31,12 @@ namespace Rasa.Login
             Socket.OnReceive += OnReceive;
             Socket.OnError += OnError;
             Socket.OnDrop += OnDrop;
+        }
+
+        internal void Start()
+        {
+            if (Interlocked.Exchange(ref _started, 1) != 0)
+                return;
 
             DHKeyExchange.GeneratePrivateAndPublicA(PrivateKey, PublicKey);
 
@@ -39,6 +46,9 @@ namespace Rasa.Login
                 Prime = DHKeyExchange.ConstantPrime,
                 Generator = DHKeyExchange.ConstantGenerator
             });
+
+            if (Volatile.Read(ref _lifecycle) != 0)
+                return;
 
             Socket.OnEncrypt += OnEncrypt;
             Socket.ReceiveAsync();
