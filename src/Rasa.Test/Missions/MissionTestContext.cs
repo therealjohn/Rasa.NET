@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
 using System.Numerics;
@@ -29,6 +30,10 @@ namespace Rasa.Test.Missions
     using Rasa.Repositories.Char.CharacterMission;
     using Rasa.Repositories.Char.CharacterMissionProgress;
     using Rasa.Repositories.Char.CharacterTeleporter;
+    using Rasa.Repositories.Char.Clan;
+    using Rasa.Repositories.Char.ClanInventory;
+    using Rasa.Repositories.Char.ClanLockboxLog;
+    using Rasa.Repositories.Char.ClanMember;
     using Rasa.Repositories.Char.GameAccount;
     using Rasa.Repositories.Char.Items;
     using Rasa.Repositories.UnitOfWork;
@@ -566,6 +571,50 @@ namespace Rasa.Test.Missions
             return item;
         }
 
+        internal ClanEntry CreateClanForPlayer()
+        {
+            ClanEntry clan;
+            using (var unit = CreateChar())
+            {
+                clan = unit.Clans.CreateClan("Mission Test Clan", false);
+                if (!unit.ClanMembers.InsertClanMemberData(
+                        clan.Id,
+                        Client.Player.Id,
+                        ClanRank.Leader,
+                        ""))
+                    throw new InvalidOperationException("Unable to seed mission test clan member.");
+            }
+
+            Client.Player.ClanId = clan.Id;
+            ClanManager.Instance.Clans =
+                new ConcurrentDictionary<uint, Lazy<ClanEntry>>(
+                    new[]
+                    {
+                        new KeyValuePair<uint, Lazy<ClanEntry>>(
+                            clan.Id,
+                            new Lazy<ClanEntry>(() => clan))
+                    });
+            ClanManager.Instance.ClanMembers =
+                new ConcurrentDictionary<uint, Lazy<List<ClanMemberEntry>>>(
+                    new[]
+                    {
+                        new KeyValuePair<uint, Lazy<List<ClanMemberEntry>>>(
+                            clan.Id,
+                            new Lazy<List<ClanMemberEntry>>(() =>
+                                new List<ClanMemberEntry>
+                                {
+                                    new()
+                                    {
+                                        ClanId = clan.Id,
+                                        CharacterId = Client.Player.Id,
+                                        Rank = ClanRank.Leader,
+                                        Note = ""
+                                    }
+                                }))
+                    });
+            return clan;
+        }
+
         private void AddRewardTemplate(uint templateId, uint classId)
         {
             var entityClass = (EntityClasses)classId;
@@ -682,8 +731,11 @@ namespace Rasa.Test.Missions
                 characterMissions: new CharacterMissionRepository(context), characterOptions: null,
                 characterSkills: null, characterTeleporters: new CharacterTeleporterRepository(context),
                 characterTitles: null,
-                auctions: null, clans: null, clanInventories: null, clanMembers: null,
-                clanLockboxLogs: null, friends: null, ignoreds: null,
+                auctions: null, clans: new ClanRepository(context),
+                clanInventories: new ClanInventoryRepository(context),
+                clanMembers: new ClanMemberRepository(context),
+                clanLockboxLogs: new ClanLockboxLogRepository(context),
+                friends: null, ignoreds: null,
                 items: new ItemRepository(context), petitions: null, userOptions: null,
                 characterMissionProgress: new CharacterMissionProgressRepository(context));
         }

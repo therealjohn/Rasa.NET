@@ -952,7 +952,7 @@ namespace Rasa.Managers
                     var classInfo = EntityClassManager.Instance.GetClassInfo(ItemManager.Instance.ItemTemplateItemClass[itemTemplateId]);
                     var item = ItemManager.Instance.CreateFromTemplateId(itemTemplateId, classInfo.ItemClassInfo.StackSize, _client.Player.FamilyName);
                     item.Crafter = _client.Player.FamilyName;
-                    InventoryManager.Instance.AddItemToInventory(_client, item);
+                    InventoryManager.Instance.GrantItemToInventory(_client, item);
                 }
             if (parts.Length == 3)
                 if (uint.TryParse(parts[1], out uint itemTemplateId))
@@ -960,7 +960,7 @@ namespace Rasa.Managers
                     {
                         var item = ItemManager.Instance.CreateFromTemplateId(itemTemplateId, quantity, _client.Player.FamilyName);
                         item.Crafter = _client.Player.FamilyName;
-                        InventoryManager.Instance.AddItemToInventory(_client, item);
+                        InventoryManager.Instance.GrantItemToInventory(_client, item);
                     }
 
             return;

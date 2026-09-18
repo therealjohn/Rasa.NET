@@ -43,6 +43,7 @@ namespace Rasa.Managers
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
         private readonly MissionManager _missionManager;
         private readonly Func<Client, double> _distance;
+        private readonly Action<Item> _beforeItemPublication;
         private readonly object _retirementSyncRoot = new object();
         private readonly Dictionary<ulong, PendingRetirement> _pendingRetirements = new();
 
@@ -83,13 +84,15 @@ namespace Rasa.Managers
         internal LootDispenserManager(
             IGameUnitOfWorkFactory gameUnitOfWorkFactory,
             Func<Client, double> distance = null,
-            MissionManager missionManager = null)
+            MissionManager missionManager = null,
+            Action<Item> beforeItemPublication = null)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
             _missionManager = missionManager;
             _distance = distance ?? (client =>
                 client.Server?.Config.GameConfig.CorpseLootDistance ??
                 Config.GameConfig.DefaultCorpseLootDistance);
+            _beforeItemPublication = beforeItemPublication;
         }
 
         internal void AttachInfo(Client client, LootDispenser loot)
@@ -471,7 +474,7 @@ namespace Rasa.Managers
                 return;
             }
 
-            var grant = new InventoryManager.LootGrant();
+            var grant = new InventoryManager.LootGrant(_beforeItemPublication);
             try
             {
                 var factory = loot.UnitOfWorkFactory ?? _gameUnitOfWorkFactory;
@@ -510,13 +513,13 @@ namespace Rasa.Managers
                 return;
             }
 
-            grant.Publish(client);
             foreach (var item in items)
                 (_missionManager ?? MissionManager.Instance).RecordProgress(
                     client,
                     MissionProgressEvent.ItemAcquired(
                         item.ItemClassId,
                         item.ItemQuantity));
+            grant.Publish(client);
 
             if (includeCredits && loot.Credits != 0)
             {

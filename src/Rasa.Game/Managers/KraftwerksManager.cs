@@ -506,7 +506,7 @@ namespace Rasa.Managers
 
                 item.Crafter = client.Player.FamilyName;
 
-                if (InventoryManager.Instance.AddItemToInventory(client, item) != null)
+                if (InventoryManager.Instance.GrantItemToInventory(client, item) != null)
                 {
                     job.Count -= amount;
                     continue;

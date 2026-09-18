@@ -33,6 +33,12 @@ namespace Rasa.Managers
             private readonly Dictionary<ulong, ExistingStack> _existing = new();
             private readonly Dictionary<ulong, SourcePlan> _plannedSources = new();
             private readonly List<SourcePlan> _sources = new();
+            private readonly Action<Item> _beforeItemPublication;
+
+            internal LootGrant(Action<Item> beforeItemPublication = null)
+            {
+                _beforeItemPublication = beforeItemPublication;
+            }
 
             internal void PlanAndSave(
                 Client client,
@@ -208,7 +214,11 @@ namespace Rasa.Managers
                 foreach (var stack in _existing.Values.Where(stack => stack.Final != stack.Original))
                 {
                     stack.Item.StackSize = stack.Final;
-                    client.CallMethod(stack.Item.EntityId, new SetStackCountPacket(stack.Final));
+                    MissionManager.TryPublish(
+                        () => client.CallMethod(
+                            stack.Item.EntityId,
+                            new SetStackCountPacket(stack.Final)),
+                        $"loot stack {stack.Item.Id}");
                 }
 
                 foreach (var source in _sources)
@@ -225,12 +235,21 @@ namespace Rasa.Managers
                     source.Item.OwnerId = client.Player.Id;
                     source.Item.OwnerSlotId = (uint)source.Slot.Value;
                     client.Player.Inventory.PersonalInventory[source.Slot.Value] = source.Item.EntityId;
-                    ItemManager.Instance.SendItemDataToClient(client, source.Item, false);
-                    client.CallMethod(SysEntity.ClientInventoryManagerId,
-                        new InventoryAddItemPacket(
-                            InventoryType.Personal,
-                            source.Item.EntityId,
-                            (uint)source.Slot.Value));
+                    MissionManager.TryPublish(
+                        () => _beforeItemPublication?.Invoke(source.Item),
+                        $"loot item {source.Item.Id} publication hook");
+                    MissionManager.TryPublish(
+                        () => ItemManager.Instance.SendItemDataToClient(
+                            client, source.Item, false),
+                        $"loot item {source.Item.Id} entity data");
+                    MissionManager.TryPublish(
+                        () => client.CallMethod(
+                            SysEntity.ClientInventoryManagerId,
+                            new InventoryAddItemPacket(
+                                InventoryType.Personal,
+                                source.Item.EntityId,
+                                (uint)source.Slot.Value)),
+                        $"loot item {source.Item.Id} inventory slot");
                 }
             }
 

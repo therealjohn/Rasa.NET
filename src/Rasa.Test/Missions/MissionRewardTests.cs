@@ -128,6 +128,46 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
+        public void CompetingRewardCallersBothConvergeToDurableCompletion()
+        {
+            using var context = MissionTestContext.WithCompletableMission(429);
+            Assert.IsTrue(context.Manager.TryCompleteNpcMission(
+                context.Client, context.Receiver.EntityId, 429, null, null));
+            context.Drain();
+            var competitor = context.CreateCompetingClient();
+            using var start = new ManualResetEventSlim();
+
+            var results = Task.WhenAll(
+                Task.Run(() =>
+                {
+                    start.Wait();
+                    return context.Manager.TryRewardNpcMission(
+                        context.Client, context.Receiver.EntityId, 429, 0, null);
+                }),
+                Task.Run(() =>
+                {
+                    start.Wait();
+                    return context.Manager.TryRewardNpcMission(
+                        competitor, context.Receiver.EntityId, 429, 0, null);
+                }));
+            start.Set();
+            var completed = results.GetAwaiter().GetResult();
+
+            Assert.AreEqual(1, completed.Count(result => result));
+            Assert.AreEqual(MissionState.Completed,
+                context.Client.Player.Missions[429].State);
+            Assert.AreEqual(MissionState.Completed,
+                competitor.Player.Missions[429].State);
+            Assert.AreEqual((uint)MissionState.Completed,
+                context.ReadMission(429).MissionState);
+            Assert.AreEqual(1,
+                context.Drain().OfType<MissionRewardedPacket>().Count());
+            Assert.AreEqual(1,
+                MissionTestContext.Drain(competitor)
+                    .OfType<MissionRewardedPacket>().Count());
+        }
+
+        [TestMethod]
         public void ReconnectRetryUsesCompletedDurableStateAndGrantsNothing()
         {
             using var context = MissionTestContext.WithCompletableMission(429);

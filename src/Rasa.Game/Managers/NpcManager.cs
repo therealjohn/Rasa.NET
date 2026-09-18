@@ -28,6 +28,7 @@ namespace Rasa.Managers
         private static readonly object InstanceLock = new object();
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
         private readonly ManifestationManager _currencyManager;
+        private readonly MissionManager _missionManager;
 
         public static NpcManager Instance
         {
@@ -48,10 +49,20 @@ namespace Rasa.Managers
         }
 
         private NpcManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory)
+            : this(gameUnitOfWorkFactory, null)
+        {
+        }
+
+        internal NpcManager(
+            IGameUnitOfWorkFactory gameUnitOfWorkFactory,
+            MissionManager missionManager)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
             _currencyManager = new ManifestationManager(gameUnitOfWorkFactory);
+            _missionManager = missionManager;
         }
+
+        private MissionManager Missions => _missionManager ?? MissionManager.Instance;
 
         #region NPC
 
@@ -62,7 +73,7 @@ namespace Rasa.Managers
 
         public void AssignNPCMission(Client client, AssignNPCMissionPacket packet)
         {
-            MissionManager.Instance.TryAcceptNpcMission(
+            Missions.TryAcceptNpcMission(
                 client, packet.NpcEntityId, packet.MissionId);
         }
 
@@ -70,7 +81,7 @@ namespace Rasa.Managers
         {
             if (packet == null)
                 return;
-            MissionManager.Instance.TryCompleteNpcMission(
+            Missions.TryCompleteNpcMission(
                 client,
                 packet.EntityId,
                 packet.MissionId,
@@ -84,7 +95,7 @@ namespace Rasa.Managers
         {
             if (packet == null)
                 return;
-            MissionManager.Instance.TryCompleteNpcObjective(
+            Missions.TryCompleteNpcObjective(
                 client,
                 packet.EntityId,
                 packet.MissionId,
@@ -96,7 +107,7 @@ namespace Rasa.Managers
         {
             if (packet == null)
                 return;
-            MissionManager.Instance.TryRewardNpcMission(
+            Missions.TryRewardNpcMission(
                 client,
                 packet.EntityId,
                 packet.MissionId,
@@ -108,7 +119,25 @@ namespace Rasa.Managers
         {
             if (packet == null)
                 return;
-            MissionManager.Instance.TryAbandon(client, packet.MissionId);
+            if (!Missions.TryAbandon(client, packet.MissionId))
+                Missions.TryClear(client, packet.MissionId);
+        }
+
+        public void ObjectiveFailed(
+            Client client,
+            uint missionId,
+            uint objectiveId)
+        {
+            // Failure comes from authoritative server objective rules/scripts; the client has
+            // no packet that can declare its own objective failed.
+            Missions.TryFailObjective(client, missionId, objectiveId);
+        }
+
+        public void MissionFailed(Client client, uint missionId)
+        {
+            // Server lifecycle sources may fail a mission directly when no objective owns the
+            // failure condition.
+            Missions.TryFailMission(client, missionId);
         }
 
         public void RequestNpcConverse(Client client, RequestNPCConversePacket packet)
@@ -118,7 +147,7 @@ namespace Rasa.Managers
             if (creature == null)
                 return;
 
-            var convoDataDict = MissionManager.Instance
+            var convoDataDict = Missions
                 .ClassifyNpcConversation(client.Player, creature)
                 .CreateConversationData();
 
@@ -243,7 +272,7 @@ namespace Rasa.Managers
             var vendor = creature.Npc.Vendor;
             var statusSet = false;
 
-            var missionState = MissionManager.Instance.ClassifyNpcConversation(
+            var missionState = Missions.ClassifyNpcConversation(
                 client.Player,
                 creature);
             if (missionState.TryGetStatus(out var missionStatus, out var missionIds))
@@ -475,7 +504,7 @@ namespace Rasa.Managers
             if (!_currencyManager.LossCredits(client, (int)price))
                 return;
 
-            var placedItem = InventoryManager.Instance.AddItemToInventory(client, item);
+            var placedItem = InventoryManager.Instance.GrantItemToInventory(client, item);
 
             if (placedItem == null)
             {
@@ -581,7 +610,7 @@ namespace Rasa.Managers
             // full merge it deletes boughtItem's row itself and returns the stack it merged into;
             // if it runs out of room it returns null with the unplaced remainder still in
             // boughtItem.StackSize.
-            var placedItem = InventoryManager.Instance.AddItemToInventory(client, boughtItem);
+            var placedItem = InventoryManager.Instance.GrantItemToInventory(client, boughtItem);
 
             if (placedItem == null)
             {

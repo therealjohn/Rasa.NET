@@ -1378,6 +1378,24 @@ namespace Rasa.Managers
         /// </summary>
         public Item AddItemToInventory(Client client, Item item, uint destSlot)
         {
+            return AddItemToInventory(client, item, destSlot, false);
+        }
+
+        /// <summary>
+        /// Places a newly granted item and records mission acquisition. Storage and equipment
+        /// transfers must use <see cref="AddItemToInventory(Client, Item, uint)"/>.
+        /// </summary>
+        public Item GrantItemToInventory(Client client, Item item, uint destSlot)
+        {
+            return AddItemToInventory(client, item, destSlot, true);
+        }
+
+        private Item AddItemToInventory(
+            Client client,
+            Item item,
+            uint destSlot,
+            bool recordAcquisition)
+        {
             if (item == null)
                 return null;
 
@@ -1391,7 +1409,7 @@ namespace Rasa.Managers
                          && inventory[(int)destSlot] == 0;
 
             if (!usable)
-                return AddItemToInventory(client, item);
+                return AddItemToInventory(client, item, recordAcquisition);
 
             var itemClassInfo = EntityClassManager.Instance.GetItemClassInfo(item);
             var acquired = item.StackSize;
@@ -1402,16 +1420,34 @@ namespace Rasa.Managers
 
             ItemManager.Instance.SendItemDataToClient(client, item, false);
             AddItemBySlot(client, InventoryType.Personal, item.EntityId, destSlot, true, true);
-            RecordItemProgress(
-                client,
-                item,
-                acquired,
-                MissionProgressEventKind.ItemAcquired);
+            if (recordAcquisition)
+                RecordItemProgress(
+                    client,
+                    item,
+                    acquired,
+                    MissionProgressEventKind.ItemAcquired);
 
             return item;
         }
 
         public Item AddItemToInventory(Client client, Item item)
+        {
+            return AddItemToInventory(client, item, false);
+        }
+
+        /// <summary>
+        /// Places a newly granted item and records mission acquisition. Storage and equipment
+        /// transfers must use <see cref="AddItemToInventory(Client, Item)"/>.
+        /// </summary>
+        public Item GrantItemToInventory(Client client, Item item)
+        {
+            return AddItemToInventory(client, item, true);
+        }
+
+        private Item AddItemToInventory(
+            Client client,
+            Item item,
+            bool recordAcquisition)
         {
             if (item == null)
                 return null;
@@ -1464,11 +1500,12 @@ namespace Rasa.Managers
                         // destroy the item
                         EntityManager.Instance.DestroyPhysicalEntity(client, item.EntityId, EntityType.Item);
                         DeleteItemRows(unitOfWork, item);
-                        RecordItemProgress(
-                            client,
-                            slotItem,
-                            initialQuantity,
-                            MissionProgressEventKind.ItemAcquired);
+                        if (recordAcquisition)
+                            RecordItemProgress(
+                                client,
+                                slotItem,
+                                initialQuantity,
+                                MissionProgressEventKind.ItemAcquired);
                         // return the 'new' item instead
                         return slotItem;
                     }
@@ -1500,20 +1537,22 @@ namespace Rasa.Managers
                     ItemManager.Instance.SendItemDataToClient(client, item, false);
                     // add item to empty slot
                     AddItemBySlot(client, InventoryType.Personal, item.EntityId, (uint)(itemCategoryOffset + i), true, true);
-                    RecordItemProgress(
-                        client,
-                        item,
-                        initialQuantity,
-                        MissionProgressEventKind.ItemAcquired);
+                    if (recordAcquisition)
+                        RecordItemProgress(
+                            client,
+                            item,
+                            initialQuantity,
+                            MissionProgressEventKind.ItemAcquired);
                     return item;
                 }
             }
 
-            RecordItemProgress(
-                client,
-                item,
-                initialQuantity - item.StackSize,
-                MissionProgressEventKind.ItemAcquired);
+            if (recordAcquisition)
+                RecordItemProgress(
+                    client,
+                    item,
+                    initialQuantity - item.StackSize,
+                    MissionProgressEventKind.ItemAcquired);
             return null;
         }
 

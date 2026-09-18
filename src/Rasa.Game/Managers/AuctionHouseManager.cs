@@ -57,6 +57,7 @@ namespace Rasa.Managers
 
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
         private readonly ManifestationManager _currencyManager;
+        private readonly MissionManager _missionManager;
 
         private sealed class BuyoutRejection : Exception
         {
@@ -129,9 +130,17 @@ namespace Rasa.Managers
         }
 
         private AuctionHouseManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory)
+            : this(gameUnitOfWorkFactory, null)
+        {
+        }
+
+        internal AuctionHouseManager(
+            IGameUnitOfWorkFactory gameUnitOfWorkFactory,
+            MissionManager missionManager)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
             _currencyManager = new ManifestationManager(gameUnitOfWorkFactory);
+            _missionManager = missionManager;
         }
 
         #region Handlers
@@ -161,6 +170,14 @@ namespace Rasa.Managers
                 BuyoutFailed(client, packet.ItemId, result.FailureMessage.Value);
                 return;
             }
+
+            MissionManager.TryPublish(
+                () => (_missionManager ?? MissionManager.Instance).RecordProgress(
+                    client,
+                    MissionProgressEvent.ItemAcquired(
+                        (uint)item.ItemTemplate.Class,
+                        item.StackSize)),
+                $"auction item {item.Id} acquisition progress");
 
             client.Player.Credits[CurencyType.Credits] = result.BuyerCredits;
             client.CallMethod(client.Player.EntityId,

@@ -237,6 +237,24 @@ namespace Rasa.Managers
             }
         }
 
+        internal void RecordItemAcquisitions(
+            Client client,
+            MissionManager missionManager)
+        {
+            foreach (var item in _items)
+            {
+                if (!ItemManager.Instance.ItemTemplateItemClass.TryGetValue(
+                        item.ItemTemplateId,
+                        out var itemClass))
+                    continue;
+                missionManager.RecordProgress(
+                    client,
+                    MissionProgressEvent.ItemAcquired(
+                        (uint)itemClass,
+                        item.Quantity));
+            }
+        }
+
         public void Dispose() => _inventory.Dispose();
     }
 
@@ -680,6 +698,7 @@ namespace Rasa.Managers
                     {
                         Logger.WriteLog(LogType.Error,
                             $"Unable to complete mission {missionId} for character {client.Player.Id}: {error}");
+                        ReconcileMissionFromDurable(client, missionId);
                         return false;
                     }
 
@@ -690,6 +709,9 @@ namespace Rasa.Managers
                             false,
                             runtimeMission.Objectives);
                     grant.ConvergeRuntime(client);
+                    TryPublish(
+                        () => grant.RecordItemAcquisitions(client, this),
+                        $"mission {missionId} reward item acquisition progress");
                     grant.Publish(client, _manifestationManager);
                     if (publishCompleted)
                         client.CallMethod(client.Player.EntityId, new MissionCompletedPacket(missionId));
@@ -704,6 +726,101 @@ namespace Rasa.Managers
                 {
                     grant?.Dispose();
                 }
+            }
+        }
+
+        private void ReconcileMissionFromDurable(Client client, uint missionId)
+        {
+            client.Player.Missions.TryGetValue(missionId, out var previous);
+            var previousObjectiveStates = previous?.Objectives.ToDictionary(
+                entry => entry.Key,
+                entry => entry.Value.State) ??
+                new Dictionary<uint, MissionObjectiveState>();
+
+            try
+            {
+                using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+                Hydrate(
+                    client.Player,
+                    unitOfWork.CharacterMissions.Get(client.Player.Id),
+                    unitOfWork.CharacterMissionProgress.Get(client.Player.Id));
+            }
+            catch (Exception error) when (GameplayRejectionException.IsExpected(error))
+            {
+                Logger.WriteLog(
+                    LogType.Error,
+                    $"Unable to reconcile mission {missionId} for character {client.Player.Id}: {error}");
+                return;
+            }
+
+            if (!client.Player.Missions.TryGetValue(missionId, out var current))
+            {
+                if (previous != null && previous.State is
+                    MissionState.Success or MissionState.Failed or MissionState.Completed)
+                    TryPublish(
+                        () => client.CallMethod(
+                            client.Player.EntityId,
+                            new MissionClearedPacket(missionId)),
+                        $"mission {missionId} cleared reconciliation");
+                return;
+            }
+
+            foreach (var objective in current.Objectives)
+                if (objective.Value.State == MissionObjectiveState.Failed &&
+                    (!previousObjectiveStates.TryGetValue(
+                         objective.Key,
+                         out var previousState) ||
+                     previousState != MissionObjectiveState.Failed))
+                    TryPublish(
+                        () => client.CallMethod(
+                            client.Player.EntityId,
+                            new ObjectiveFailedPacket(missionId, objective.Key)),
+                        $"mission {missionId} objective {objective.Key} failed reconciliation");
+
+            if (previous?.State == current.State)
+                return;
+
+            switch (current.State)
+            {
+                case MissionState.Failed:
+                    TryPublish(
+                        () => client.CallMethod(
+                            client.Player.EntityId,
+                            new MissionFailedPacket(missionId)),
+                        $"mission {missionId} failed reconciliation");
+                    break;
+                case MissionState.Success:
+                    TryPublish(
+                        () => client.CallMethod(
+                            client.Player.EntityId,
+                            new MissionCompleteablePacket(missionId, false)),
+                        $"mission {missionId} completable reconciliation");
+                    TryPublish(
+                        () => client.CallMethod(
+                            client.Player.EntityId,
+                            new MissionCompletedPacket(missionId)),
+                        $"mission {missionId} success reconciliation");
+                    break;
+                case MissionState.Completed:
+                    if (previous?.State != MissionState.Success)
+                    {
+                        TryPublish(
+                            () => client.CallMethod(
+                                client.Player.EntityId,
+                                new MissionCompleteablePacket(missionId, false)),
+                            $"mission {missionId} completable reconciliation");
+                        TryPublish(
+                            () => client.CallMethod(
+                                client.Player.EntityId,
+                                new MissionCompletedPacket(missionId)),
+                            $"mission {missionId} completion reconciliation");
+                    }
+                    TryPublish(
+                        () => client.CallMethod(
+                            client.Player.EntityId,
+                            new MissionRewardedPacket(missionId)),
+                        $"mission {missionId} reward reconciliation");
+                    break;
             }
         }
 

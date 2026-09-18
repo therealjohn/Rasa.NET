@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -9,6 +10,9 @@ namespace Rasa.Test.Missions
     using Rasa.Data;
     using Rasa.Game;
     using Rasa.Managers;
+    using Rasa.Packets.Inventory.Client;
+    using Rasa.Packets.LootDispenser.Client;
+    using Rasa.Packets.MapChannel.Client;
     using Rasa.Packets.Mission.Server;
     using Rasa.Repositories.Char;
     using Rasa.Repositories.UnitOfWork;
@@ -166,10 +170,94 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
+        public void AuthoritativeNpcLifecycleEventsFailAndClearMissionInProduction()
+        {
+            using var context = MissionTestContext.WithObjectiveMission();
+            var giver = context.AddNpc(77);
+            Assert.IsTrue(context.Manager.TryAcceptNpcMission(
+                context.Client, giver.EntityId, 321));
+            context.Drain();
+            var npcManager = new NpcManager(context, context.Manager);
+
+            npcManager.ObjectiveFailed(context.Client, 321, 5);
+            Assert.AreEqual(MissionObjectiveState.Failed,
+                context.Client.Player.Missions[321].Objectives[5].State);
+            Assert.AreEqual(MissionState.Failed,
+                context.Client.Player.Missions[321].State);
+            var failedPackets = context.Drain();
+            Assert.AreEqual(1, failedPackets.OfType<ObjectiveFailedPacket>().Count());
+            Assert.AreEqual(1, failedPackets.OfType<MissionFailedPacket>().Count());
+
+            npcManager.AbandonMission(
+                context.Client,
+                new AbandonMissionPacket { MissionId = 321 });
+
+            Assert.IsFalse(context.Client.Player.Missions.ContainsKey(321));
+            Assert.AreEqual(1,
+                context.Drain().OfType<MissionClearedPacket>().Count());
+        }
+
+        [TestMethod]
         public void ItemAcquisitionAndConsumptionAdvanceItemCountersThroughInventoryHooks()
         {
             AssertItemHook(MissionProgressEventKind.ItemAcquired, consume: false);
             AssertItemHook(MissionProgressEventKind.ItemConsumed, consume: true);
+        }
+
+        [TestMethod]
+        public void ClanDepositAndWithdrawalCannotFarmItemAcquisition()
+        {
+            const uint itemClassId = 3147;
+            using var context = MissionTestContext.WithItemProgressMission(
+                MissionProgressEventKind.ItemAcquired,
+                itemClassId,
+                10);
+            context.SeedMission(1, 321, (uint)MissionState.Active, false);
+            context.ReloadPlayerMissions();
+            var inventory = new InventoryManager(context, context.Manager);
+            var item = context.CreateInventoryItem(28, itemClassId, 3);
+            Assert.IsNotNull(inventory.GrantItemToInventory(context.Client, item));
+            Assert.AreEqual(3U,
+                context.Client.Player.Missions[321].Objectives[1].ItemCounters[itemClassId]);
+
+            var clanManager = ClanManager.Instance;
+            var originalClans = clanManager.Clans;
+            var originalMembers = clanManager.ClanMembers;
+            try
+            {
+                var clan = context.CreateClanForPlayer();
+                context.Client.Player.Inventory.ResetClanInventory();
+                inventory.ClanLockbox_DepositItemInSlot(
+                    context.Client,
+                    new ClanLockbox_DepositItemInSlotPacket
+                    {
+                        SrcSlot = item.OwnerSlotId,
+                        DestSlot = 0,
+                        Quantity = item.StackSize
+                    });
+                Assert.AreEqual(3U,
+                    context.Client.Player.Missions[321].Objectives[1].ItemCounters[itemClassId]);
+                inventory.ClanLockbox_WithdrawItem(
+                    context.Client,
+                    new ClanLockbox_WithdrawItemPacket
+                    {
+                        SrcSlot = 0,
+                        Quantity = item.StackSize,
+                        ManagePersonalSlot = true
+                    });
+
+                Assert.AreEqual(clan.Id, context.Client.Player.ClanId);
+                Assert.AreEqual(3U,
+                    context.Client.Player.Missions[321].Objectives[1].ItemCounters[itemClassId]);
+                Assert.AreEqual(1,
+                    context.Drain().OfType<UpdateObjectiveItemCounterPacket>().Count());
+            }
+            finally
+            {
+                clanManager.Clans = originalClans;
+                clanManager.ClanMembers = originalMembers;
+                context.Client.Player.ClanId = 0;
+            }
         }
 
         [TestMethod]
@@ -243,6 +331,89 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
+        public void CommittedLootRecordsAcquisitionWhenItemPublicationFails()
+        {
+            const uint itemClassId = 3147;
+            using var context = MissionTestContext.WithItemProgressMission(
+                MissionProgressEventKind.ItemAcquired,
+                itemClassId,
+                3);
+            context.SeedMission(1, 321, (uint)MissionState.Active, false);
+            context.ReloadPlayerMissions();
+            context.Client.Player.Position = Vector3.Zero;
+            context.Client.Player.Attributes[Attributes.Health] =
+                new ActorAttributes(Attributes.Health, 100, 100, 100, 0, 0);
+            var item = context.CreateInventoryItem(28, itemClassId, 3);
+            var corpse = new Creature
+            {
+                EntityClass = EntityClasses.HumanBaseMale,
+                MapContextId = context.Map.MapInfo.MapContextId,
+                Position = Vector3.Zero,
+                State = CharacterState.Dead,
+                Faction = Factions.Bane,
+                AppearanceData = new(),
+                Attributes = new Dictionary<Attributes, ActorAttributes>
+                {
+                    [Attributes.Health] = new(
+                        Attributes.Health, 100, 100, 0, 0, 0),
+                    [Attributes.Armor] = new(
+                        Attributes.Armor, 0, 0, 0, 0, 0)
+                }
+            };
+            CellManager.Instance.AddToWorld(context.Map, corpse);
+            var loot = new LootDispenser
+            {
+                Owner = context.Client.Player.EntityId,
+                AttachedTo = corpse.EntityId,
+                IsLootable = true,
+                UnitOfWorkFactory = context
+            };
+            loot.LootItems.Add(new LootItem(
+                item,
+                context.Client.Player.EntityId,
+                0));
+            corpse.CorpseLootEntityId = loot.EntityId;
+            context.Map.LootDispensers.Add(loot.EntityId, loot);
+            var manager = new LootDispenserManager(
+                context,
+                _ => 2,
+                context.Manager,
+                _ => throw new InvalidOperationException(
+                    "Injected loot publication failure."));
+            try
+            {
+                manager.RequestLootAllFromCorpse(
+                    context.Client,
+                    new RequestLootAllFromCorpsePacket
+                    {
+                        EntityId = loot.EntityId
+                    });
+
+                Assert.AreEqual(3U,
+                    context.Client.Player.Missions[321]
+                        .Objectives[1].ItemCounters[itemClassId]);
+                Assert.AreEqual(3U,
+                    context.ReadProgress(321)
+                        .Missions[321].Objectives[1].ItemCounters[itemClassId]);
+
+                manager.RequestLootAllFromCorpse(
+                    context.Client,
+                    new RequestLootAllFromCorpsePacket
+                    {
+                        EntityId = loot.EntityId
+                    });
+                Assert.AreEqual(3U,
+                    context.Client.Player.Missions[321]
+                        .Objectives[1].ItemCounters[itemClassId]);
+            }
+            finally
+            {
+                manager.RemoveForOwner(context.Map, context.Client);
+                CellManager.Instance.RemoveCreatureFromWorld(context.Map, corpse);
+            }
+        }
+
+        [TestMethod]
         [DataRow("overflow")]
         [DataRow("capability")]
         public void UnrelatedProviderExceptionsRetainIdentityAndEscape(string kind)
@@ -299,7 +470,9 @@ namespace Rasa.Test.Missions
             var item = context.CreateInventoryItem(28, itemClassId, 3);
             var inventory = new InventoryManager(context, context.Manager);
 
-            var placed = inventory.AddItemToInventory(context.Client, item);
+            var placed = consume
+                ? inventory.AddItemToInventory(context.Client, item)
+                : inventory.GrantItemToInventory(context.Client, item);
             Assert.IsNotNull(placed);
             if (consume)
             {
