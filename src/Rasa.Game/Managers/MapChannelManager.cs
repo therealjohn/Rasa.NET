@@ -619,6 +619,7 @@ namespace Rasa.Managers
 
                 client.State = ClientState.Teleporting;
                 client.Player.Target = 0;
+                LootDispenserManager.Instance.RemoveForOwner(origin, client);
                 ActorActionManager.Instance.RemoveActor(client.Player);
                 GameEffectManager.Instance.ClearEffects(client.Player);
                 client.Player.WeaponReady = false;

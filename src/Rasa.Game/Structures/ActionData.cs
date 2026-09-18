@@ -20,6 +20,7 @@ namespace Rasa.Structures
         public long PassedTime { get; set; }
 
         public bool IsInrerrupted = false;
+        public bool Completed { get; set; }
         public ulong SourceId { get; set; }
 
         public ActionData(Actor actor, ActionId actionId, uint actionArgId, long waitTime)

@@ -1,5 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Data.Common;
+using System.Linq;
+using System.Numerics;
+using Microsoft.EntityFrameworkCore;
 
 namespace Rasa.Managers
 {
@@ -12,6 +16,7 @@ namespace Rasa.Managers
     using Rasa.Packets.ClientMethod.Server;
     using Rasa.Packets.Game.Server;
     using Rasa.Packets.LootDispenser.Client;
+    using Repositories.UnitOfWork;
     using Structures;
 
     public class LootDispenserManager
@@ -35,6 +40,8 @@ namespace Rasa.Managers
 
         private static LootDispenserManager _instance;
         private static readonly object InstanceLock = new object();
+        private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
+        private readonly Func<Client, double> _distance;
 
         public static LootDispenserManager Instance
         {
@@ -46,7 +53,7 @@ namespace Rasa.Managers
                     lock (InstanceLock)
                     {
                         if (_instance == null)
-                            _instance = new LootDispenserManager();
+                            _instance = new LootDispenserManager(Server.GameUnitOfWorkFactory);
                     }
                 }
 
@@ -54,8 +61,14 @@ namespace Rasa.Managers
             }
         }
 
-        private LootDispenserManager()
+        internal LootDispenserManager(
+            IGameUnitOfWorkFactory gameUnitOfWorkFactory,
+            Func<Client, double> distance = null)
         {
+            _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
+            _distance = distance ?? (client =>
+                client.Server?.Config.GameConfig.CorpseLootDistance ??
+                Config.GameConfig.DefaultCorpseLootDistance);
         }
 
         internal void AttachInfo(Client client, LootDispenser loot)
@@ -124,6 +137,13 @@ namespace Rasa.Managers
             loot.IsLootable = true;
             loot.AttachedTo = creature.EntityId;
             loot.Owner = killer.Player.EntityId;
+            loot.OwnerClient = killer;
+            loot.Player = killer.Player;
+            loot.Map = mapChannel;
+            loot.Corpse = creature;
+            loot.CharacterId = killer.Player.Id;
+            loot.AccountId = killer.AccountEntry?.Id ?? 0;
+            loot.UnitOfWorkFactory = _gameUnitOfWorkFactory;
 
             CreateLoot(killer, loot);
 
@@ -187,69 +207,26 @@ namespace Rasa.Managers
         /// </summary>
         internal void RemoveForCreature(MapChannel mapChannel, Creature creature)
         {
-            List<ulong> attached = null;
-
-            foreach (var entry in mapChannel.LootDispensers)
-                if (entry.Value.AttachedTo == creature.EntityId)
-                    (attached ??= new List<ulong>()).Add(entry.Key);
-
-            if (attached == null)
+            if (mapChannel == null || creature == null)
                 return;
 
-            foreach (var lootEntityId in attached)
-            {
-                var loot = mapChannel.LootDispensers[lootEntityId];
-
-                mapChannel.LootDispensers.Remove(lootEntityId);
-
-                var owner = mapChannel.ClientList.Find(c => c.Player != null && c.Player.EntityId == loot.Owner);
-
-                owner?.CallMethod(SysEntity.ClientMethodId, new DestroyPhysicalEntityPacket(lootEntityId));
-
-                // The rolled items are real entities now, made when the loot was rolled rather
-                // than when it is taken, so a corpse that goes unlooted takes them with it.
-                // Without this they would sit in RegisteredEntities for the life of the process
-                // and their ids would never come back.
-                foreach (var lootItem in loot.LootItems)
-                {
-                    if (lootItem.Taken || lootItem.Item == null)
-                        continue;
-
-                    owner?.CallMethod(SysEntity.ClientMethodId, new DestroyPhysicalEntityPacket(lootItem.EntityId));
-
-                    // The row's id is the item's, and CreateItem registered it in
-                    // RegisteredEntities as well as Items. Freeing it while it was still
-                    // registered handed the id to the next entity created, and registering
-                    // that one threw "An item with the same key has already been added" out
-                    // of the map worker - from the next loot roll, or the next spawn.
-                    EntityManager.Instance.UnregisterEntity(lootItem.EntityId);
-                    EntityManager.Instance.UnregisterItem(lootItem.EntityId);
-                    EntityManager.Instance.FreeEntity(lootItem.EntityId);
-                }
-
-                EntityManager.Instance.FreeEntity(lootEntityId);
-            }
+            lock (mapChannel.LootSyncRoot)
+                foreach (var loot in mapChannel.LootDispensers.Values
+                             .Where(entry => ReferenceEquals(entry.Corpse, creature) ||
+                                             entry.AttachedTo == creature.EntityId).ToArray())
+                    Retire(mapChannel, loot, true);
         }
 
-        /// <summary>
-        /// The dispenser this packet names, if it is on the player's map and they may loot it.
-        /// Every one of these came in indexed straight off the dictionary, so an id for a corpse
-        /// on another map - or one that has already been cleaned up - was a KeyNotFoundException
-        /// out of the handler, which closes the connection.
-        /// </summary>
-        private static LootDispenser FindLootable(Client client, ulong entityId)
+        internal void RemoveForOwner(MapChannel mapChannel, Client client)
         {
-            var dispensers = client?.Player?.MapChannel?.LootDispensers;
+            if (mapChannel == null || client == null)
+                return;
 
-            if (dispensers == null || !dispensers.TryGetValue(entityId, out var loot))
-                return null;
-
-            // Loot belongs to whoever earned it. The client only offers a corpse it was told
-            // about, but the packet can name any id.
-            if (loot.Owner != client.Player.EntityId)
-                return null;
-
-            return loot;
+            lock (mapChannel.LootSyncRoot)
+                foreach (var loot in mapChannel.LootDispensers.Values
+                             .Where(entry => ReferenceEquals(entry.OwnerClient, client) ||
+                                             entry.Owner == client.Player?.EntityId).ToArray())
+                    Retire(mapChannel, loot, true);
         }
 
         /// <summary>
@@ -259,27 +236,33 @@ namespace Rasa.Managers
         /// </summary>
         internal void RequestCorpseLooting(Client client, RequestCorpseLootingPacket packet)
         {
-            var loot = FindLootable(client, packet.EntityId);
-
-            if (loot == null || loot.FullyLooted)
+            if (client == null || packet == null)
                 return;
 
-            var remaining = loot.Remaining();
+            lock (client.SyncRoot)
+            {
+                var map = client.Player?.MapChannel;
+                if (map == null)
+                    return;
 
-            // The window draws a row only for an item it can resolve to an entity, so the items
-            // have to exist on the client before it opens. Re-sending one it already has is
-            // harmless: clientmethod.Recv_CreatePhysicalEntity treats a repeat of the same class
-            // as an update.
-            foreach (var lootItem in remaining)
-                if (lootItem.Item != null)
-                    ItemManager.Instance.SendItemDataToClient(client, lootItem.Item, false);
+                lock (map.LootSyncRoot)
+                {
+                    if (!TryGetLoot(client, packet.EntityId, out var loot))
+                        return;
 
-            loot.CurrentLooter = client.Player.EntityId;
+                    var remaining = loot.Remaining();
+                    foreach (var lootItem in remaining)
+                        if (lootItem.Item != null)
+                            ItemManager.Instance.SendItemDataToClient(client, lootItem.Item, false);
 
-            LootInfo(client, loot);
-            CanLootItems(client, loot);
+                    loot.CurrentLooter = client.Player.EntityId;
 
-            client.CallMethod(loot.EntityId, new LootCorpsePacket(client.Player.EntityId, remaining));
+                    LootInfo(client, loot);
+                    CanLootItems(client, loot);
+                    client.CallMethod(loot.EntityId,
+                        new LootCorpsePacket(client.Player.EntityId, remaining));
+                }
+            }
         }
 
         /// <summary>
@@ -301,25 +284,31 @@ namespace Rasa.Managers
         /// <summary>Takes one item off a corpse.</summary>
         internal void RequestLootItemFromCorpse(Client client, RequestLootItemFromCorpsePacket packet)
         {
-            var loot = FindLootable(client, packet.EntityId);
-
-            if (loot == null || loot.FullyLooted)
+            if (client == null || packet == null)
                 return;
 
-            var lootItem = loot.Find(packet.ItemId);
-
-            // Already gone, or never on this corpse. Say so rather than ignoring it: the row is
-            // still on the asking player's screen until TakenInfo tells them otherwise.
-            if (lootItem == null || lootItem.Taken)
+            lock (client.SyncRoot)
             {
-                client.CallMethod(loot.EntityId, new TakenInfoPacket(client.Player.EntityId, Taken(loot)));
-                return;
+                var map = client.Player?.MapChannel;
+                if (map == null)
+                    return;
+
+                lock (map.LootSyncRoot)
+                {
+                    if (!TryGetLoot(client, packet.EntityId, out var loot))
+                        return;
+
+                    var lootItem = loot.Find(packet.ItemId);
+                    if (lootItem == null || lootItem.Taken)
+                    {
+                        client.CallMethod(loot.EntityId,
+                            new TakenInfoPacket(client.Player.EntityId, Taken(loot)));
+                        return;
+                    }
+
+                    Claim(client, loot, new[] { lootItem }, packet.DestSlot, false);
+                }
             }
-
-            if (!TakeItem(client, loot, lootItem, packet.DestSlot))
-                return;
-
-            Settle(client, loot);
         }
 
         /// <summary>
@@ -340,28 +329,27 @@ namespace Rasa.Managers
         /// </summary>
         internal void RequestLootAllFromCorpse(Client client, RequestLootAllFromCorpsePacket packet)
         {
-            var loot = FindLootable(client, packet.EntityId);
-
-            if (loot == null || loot.FullyLooted)
+            if (client == null || packet == null)
                 return;
 
-            var threshold = client.Player?.AutoLootThreshold ?? LootQuality.Junk;
-
-            // Through the same path as taking one at a time, so both keep the same books. It
-            // used to build a second item from each template and add that, leaving the rolled
-            // items behind and nothing marked as taken - and since FullyLooted was never set
-            // either, the same corpse paid out again on every request.
-            foreach (var lootItem in loot.Remaining())
+            lock (client.SyncRoot)
             {
-                if (packet.AutoLootOnly && !WithinThreshold(lootItem, threshold))
-                    continue;
+                var map = client.Player?.MapChannel;
+                if (map == null)
+                    return;
 
-                TakeItem(client, loot, lootItem, null);
+                lock (map.LootSyncRoot)
+                {
+                    if (!TryGetLoot(client, packet.EntityId, out var loot))
+                        return;
+
+                    var threshold = client.Player.AutoLootThreshold;
+                    var selected = loot.Remaining()
+                        .Where(item => !packet.AutoLootOnly || WithinThreshold(item, threshold))
+                        .ToArray();
+                    Claim(client, loot, selected, null, true);
+                }
             }
-
-            // Credits come along either way: they have no quality to weigh against a threshold,
-            // and leaving a handful behind would keep an otherwise empty corpse standing.
-            Settle(client, loot);
         }
 
         /// <summary>Whether walking past a corpse should pick this item up unasked.</summary>
@@ -397,59 +385,199 @@ namespace Rasa.Managers
             client.Player.AutoLootThreshold = threshold;
         }
 
-        /// <summary>
-        /// Moves one rolled item into the player's inventory. False if it would not fit, in which
-        /// case the item stays on the corpse rather than disappearing between the two.
-        /// </summary>
-        private bool TakeItem(Client client, LootDispenser loot, LootItem lootItem, uint? destSlot)
+        private void Claim(
+            Client client,
+            LootDispenser loot,
+            IReadOnlyList<LootItem> items,
+            uint? destSlot,
+            bool includeCredits)
         {
-            if (lootItem.Taken || lootItem.Item == null)
-                return false;
-
-            var placed = destSlot.HasValue
-                ? InventoryManager.Instance.AddItemToInventory(client, lootItem.Item, destSlot.Value)
-                : InventoryManager.Instance.AddItemToInventory(client, lootItem.Item);
-
-            if (placed == null)
+            var currentCredits = client.Player.Credits.GetValueOrDefault(CurencyType.Credits);
+            int creditsAfter;
+            try
             {
-                client.CallMethod(SysEntity.CommunicatorId,
-                    new DisplayClientMessagePacket(PlayerMessage.PmInventoryFull, new Dictionary<string, string>(), MsgFilterId.GeneralSystemMessages));
-                return false;
+                creditsAfter = checked(currentCredits + (includeCredits ? loot.Credits : 0));
             }
-
-            lootItem.Taken = true;
-
-            client.CallMethod(loot.EntityId, new ActorGotLootPacket(loot));
-            client.CallMethod(loot.EntityId, new TakenInfoPacket(client.Player.EntityId, Taken(loot)));
-
-            return true;
-        }
-
-        /// <summary>Pays out the credits and closes the corpse once nothing is left on it.</summary>
-        private void Settle(Client client, LootDispenser loot)
-        {
-            // Items only. The credits are paid out *by* this method, so asking whether the corpse
-            // still holds anything - which counts them - would be circular: the credits would
-            // keep the corpse open, and nothing would ever pay them.
-            if (loot.LootItems.Exists(i => !i.Taken))
+            catch (OverflowException)
             {
-                // Still something on it: refresh what can be taken and leave it open.
-                CanLootItems(client, loot);
                 return;
             }
 
-            if (loot.Credits > 0)
+            var grant = new InventoryManager.LootGrant();
+            try
             {
-                CharacterManager.Instance.UpdateCharacter(client, CharacterUpdate.Credits, loot.Credits);
-                loot.Credits = 0;
+                var factory = loot.UnitOfWorkFactory ?? _gameUnitOfWorkFactory;
+                if (factory == null)
+                    throw new GameplayRejectionException(
+                        "No character persistence factory is available for loot claim.");
+                using var unitOfWork = factory.CreateChar();
+                unitOfWork.ExecuteTransaction(() =>
+                {
+                    var character = unitOfWork.Characters.Find(client.Player.Id);
+                    if (character == null ||
+                        character.AccountId != client.AccountEntry.Id ||
+                        character.Credit != currentCredits)
+                        throw new GameplayRejectionException(
+                            "Durable character ownership or credits changed.");
+
+                    grant.PlanAndSave(client, items, unitOfWork, destSlot);
+
+                    if (includeCredits && loot.Credits != 0)
+                        unitOfWork.Characters.UpdateCharacterCredits(
+                            client.Player.Id, creditsAfter);
+
+                    if (!TryGetLoot(client, loot.EntityId, out var current) ||
+                        !ReferenceEquals(current, loot))
+                        throw new GameplayRejectionException(
+                            "Corpse state changed during the claim.");
+                });
+            }
+            catch (Exception error) when (
+                error is GameplayRejectionException ||
+                error is DbUpdateException ||
+                error is DbException)
+            {
+                Logger.WriteLog(LogType.Error,
+                    $"Corpse loot claim failed for character {client.Player.Id}: {error.Message}");
+                return;
             }
 
-            loot.FullyLooted = true;
+            grant.Publish(client);
+
+            if (includeCredits && loot.Credits != 0)
+            {
+                loot.Credits = 0;
+                client.Player.Credits[CurencyType.Credits] = creditsAfter;
+                client.CallMethod(client.Player.EntityId,
+                    new UpdateCreditsPacket(CurencyType.Credits, creditsAfter, 0));
+            }
+
+            client.CallMethod(loot.EntityId, new ActorGotLootPacket(loot));
+            client.CallMethod(loot.EntityId,
+                new TakenInfoPacket(client.Player.EntityId, Taken(loot)));
+
+            if (!loot.HasLoot)
+            {
+                loot.FullyLooted = true;
+                loot.IsLootable = false;
+                loot.CurrentLooter = 0;
+                CanLootItems(client, loot);
+                GotLoot(client, loot);
+            }
+            else
+            {
+                CanLootItems(client, loot);
+            }
+        }
+
+        private bool TryGetLoot(Client client, ulong entityId, out LootDispenser loot)
+        {
+            loot = null;
+            var player = client?.Player;
+            var map = player?.MapChannel;
+            var limit = client == null ? double.NaN : _distance(client);
+
+            if (client == null || player == null || map == null ||
+                client.State != ClientState.Ingame ||
+                !double.IsFinite(limit) || limit <= 0 ||
+                player.State == CharacterState.Dead ||
+                !player.Attributes.TryGetValue(Attributes.Health, out var health) ||
+                health.Current <= 0 ||
+                EntityManager.Instance.GetEntityType(player.EntityId) != EntityType.Character ||
+                !EntityManager.Instance.Players.TryGetValue(player.EntityId, out var registeredPlayer) ||
+                !ReferenceEquals(player, registeredPlayer) ||
+                !map.LootDispensers.TryGetValue(entityId, out loot) ||
+                !loot.IsLootable || loot.FullyLooted ||
+                loot.Owner != player.EntityId ||
+                (loot.OwnerClient != null && !ReferenceEquals(loot.OwnerClient, client)) ||
+                (loot.Player != null && !ReferenceEquals(loot.Player, player)) ||
+                (loot.Map != null && !ReferenceEquals(loot.Map, map)) ||
+                (loot.CharacterId != 0 && loot.CharacterId != player.Id) ||
+                (loot.AccountId != 0 && loot.AccountId != client.AccountEntry?.Id) ||
+                !EntityManager.Instance.Creatures.TryGetValue(loot.AttachedTo, out var corpse) ||
+                EntityManager.Instance.GetEntityType(corpse.EntityId) != EntityType.Creature ||
+                (loot.Corpse != null && !ReferenceEquals(loot.Corpse, corpse)) ||
+                corpse.CorpseLootEntityId != loot.EntityId ||
+                corpse.State != CharacterState.Dead ||
+                !corpse.Attributes.TryGetValue(Attributes.Health, out var corpseHealth) ||
+                corpseHealth.Current > 0 ||
+                corpse.MapContextId != player.MapContextId ||
+                !map.MapCellInfo.Cells.Values.Any(cell => cell.CreatureList.Contains(corpse)) ||
+                !IsFinite(player.Position) || !IsFinite(corpse.Position))
+                return false;
+
+            return Vector3.Distance(player.Position, corpse.Position) <= limit;
+        }
+
+        private static bool IsFinite(Vector3 value) =>
+            float.IsFinite(value.X) &&
+            float.IsFinite(value.Y) &&
+            float.IsFinite(value.Z);
+
+        private void Retire(MapChannel map, LootDispenser loot, bool notify)
+        {
+            if (!map.LootDispensers.TryGetValue(loot.EntityId, out var current) ||
+                !ReferenceEquals(current, loot))
+                return;
+
+            var unclaimed = loot.LootItems
+                .Where(item => !item.Taken && item.Item?.Id > 0)
+                .Select(item => item.Item.Id)
+                .Distinct()
+                .ToArray();
+
+            if (unclaimed.Length > 0)
+            {
+                try
+                {
+                    var factory = loot.UnitOfWorkFactory ?? _gameUnitOfWorkFactory;
+                    if (factory == null)
+                        throw new GameplayRejectionException(
+                            "No character persistence factory is available for loot cleanup.");
+                    using var unitOfWork = factory.CreateChar();
+                    unitOfWork.ExecuteTransaction(() =>
+                    {
+                        foreach (var itemId in unclaimed)
+                        {
+                            unitOfWork.CharacterInventories.DeleteInvItemByItemId(itemId);
+                            unitOfWork.Items.DeleteItem(itemId);
+                        }
+                    });
+                }
+                catch (Exception error) when (
+                    error is GameplayRejectionException ||
+                    error is DbUpdateException ||
+                    error is DbException)
+                {
+                    Logger.WriteLog(LogType.Error,
+                        $"Could not delete {unclaimed.Length} unclaimed loot item row(s): {error.Message}");
+                }
+            }
+
             loot.IsLootable = false;
+            loot.FullyLooted = true;
             loot.CurrentLooter = 0;
 
-            CanLootItems(client, loot);
-            GotLoot(client, loot);
+            var owner = loot.OwnerClient ??
+                        map.ClientList.Find(client => client.Player?.EntityId == loot.Owner);
+            if (notify && owner?.State == ClientState.Ingame)
+            {
+                owner.CallMethod(loot.EntityId,
+                    new CanLootItemsPacket(false, loot.LootItems));
+                owner.CallMethod(SysEntity.ClientMethodId,
+                    new DestroyPhysicalEntityPacket(loot.EntityId));
+            }
+
+            foreach (var item in loot.LootItems)
+                if (!item.Taken && item.Item != null)
+                    EntityManager.Instance.ReleaseEntity(item.EntityId, EntityType.Item);
+
+            loot.LootItems.Clear();
+            loot.Credits = 0;
+            map.LootDispensers.Remove(loot.EntityId);
+
+            if (loot.Corpse?.CorpseLootEntityId == loot.EntityId)
+                loot.Corpse.CorpseLootEntityId = 0;
         }
 
         /// <summary>The rows TakenInfo should mark; the client keys off the ones it is sent.</summary>

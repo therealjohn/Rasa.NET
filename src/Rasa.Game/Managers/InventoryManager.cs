@@ -18,7 +18,7 @@ namespace Rasa.Managers
     using Structures;
     using Structures.Char;
 
-    public class InventoryManager
+    public partial class InventoryManager
     {
         /*    Inventory Packets:
          *      Done:
@@ -91,7 +91,7 @@ namespace Rasa.Managers
             }
         }
 
-        private InventoryManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory)
+        internal InventoryManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
         }

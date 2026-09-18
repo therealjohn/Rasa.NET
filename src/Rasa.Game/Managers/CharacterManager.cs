@@ -1,8 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Data.Common;
 using System.Linq;
 
 using JetBrains.Annotations;
+using Microsoft.EntityFrameworkCore;
 
 namespace Rasa.Managers
 {
@@ -846,18 +848,7 @@ namespace Rasa.Managers
                     break;
 
                 case CharacterUpdate.Credits:
-                    // The value is a signed change, and it goes straight into the purse and the
-                    // row. Nothing used to stop it landing below zero, so a charge that skipped
-                    // its own funds check left the player in debt rather than being refused; the
-                    // sum is widened because two large gains in a row would otherwise wrap
-                    // negative and look exactly like that.
-                    client.Player.Credits[CurencyType.Credits] =
-                        ClampCurrency(client, CurencyType.Credits, (int)value);
-
-                    // inform owner
-                    client.CallMethod(client.Player.EntityId, new UpdateCreditsPacket(CurencyType.Credits, client.Player.Credits[CurencyType.Credits], 0));
-                    // update db
-                    unitOfWork.Characters.UpdateCharacterCredits(client.Player.Id, client.Player.Credits[CurencyType.Credits]);
+                    PersistCurrency(client, unitOfWork, CurencyType.Credits, (int)value);
                     break;
 
                 case CharacterUpdate.Expirience:
@@ -907,13 +898,7 @@ namespace Rasa.Managers
                     break;
 
                 case CharacterUpdate.Prestige:
-                    // Same shape as Credits: value is the signed change, clamped the same way.
-                    // Prestige was loaded into Player.Credits at login but never written back.
-                    client.Player.Credits[CurencyType.Prestige] =
-                        ClampCurrency(client, CurencyType.Prestige, (int)value);
-
-                    client.CallMethod(client.Player.EntityId, new UpdateCreditsPacket(CurencyType.Prestige, client.Player.Credits[CurencyType.Prestige], 0));
-                    unitOfWork.Characters.UpdateCharacterPrestige(client.Player.Id, client.Player.Credits[CurencyType.Prestige]);
+                    PersistCurrency(client, unitOfWork, CurencyType.Prestige, (int)value);
                     break;
 
                 case CharacterUpdate.Stats:
@@ -931,6 +916,51 @@ namespace Rasa.Managers
                 default:
                     break;
             }
+        }
+
+        private static void PersistCurrency(
+            Client client,
+            ICharUnitOfWork unitOfWork,
+            CurencyType type,
+            int change)
+        {
+            if (client?.Player == null || !client.Player.Credits.TryGetValue(type, out var current))
+                return;
+
+            var next = ClampCurrency(client, type, change);
+
+            try
+            {
+                unitOfWork.ExecuteTransaction(() =>
+                {
+                    var character = unitOfWork.Characters.Find(client.Player.Id);
+                    var durable = type == CurencyType.Credits
+                        ? character?.Credit
+                        : character?.Prestige;
+
+                    if (character == null || durable != current)
+                        throw new GameplayRejectionException(
+                            $"Durable {type} balance changed before update.");
+
+                    if (type == CurencyType.Credits)
+                        unitOfWork.Characters.UpdateCharacterCredits(client.Player.Id, next);
+                    else
+                        unitOfWork.Characters.UpdateCharacterPrestige(client.Player.Id, next);
+                });
+            }
+            catch (Exception error) when (
+                error is GameplayRejectionException ||
+                error is DbUpdateException ||
+                error is DbException)
+            {
+                Logger.WriteLog(LogType.Error,
+                    $"Could not persist {type} for character {client.Player.Id}: {error.Message}");
+                return;
+            }
+
+            client.Player.Credits[type] = next;
+            client.CallMethod(client.Player.EntityId,
+                new UpdateCreditsPacket(type, next, 0));
         }
     }
 }

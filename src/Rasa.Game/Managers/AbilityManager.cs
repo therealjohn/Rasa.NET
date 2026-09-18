@@ -409,7 +409,12 @@ namespace Rasa.Managers
         /// </summary>
         private static bool IsHostile(Manifestation player, Actor target)
         {
-            return target is Creature creature && creature.Faction != Factions.AFS && creature.Attributes[Attributes.Health].Current > 0;
+            return target is Creature creature &&
+                   creature.Faction != Factions.AFS &&
+                   creature.State != CharacterState.Dead &&
+                   creature.State != CharacterState.Dying &&
+                   creature.Attributes.TryGetValue(Attributes.Health, out var health) &&
+                   health.Current > 0;
         }
 
         /// <summary>The first attribute the player cannot pay, or null if they can pay them all.</summary>
@@ -625,8 +630,13 @@ namespace Rasa.Managers
 
             var targets = new List<Creature>();
             var primary = action.TargetId != 0 ? ResolveTarget(mapChannel, action.TargetId) as Creature : null;
+            var lightning = actionInfo.Module == "abilities.lightning";
 
-            if (info.Has(AbilityProperty.RadiusAroundSource) || info.Has(AbilityProperty.ConeRadius))
+            if (lightning && primary != null)
+            {
+                targets.Add(primary);
+            }
+            else if (info.Has(AbilityProperty.RadiusAroundSource) || info.Has(AbilityProperty.ConeRadius))
             {
                 var radius = Math.Max(info.Get(AbilityProperty.RadiusAroundSource), info.Get(AbilityProperty.ConeRadius));
                 targets.AddRange(HostilesWithin(mapChannel, player, player.Position, radius));
@@ -646,7 +656,7 @@ namespace Rasa.Managers
 
             var recovery = new AbilityRecoveryPacket(action.ActionId, action.ActionArgId, AbilityRecoveryPacket.HitDataKind.Damage)
             {
-                ArcData = actionInfo.Module == "abilities.lightning"
+                ArcData = lightning
             };
 
             if (targets.Count > 0)
@@ -657,13 +667,35 @@ namespace Rasa.Managers
                 var amount = Scale(player.Level, _random.Next(min, max + 1), scaleType);
                 var taken = ActorManager.Instance.Damage(mapChannel, target, amount, player);
 
-                recovery.Hits.Add(new AbilityHit
+                var hit = new AbilityHit
                 {
                     EntityId = target.EntityId,
                     Amount = amount,
                     DamageType = damageType,
                     DeathBlow = taken > 0 && target.Attributes[Attributes.Health].Current <= 0
-                });
+                };
+
+                if (lightning && target == primary)
+                {
+                    var arc = GetLightningArcSpec(info, player.Level);
+
+                    foreach (var arcTarget in SelectLightningArcTargets(
+                                 mapChannel, player, primary, arc.Radius, arc.MaximumTargets))
+                    {
+                        var arcTaken = ActorManager.Instance.Damage(
+                            mapChannel, arcTarget, arc.Damage, player);
+                        hit.Arcs.Add(new AbilityHit
+                        {
+                            EntityId = arcTarget.EntityId,
+                            Amount = arc.Damage,
+                            DamageType = damageType,
+                            DeathBlow = arcTaken > 0 &&
+                                        arcTarget.Attributes[Attributes.Health].Current <= 0
+                        });
+                    }
+                }
+
+                recovery.Hits.Add(hit);
             }
 
             CellManager.Instance.CellCallMethod(mapChannel, player, recovery);
@@ -683,6 +715,63 @@ namespace Rasa.Managers
                         found.Add(creature);
 
             return found;
+        }
+
+        internal static (float Radius, int Damage, int MaximumTargets) GetLightningArcSpec(
+            ActionLevelInfo info,
+            int actorLevel)
+        {
+            if (info == null)
+                return (0, 0, 0);
+
+            var radius = info.Get(AbilityProperty.ArcRadius);
+            var baseDamage = info.Get(AbilityProperty.ArcDamage);
+            if (radius <= 0 || baseDamage <= 0)
+                return (0, 0, 0);
+
+            return (
+                radius,
+                Scale(actorLevel, baseDamage, info.Get(AbilityProperty.DamageScaleType)),
+                1);
+        }
+
+        internal static List<Creature> SelectLightningArcTargets(
+            MapChannel mapChannel,
+            Manifestation player,
+            Creature primary,
+            float radius,
+            int maximumTargets)
+        {
+            if (mapChannel == null || player == null || primary == null ||
+                maximumTargets <= 0 || !float.IsFinite(radius) || radius <= 0 ||
+                primary.MapContextId != mapChannel.MapInfo.MapContextId)
+                return new List<Creature>();
+
+            var radiusSquared = radius * radius;
+
+            return mapChannel.MapCellInfo.Cells.Values
+                .SelectMany(cell => cell.CreatureList)
+                .Where(candidate => candidate != null &&
+                                    candidate.EntityId != primary.EntityId &&
+                                    candidate.MapContextId == mapChannel.MapInfo.MapContextId &&
+                                    candidate.State != CharacterState.Dead &&
+                                    EntityManager.Instance.GetEntityType(candidate.EntityId) == EntityType.Creature &&
+                                    EntityManager.Instance.Creatures.TryGetValue(candidate.EntityId, out var registered) &&
+                                    ReferenceEquals(candidate, registered) &&
+                                    IsHostile(player, candidate))
+                .Select(candidate => new
+                {
+                    Target = candidate,
+                    Distance = Vector3.DistanceSquared(primary.Position, candidate.Position)
+                })
+                .Where(entry => float.IsFinite(entry.Distance) && entry.Distance <= radiusSquared)
+                .GroupBy(entry => entry.Target.EntityId)
+                .Select(group => group.First())
+                .OrderBy(entry => entry.Distance)
+                .ThenBy(entry => entry.Target.EntityId)
+                .Take(maximumTargets)
+                .Select(entry => entry.Target)
+                .ToList();
         }
 
         #endregion

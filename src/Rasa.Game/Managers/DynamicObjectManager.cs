@@ -963,6 +963,7 @@ namespace Rasa.Managers
                     return;
 
                 CommunicatorManager.Instance.LeaveMapChannels(client);
+                LootDispenserManager.Instance.RemoveForOwner(transfer.OriginMap, client);
                 CellManager.Instance.RemoveFromWorld(client);
                 transfer.OriginMap.ClientList.RemoveAll(member => member == client);
                 transfer.HasDeparted = true;

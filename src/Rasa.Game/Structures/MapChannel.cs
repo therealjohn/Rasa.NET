@@ -49,6 +49,7 @@ namespace Rasa.Structures
 
         // Dictionary<uniqueLootDispenserId, dataAboutLootDispenser> LootDispensers
         public Dictionary<ulong, LootDispenser> LootDispensers = new Dictionary<ulong, LootDispenser>();
+        internal object LootSyncRoot { get; } = new object();
 
         // Missiles on this mapChannel
         public List<Missile> QueuedMissiles = new List<Missile>();
