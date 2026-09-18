@@ -2,7 +2,9 @@
 
 This provides an alternative to building and using the project directly on your system. Use Docker with Linux containers and Docker Compose v2.
 
-The Dockerfile builds with .NET SDK **10.0.401**, matching `global.json` and CI. The Compose services run the Release binaries directly with `/app` as their working directory, where the three SQLite files are mounted. Game configuration is mounted beside its Release binary. Rebuild the image after updating source or dependencies with `docker compose up --build`.
+The Dockerfile builds all .NET 10 projects with SDK **10.0.401**, matching `global.json` and CI. The Compose services run the `Rasa.Auth` and `Rasa.Game` Release binaries directly from their `net10.0` output directories while keeping `/app` as the working directory, where the three SQLite files are mounted. Game configuration is mounted beside the Game executable.
+
+The image also copies the repository's 77 checked-in `.nav` files to `/app/navmesh` and the knowledge-base JSON to `/app`, matching the default `GameDataConfig.NavMeshPath` and `KnowledgeBaseFile` values. Rebuild the image after updating source, dependencies, navmeshes, or knowledge-base content with `docker compose up --build`.
 
 To use a different NuGet feed for an image build without changing global configuration, pass `--build-arg NUGET_SOURCE=<feed-url>` to `docker build`.
 
@@ -41,9 +43,13 @@ Next, create a appsettings.env.json in the root directory with the following con
 }
 ```
 
+Only include settings you need to override. The image's default navigation path is already `/app/navmesh` through the relative value `navmesh`. If you set a different `GameDataConfig.NavMeshPath`, add a matching read-only volume to the `game` service.
+
 ## Start Server
 
-Next, run `docker compose up`
+Next, run `docker compose up --build`.
+
+Confirm the Game startup log reports loaded navmeshes. This is a server-side asset check; it does not establish native-client movement, collision, or multi-server transfer acceptance.
 
 ## Create a User
 

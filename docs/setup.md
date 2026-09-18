@@ -117,6 +117,18 @@ If you want to overwrite one or multiple settings from the appsettings.json of `
 
 - The env.json files is ignored in git. Keep it that way, this configuration applies only for your development enviroment.
 
+### Game configuration ownership
+
+`Rasa.Game\Config` owns the server settings loaded from `src\Rasa.Game\appsettings.json`:
+
+- `GameConfig` owns the public game endpoint, listener backlog, the 60-second transfer acknowledgement timeout, the 2-metre corpse-looting distance, and the optional GM performance-metrics interval. The metrics interval is `0` by default, which disables those packets.
+- `QueueConfig`, `CommunicatorConfig`, `ServerInfoConfig`, and `SocketAsyncConfig` own their existing queue, auth-communicator, server-list, and socket settings.
+- `GameDataConfig` owns enabled races, startup server flags, the knowledge-base JSON path, and `NavMeshPath`. The default navigation directory is `navmesh`.
+
+Action and action-level behavior is loaded from the world data tables. Auction, crafting, and mission behavior does not expose additional application settings in the current implementation. Do not add environment keys for those systems unless the owning code first adds a supported configuration property.
+
+For the exact transfer and loot validation rules and focused checks, see the [world regression guide](world-testing.md).
+
 ### Database configuration
 As of now, we use three databases: Auth (Accounting), Char (everything related to characters) and World (mainly common settings regarding the game world). The databases are accessed via EF Core and support MySql and Sqlite as database providers. Connection information is provided in the form of a defined data structure in the file `Rasa.DBL\databasesettings.json`. For a quick jump into development and small servers, Sqlite works fine and totally out of the box.
 
@@ -240,6 +252,18 @@ dotnet publish src\Rasa.Game\Rasa.Game.csproj -c Release -r win-x64 --self-conta
 
 Use `osx-x64` or `linux-x64` for the other deployment targets.
 
+### Navigation and navmesh assets
+
+`Rasa.Navigation` is the runtime query library, `Rasa.NavMesh` is the offline builder, and `Rasa.ClientData` reads the installed client's map and mesh data. The repository contains 77 generated `.nav` files under `navmesh`. `Rasa.Game` loads matching files at startup from `GameDataConfig.NavMeshPath`, which defaults to `navmesh` relative to the server working directory. A map without a matching file retains straight-line movement.
+
+To rebuild all navmeshes from a local 1.16.5.0 client installation:
+
+```powershell
+dotnet run --project src\Rasa.NavMesh\Rasa.NavMesh.csproj --no-build -- --client "C:\Games\Tabula Rasa" --out navmesh
+```
+
+Use `--map adv_foreas_concordia_wilderness` to rebuild one map. Generated files are inputs to `Rasa.Game`; no game client or live database is required to compile the navigation projects.
+
 ### Database compatibility tests
 
 The compatibility tests verify the pinned SDK, all ten project targets, the retained navigation project/package references, cryptographic fixtures, connection-string-specific MySQL server-version caching, and deterministic migration-lock names for schemas through MySQL's 64-character limit. The MySQL configuration tests use a fixed server version and do not connect to a database.
@@ -261,4 +285,4 @@ If the server consoles launched correctly, you should be ready to start the game
 - Start the game client using the shortcut you created earlier
 - Login with the user you created for the game above
 
-> Note* The game server will crash the first time you try to login due to a bug that is not fixed at the time of writing. Go back to Visual Studio and run the `Rasa.Game` project again. Once it's running, switch back to the game client and log back in.
+> A first-login server crash is reported in [InfiniteRasa/Rasa.NET#45](https://github.com/InfiniteRasa/Rasa.NET/issues/45). The automated protocol checks do not reproduce the complete native-client first-load sequence. If you encounter it, capture the server error and frame boundaries, restart `Rasa.Game`, and retry without treating the workaround as acceptance. See the [protocol regression guide](protocol-testing.md).
