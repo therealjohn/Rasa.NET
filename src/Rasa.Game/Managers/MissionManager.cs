@@ -9,6 +9,7 @@ namespace Rasa.Managers
 {
     using Data;
     using Game;
+    using Packets;
     using Packets.MapChannel.Server;
     using Packets.Mission.Server;
     using Repositories.Char;
@@ -272,6 +273,7 @@ namespace Rasa.Managers
         private readonly Dictionary<uint, MissionRewardDefinition> _rewardDefinitions;
         private readonly ManifestationManager _manifestationManager;
         private readonly Action<Item> _beforeRewardItemPublication;
+        private readonly Action<PythonPacket> _beforeMissionPacketPublication;
 
         public IReadOnlyDictionary<uint, Mission> LoadedMissions => _loadedMissionsView;
 
@@ -313,7 +315,8 @@ namespace Rasa.Managers
             IReadOnlyDictionary<uint, Mission> definitions,
             IReadOnlyDictionary<uint, MissionRewardDefinition> rewardDefinitions,
             ManifestationManager manifestationManager,
-            Action<Item> beforeRewardItemPublication = null)
+            Action<Item> beforeRewardItemPublication = null,
+            Action<PythonPacket> beforeMissionPacketPublication = null)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
             _loadedMissions = definitions.ToDictionary(entry => entry.Key, entry => entry.Value);
@@ -322,6 +325,7 @@ namespace Rasa.Managers
                 rewardDefinitions ?? new Dictionary<uint, MissionRewardDefinition>());
             _manifestationManager = manifestationManager;
             _beforeRewardItemPublication = beforeRewardItemPublication;
+            _beforeMissionPacketPublication = beforeMissionPacketPublication;
         }
 
         public void LoadMissions()
@@ -430,9 +434,10 @@ namespace Rasa.Managers
 
         public void PublishInitialState(Client client)
         {
-            client.CallMethod(
-                client.Player.EntityId,
-                new MissionStatusInfoPacket(BuildStatusSnapshot(client.Player)));
+            PublishMissionPacket(
+                client,
+                new MissionStatusInfoPacket(BuildStatusSnapshot(client.Player)),
+                "mission status snapshot");
         }
 
         public bool TryAcceptNpcMission(Client client, ulong npcEntityId, uint missionId)
@@ -1038,8 +1043,7 @@ namespace Rasa.Managers
                     runtimeObjective.State != MissionObjectiveState.Incomplete)
                     return false;
 
-                var failMission = objectiveDefinition.IsRequired.Value;
-                var completeable = false;
+                var publicationPlan = MissionFailurePublicationPlan.Empty;
                 try
                 {
                     using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
@@ -1061,7 +1065,8 @@ namespace Rasa.Managers
 
                         durableObjective.ObjectiveState =
                             (byte)MissionObjectiveState.Failed;
-                        completeable = !failMission &&
+                        var failMission = objectiveDefinition.IsRequired.Value;
+                        var completeable = !failMission &&
                             definition.Objectives.Values
                                 .Where(objective => objective.IsRequired.Value)
                                 .All(objective =>
@@ -1070,9 +1075,17 @@ namespace Rasa.Managers
                                         out var requiredObjective) &&
                                     requiredObjective.ObjectiveState ==
                                         (byte)MissionObjectiveState.Completed);
+                        var completeableChanged =
+                            durableMission.Completeable != completeable;
                         durableMission.Completeable = completeable;
                         if (failMission)
                             durableMission.MissionState = (uint)MissionState.Failed;
+                        publicationPlan = new MissionFailurePublicationPlan(
+                            missionId,
+                            objectiveId,
+                            failMission ? MissionState.Failed : MissionState.Active,
+                            completeable,
+                            completeableChanged);
                     });
                 }
                 catch (Exception error) when (GameplayRejectionException.IsExpected(error))
@@ -1083,24 +1096,7 @@ namespace Rasa.Managers
                     return false;
                 }
 
-                runtimeObjective.State = MissionObjectiveState.Failed;
-                var completeableChanged =
-                    runtimeMission.Completeable != completeable;
-                runtimeMission.Completeable = completeable;
-                client.CallMethod(
-                    client.Player.EntityId,
-                    new ObjectiveFailedPacket(missionId, objectiveId));
-                if (completeableChanged)
-                    client.CallMethod(
-                        client.Player.EntityId,
-                        new MissionCompleteablePacket(missionId, completeable));
-                if (failMission)
-                {
-                    runtimeMission.State = MissionState.Failed;
-                    client.CallMethod(
-                        client.Player.EntityId,
-                        new MissionFailedPacket(missionId));
-                }
+                publicationPlan.Publish(client, this);
                 return true;
             }
         }
@@ -1764,6 +1760,72 @@ namespace Rasa.Managers
                 Logger.WriteLog(
                     LogType.Error,
                     $"Unable to publish {description}; durable state is already committed: {error}");
+            }
+        }
+
+        private void PublishMissionPacket(
+            Client client,
+            PythonPacket packet,
+            string description)
+        {
+            TryPublish(
+                () =>
+                {
+                    _beforeMissionPacketPublication?.Invoke(packet);
+                    client.CallMethod(client.Player.EntityId, packet);
+                },
+                description);
+        }
+
+        internal sealed class MissionFailurePublicationPlan
+        {
+            internal static readonly MissionFailurePublicationPlan Empty =
+                new(0, 0, MissionState.Active, false, false);
+
+            private readonly uint _missionId;
+            private readonly uint _objectiveId;
+            private readonly MissionState _missionState;
+            private readonly bool _completeable;
+            private readonly bool _completeableChanged;
+
+            internal MissionFailurePublicationPlan(
+                uint missionId,
+                uint objectiveId,
+                MissionState missionState,
+                bool completeable,
+                bool completeableChanged)
+            {
+                _missionId = missionId;
+                _objectiveId = objectiveId;
+                _missionState = missionState;
+                _completeable = completeable;
+                _completeableChanged = completeableChanged;
+            }
+
+            internal void Publish(Client client, MissionManager manager)
+            {
+                if (!client.Player.Missions.TryGetValue(_missionId, out var mission) ||
+                    !mission.Objectives.TryGetValue(_objectiveId, out var objective))
+                    return;
+
+                objective.State = MissionObjectiveState.Failed;
+                mission.State = _missionState;
+                mission.Completeable = _completeable;
+
+                manager.PublishMissionPacket(
+                    client,
+                    new ObjectiveFailedPacket(_missionId, _objectiveId),
+                    $"mission {_missionId} objective {_objectiveId} failed");
+                if (_completeableChanged)
+                    manager.PublishMissionPacket(
+                        client,
+                        new MissionCompleteablePacket(_missionId, _completeable),
+                        $"mission {_missionId} completable after objective failure");
+                if (_missionState == MissionState.Failed)
+                    manager.PublishMissionPacket(
+                        client,
+                        new MissionFailedPacket(_missionId),
+                        $"mission {_missionId} failed after objective failure");
             }
         }
 

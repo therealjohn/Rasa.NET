@@ -77,7 +77,8 @@ namespace Rasa.Test.Missions
         private MissionTestContext(
             IReadOnlyDictionary<uint, Mission> definitions,
             IReadOnlyDictionary<uint, MissionRewardDefinition> rewards = null,
-            Action<Item> beforeRewardItemPublication = null) : this()
+            Action<Item> beforeRewardItemPublication = null,
+            Action<PythonPacket> beforeMissionPacketPublication = null) : this()
         {
             SeedCharacter(1, 0, 1);
             _world = new WorldTestContext();
@@ -101,7 +102,8 @@ namespace Rasa.Test.Missions
             CellManager.Instance.AddToWorld(Client);
             Drain();
             Manager = new MissionManager(this, definitions, rewards ?? new Dictionary<uint, MissionRewardDefinition>(),
-                new ManifestationManager(this), beforeRewardItemPublication);
+                new ManifestationManager(this), beforeRewardItemPublication,
+                beforeMissionPacketPublication);
         }
 
         internal static MissionTestContext WithDefinitions(params uint[] missionIds) =>
@@ -258,7 +260,8 @@ namespace Rasa.Test.Missions
             uint missionId = 321,
             bool selectableReward = true,
             bool activateSuccessor = true,
-            bool includeCompetingObjective = false)
+            bool includeCompetingObjective = false,
+            Action<PythonPacket> beforeMissionPacketPublication = null)
         {
             var objectives = new List<MissionObjectiveDefinition>
             {
@@ -379,7 +382,8 @@ namespace Rasa.Test.Missions
                     : Array.Empty<MissionRewardItem>());
             var context = new MissionTestContext(
                 new Dictionary<uint, Mission> { [missionId] = mission },
-                new Dictionary<uint, MissionRewardDefinition> { [missionId] = reward });
+                new Dictionary<uint, MissionRewardDefinition> { [missionId] = reward },
+                beforeMissionPacketPublication: beforeMissionPacketPublication);
             context.Reward = reward;
             if (selectableReward)
                 context.AddRewardTemplate(29, 3147);

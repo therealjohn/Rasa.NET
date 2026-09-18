@@ -171,6 +171,71 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
+        public void RequiredObjectivePublicationFailureConvergesAndRetryDoesNotRepeatTransition()
+        {
+            var failedPublications = 0;
+            var observedObjectiveState = MissionObjectiveState.Incomplete;
+            var observedMissionState = MissionState.Active;
+            var observedCompleteable = true;
+            MissionTestContext context = null;
+            context = MissionTestContext.WithObjectiveMission(
+                beforeMissionPacketPublication: packet =>
+                {
+                    if (packet is ObjectiveFailedPacket && failedPublications++ == 0)
+                    {
+                        observedObjectiveState =
+                            context.Client.Player.Missions[321].Objectives[5].State;
+                        observedMissionState =
+                            context.Client.Player.Missions[321].State;
+                        observedCompleteable =
+                            context.Client.Player.Missions[321].Completeable;
+                        throw new InvalidOperationException("Injected objective publication failure.");
+                    }
+                });
+            using var scope = context;
+            var giver = context.AddNpc(77);
+            Assert.IsTrue(context.Manager.TryAcceptNpcMission(
+                context.Client, giver.EntityId, 321));
+            context.Drain();
+
+            Assert.IsTrue(context.Manager.TryFailObjective(
+                context.Client, 321, 5));
+
+            Assert.AreEqual(MissionObjectiveState.Failed, observedObjectiveState);
+            Assert.AreEqual(MissionState.Failed, observedMissionState);
+            Assert.IsFalse(observedCompleteable);
+            Assert.AreEqual(MissionObjectiveState.Failed,
+                context.Client.Player.Missions[321].Objectives[5].State);
+            Assert.AreEqual(MissionState.Failed,
+                context.Client.Player.Missions[321].State);
+            Assert.IsFalse(context.Client.Player.Missions[321].Completeable);
+            Assert.AreEqual((byte)MissionObjectiveState.Failed,
+                context.ReadProgress(321).Missions[321].Objectives[5].State);
+            Assert.AreEqual((uint)MissionState.Failed,
+                context.ReadMission(321).MissionState);
+            Assert.IsFalse(context.ReadMission(321).Completeable);
+            var saveAttempts = context.SaveAttempts;
+            var failurePackets = context.Drain();
+            Assert.AreEqual(0, failurePackets.OfType<ObjectiveFailedPacket>().Count());
+            Assert.AreEqual(1, failurePackets.OfType<MissionFailedPacket>().Count());
+
+            Assert.IsFalse(context.Manager.TryFailObjective(
+                context.Client, 321, 5));
+            Assert.AreEqual(saveAttempts, context.SaveAttempts);
+            Assert.AreEqual(0, context.Drain().Count);
+
+            context.Manager.PublishInitialState(context.Client);
+
+            var snapshot = context.Drain().OfType<MissionStatusInfoPacket>().Single();
+            Assert.AreEqual(MissionState.Failed,
+                snapshot.MissionStatusDict[321].MissionState);
+            Assert.IsFalse(snapshot.MissionStatusDict[321].Completeable);
+            Assert.AreEqual(MissionObjectiveState.Failed,
+                snapshot.MissionStatusDict[321].ObjectivesList
+                    .Single(objective => objective.ObjectiveId == 5).State);
+        }
+
+        [TestMethod]
         public void AuthoritativeNpcLifecycleEventsFailAndClearMissionInProduction()
         {
             using var context = MissionTestContext.WithObjectiveMission();
