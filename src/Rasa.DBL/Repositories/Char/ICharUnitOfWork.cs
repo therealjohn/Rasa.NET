@@ -16,6 +16,7 @@
     using CharacterLockbox;
     using CharacterLogos;
     using CharacterMission;
+    using CharacterMissionProgress;
     using CharacterOption;
     using CharacterTeleporter;
     using CharacterTitle;
@@ -27,6 +28,10 @@
 
     public interface ICharUnitOfWork : IUnitOfWork
     {
+        void ExecuteTransaction(System.Action operation) =>
+            throw new System.NotSupportedException(
+                "This character unit of work does not support transactions.");
+
         IAuctionRepository Auctions { get; }
         ICensoredWordRepository CensoredWords { get; }
         ICharacterRepository Characters { get; }
@@ -36,6 +41,7 @@
         ICharacterLockboxRepository CharacterLockboxes { get; }
         ICharacterLogosRepository CharacterLogoses { get; }
         ICharacterMissionRepository CharacterMissions { get; }
+        ICharacterMissionProgressRepository CharacterMissionProgress { get; }
         ICharacterOptionRepository CharacterOptions { get; }
         ICharacterSkillsRepository CharacterSkills { get; }
         ICharacterTeleporterRepository CharacterTeleporters { get; }

@@ -5,6 +5,8 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Rasa.Context.World;
 
+#nullable disable
+
 namespace Rasa.Migrations.SqliteWorld
 {
     [DbContext(typeof(SqliteWorldContext))]
@@ -13,11 +15,15 @@ namespace Rasa.Migrations.SqliteWorld
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder
-                .HasAnnotation("ProductVersion", "5.0.1");
+            modelBuilder.HasAnnotation("ProductVersion", "9.0.20");
 
             modelBuilder.Entity("Rasa.Structures.World.ActionCostEntry", b =>
                 {
+                    b.Property<uint>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("id");
+
                     b.Property<uint>("ActionId")
                         .HasColumnType("INTEGER")
                         .HasColumnName("action_id");
@@ -29,11 +35,6 @@ namespace Rasa.Migrations.SqliteWorld
                     b.Property<int>("Cost")
                         .HasColumnType("INTEGER")
                         .HasColumnName("cost");
-
-                    b.Property<uint>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("id");
 
                     b.Property<uint>("Level")
                         .HasColumnType("INTEGER")
@@ -74,14 +75,14 @@ namespace Rasa.Migrations.SqliteWorld
 
             modelBuilder.Entity("Rasa.Structures.World.ActionItemRequirementEntry", b =>
                 {
-                    b.Property<uint>("ActionId")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("action_id");
-
                     b.Property<uint>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER")
                         .HasColumnName("id");
+
+                    b.Property<uint>("ActionId")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("action_id");
 
                     b.Property<uint>("ItemClassId")
                         .HasColumnType("INTEGER")
@@ -102,14 +103,14 @@ namespace Rasa.Migrations.SqliteWorld
 
             modelBuilder.Entity("Rasa.Structures.World.ActionLevelEntry", b =>
                 {
-                    b.Property<uint>("ActionId")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("action_id");
-
                     b.Property<uint>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER")
                         .HasColumnName("id");
+
+                    b.Property<uint>("ActionId")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("action_id");
 
                     b.Property<uint>("Level")
                         .HasColumnType("INTEGER")
@@ -154,14 +155,14 @@ namespace Rasa.Migrations.SqliteWorld
 
             modelBuilder.Entity("Rasa.Structures.World.ActionPropertyEntry", b =>
                 {
-                    b.Property<uint>("ActionId")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("action_id");
-
                     b.Property<uint>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER")
                         .HasColumnName("id");
+
+                    b.Property<uint>("ActionId")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("action_id");
 
                     b.Property<uint>("Level")
                         .HasColumnType("INTEGER")
@@ -274,6 +275,21 @@ namespace Rasa.Migrations.SqliteWorld
                     b.ToTable("creature_appearance");
                 });
 
+            modelBuilder.Entity("Rasa.Structures.World.CreatureClassFlagEntry", b =>
+                {
+                    b.Property<uint>("ClassId")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("class_id");
+
+                    b.Property<uint>("FlagId")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("flag_id");
+
+                    b.HasKey("ClassId", "FlagId");
+
+                    b.ToTable("creature_class_flag");
+                });
+
             modelBuilder.Entity("Rasa.Structures.World.CreatureEntry", b =>
                 {
                     b.Property<uint>("Id")
@@ -349,21 +365,6 @@ namespace Rasa.Migrations.SqliteWorld
                     b.HasKey("Id");
 
                     b.ToTable("creature");
-                });
-
-            modelBuilder.Entity("Rasa.Structures.World.CreatureClassFlagEntry", b =>
-                {
-                    b.Property<uint>("ClassId")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("class_id");
-
-                    b.Property<uint>("FlagId")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("flag_id");
-
-                    b.HasKey("ClassId", "FlagId");
-
-                    b.ToTable("creature_class_flag");
                 });
 
             modelBuilder.Entity("Rasa.Structures.World.CreatureStatEntry", b =>
@@ -552,14 +553,14 @@ namespace Rasa.Migrations.SqliteWorld
 
             modelBuilder.Entity("Rasa.Structures.World.ItemTemplateActionEntry", b =>
                 {
-                    b.Property<uint>("ActionId")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("action_id");
-
                     b.Property<uint>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER")
                         .HasColumnName("id");
+
+                    b.Property<uint>("ActionId")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("action_id");
 
                     b.Property<uint>("ItemTemplateId")
                         .HasColumnType("INTEGER")
@@ -1010,13 +1011,13 @@ namespace Rasa.Migrations.SqliteWorld
                         .HasColumnType("INTEGER")
                         .HasColumnName("marker_entity_id");
 
-                    b.Property<string>("Comment")
-                        .HasColumnType("varchar(64)")
-                        .HasColumnName("comment");
-
                     b.Property<uint>("MapContextId")
                         .HasColumnType("INTEGER")
                         .HasColumnName("map_context_id");
+
+                    b.Property<string>("Comment")
+                        .HasColumnType("varchar(64)")
+                        .HasColumnName("comment");
 
                     b.Property<uint>("MarkerType")
                         .HasColumnType("INTEGER")
@@ -1026,18 +1027,17 @@ namespace Rasa.Migrations.SqliteWorld
                         .HasColumnType("REAL")
                         .HasColumnName("match_distance");
 
-                    b.Property<byte>("ObjectKind")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("object_kind");
-
                     b.Property<uint>("ObjectId")
                         .HasColumnType("INTEGER")
                         .HasColumnName("object_id");
 
+                    b.Property<byte>("ObjectKind")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("object_kind");
+
                     b.HasKey("MarkerEntityId", "MapContextId");
 
-                    b.HasIndex("MapContextId")
-                        .HasDatabaseName("map_marker_index_map_context_id");
+                    b.HasIndex(new[] { "MapContextId" }, "map_marker_index_map_context_id");
 
                     b.ToTable("map_marker");
                 });
@@ -1277,6 +1277,26 @@ namespace Rasa.Migrations.SqliteWorld
                     b.ToTable("recipe_input");
                 });
 
+            modelBuilder.Entity("Rasa.Structures.World.SkillCharacterEntry", b =>
+                {
+                    b.Property<uint>("Id")
+                        .HasColumnType("integer")
+                        .HasColumnName("id")
+                        .HasAnnotation("MySql:ValueGenerationStrategy", MySqlValueGenerationStrategy.None);
+
+                    b.Property<uint>("ClassId")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("class_id");
+
+                    b.Property<uint>("RequiredLevel")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("required_level");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("skill_character");
+                });
+
             modelBuilder.Entity("Rasa.Structures.World.SpawnPoolEntry", b =>
                 {
                     b.Property<uint>("Id")
@@ -1391,25 +1411,6 @@ namespace Rasa.Migrations.SqliteWorld
                     b.HasKey("Id");
 
                     b.ToTable("spawnpool");
-                });
-
-            modelBuilder.Entity("Rasa.Structures.World.SkillCharacterEntry", b =>
-                {
-                    b.Property<uint>("Id")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("id");
-
-                    b.Property<uint>("ClassId")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("class_id");
-
-                    b.Property<uint>("RequiredLevel")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("required_level");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("skill_character");
                 });
 
             modelBuilder.Entity("Rasa.Structures.World.TeleporterEntry", b =>

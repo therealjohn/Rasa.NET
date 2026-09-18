@@ -34,6 +34,9 @@ namespace Rasa.Context.Char
         public DbSet<CharacterLockboxEntry> CharacterLockboxEntries { get; set; }
         public DbSet<CharacterLogosEntry> CharacterLogosEntries { get; set; }
         public DbSet<CharacterMissionEntry> CharacterMissionEntries { get; set; }
+        public DbSet<CharacterMissionObjectiveEntry> CharacterMissionObjectiveEntries { get; set; }
+        public DbSet<CharacterMissionObjectiveCounterEntry> CharacterMissionObjectiveCounterEntries { get; set; }
+        public DbSet<CharacterMissionObjectiveItemCounterEntry> CharacterMissionObjectiveItemCounterEntries { get; set; }
         public DbSet<CharacterOptionEntry> CharacterOptionEntries { get; set; }
         public DbSet<CharacterSkillsEntry> CharacterSkillsEntries { get; set; }
         public DbSet<CharacterTeleporterEntry> CharacterTeleporterEntries { get; set; }
@@ -61,6 +64,8 @@ namespace Rasa.Context.Char
             SetupCharacterTable(modelBuilder);
             SetupCharacterAppearanceTable(modelBuilder);
             SetupCharacterLogosTable(modelBuilder);
+            SetupCharacterMissionTable(modelBuilder);
+            SetupCharacterMissionObjectiveTables(modelBuilder);
             SetupCharacterSkillTable(modelBuilder);
             SetupCharacterTeleporterTable(modelBuilder);
             SetupCharacterOptionsTable(modelBuilder);
@@ -242,6 +247,77 @@ namespace Rasa.Context.Char
         {
             modelBuilder.Entity<CharacterLogosEntry>()
                 .HasKey(e => new { e.CharacterId, e.LogosId });
+        }
+
+        private void SetupCharacterMissionTable(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<CharacterMissionEntry>()
+                .HasKey(e => new { e.CharacterId, e.MissionId });
+            modelBuilder.Entity<CharacterMissionEntry>()
+                .HasOne<CharacterEntry>()
+                .WithMany()
+                .HasForeignKey(e => e.CharacterId)
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<CharacterMissionEntry>()
+                .Property(e => e.Completeable)
+                .HasDefaultValue(false);
+        }
+
+        private void SetupCharacterMissionObjectiveTables(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<CharacterMissionObjectiveEntry>()
+                .HasKey(entry => new { entry.CharacterId, entry.MissionId, entry.ObjectiveId });
+            modelBuilder.Entity<CharacterMissionObjectiveEntry>()
+                .HasOne(entry => entry.Mission)
+                .WithMany(mission => mission.Objectives)
+                .HasForeignKey(entry => new { entry.CharacterId, entry.MissionId })
+                .OnDelete(DeleteBehavior.Cascade);
+            modelBuilder.Entity<CharacterMissionObjectiveEntry>()
+                .Property(entry => entry.ObjectiveState)
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3)
+                .IsConcurrencyToken();
+
+            modelBuilder.Entity<CharacterMissionObjectiveCounterEntry>()
+                .HasKey(entry => new
+                {
+                    entry.CharacterId,
+                    entry.MissionId,
+                    entry.ObjectiveId,
+                    entry.CounterId
+                });
+            modelBuilder.Entity<CharacterMissionObjectiveCounterEntry>()
+                .HasOne(entry => entry.Objective)
+                .WithMany(objective => objective.Counters)
+                .HasForeignKey(entry => new { entry.CharacterId, entry.MissionId, entry.ObjectiveId })
+                .OnDelete(DeleteBehavior.Cascade);
+            modelBuilder.Entity<CharacterMissionObjectiveCounterEntry>()
+                .Property(entry => entry.CounterId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<CharacterMissionObjectiveCounterEntry>()
+                .Property(entry => entry.CounterValue)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11)
+                .IsConcurrencyToken();
+
+            modelBuilder.Entity<CharacterMissionObjectiveItemCounterEntry>()
+                .HasKey(entry => new
+                {
+                    entry.CharacterId,
+                    entry.MissionId,
+                    entry.ObjectiveId,
+                    entry.ItemClassId
+                });
+            modelBuilder.Entity<CharacterMissionObjectiveItemCounterEntry>()
+                .HasOne(entry => entry.Objective)
+                .WithMany(objective => objective.ItemCounters)
+                .HasForeignKey(entry => new { entry.CharacterId, entry.MissionId, entry.ObjectiveId })
+                .OnDelete(DeleteBehavior.Cascade);
+            modelBuilder.Entity<CharacterMissionObjectiveItemCounterEntry>()
+                .Property(entry => entry.ItemClassId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<CharacterMissionObjectiveItemCounterEntry>()
+                .Property(entry => entry.CounterValue)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11)
+                .IsConcurrencyToken();
         }
 
         private void SetupCharacterOptionsTable(ModelBuilder modelBuilder)

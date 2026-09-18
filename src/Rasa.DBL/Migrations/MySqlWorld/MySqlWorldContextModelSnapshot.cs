@@ -5,6 +5,8 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Rasa.Context.World;
 
+#nullable disable
+
 namespace Rasa.Migrations.MySqlWorld
 {
     [DbContext(typeof(MySqlWorldContext))]
@@ -14,11 +16,20 @@ namespace Rasa.Migrations.MySqlWorld
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("Relational:MaxIdentifierLength", 64)
-                .HasAnnotation("ProductVersion", "5.0.1");
+                .HasAnnotation("ProductVersion", "9.0.20")
+                .HasAnnotation("Relational:MaxIdentifierLength", 64);
+
+            MySqlModelBuilderExtensions.AutoIncrementColumns(modelBuilder);
 
             modelBuilder.Entity("Rasa.Structures.World.ActionCostEntry", b =>
                 {
+                    b.Property<uint>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
+
                     b.Property<uint>("ActionId")
                         .HasColumnType("int unsigned")
                         .HasColumnName("action_id");
@@ -30,11 +41,6 @@ namespace Rasa.Migrations.MySqlWorld
                     b.Property<int>("Cost")
                         .HasColumnType("int")
                         .HasColumnName("cost");
-
-                    b.Property<uint>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int unsigned")
-                        .HasColumnName("id");
 
                     b.Property<uint>("Level")
                         .HasColumnType("int unsigned")
@@ -51,6 +57,8 @@ namespace Rasa.Migrations.MySqlWorld
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
 
                     b.Property<byte>("IsCharged")
                         .HasColumnType("tinyint unsigned")
@@ -75,14 +83,16 @@ namespace Rasa.Migrations.MySqlWorld
 
             modelBuilder.Entity("Rasa.Structures.World.ActionItemRequirementEntry", b =>
                 {
-                    b.Property<uint>("ActionId")
-                        .HasColumnType("int unsigned")
-                        .HasColumnName("action_id");
-
                     b.Property<uint>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
+
+                    b.Property<uint>("ActionId")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("action_id");
 
                     b.Property<uint>("ItemClassId")
                         .HasColumnType("int unsigned")
@@ -103,14 +113,16 @@ namespace Rasa.Migrations.MySqlWorld
 
             modelBuilder.Entity("Rasa.Structures.World.ActionLevelEntry", b =>
                 {
-                    b.Property<uint>("ActionId")
-                        .HasColumnType("int unsigned")
-                        .HasColumnName("action_id");
-
                     b.Property<uint>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
+
+                    b.Property<uint>("ActionId")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("action_id");
 
                     b.Property<uint>("Level")
                         .HasColumnType("int unsigned")
@@ -155,14 +167,16 @@ namespace Rasa.Migrations.MySqlWorld
 
             modelBuilder.Entity("Rasa.Structures.World.ActionPropertyEntry", b =>
                 {
-                    b.Property<uint>("ActionId")
-                        .HasColumnType("int unsigned")
-                        .HasColumnName("action_id");
-
                     b.Property<uint>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
+
+                    b.Property<uint>("ActionId")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("action_id");
 
                     b.Property<uint>("Level")
                         .HasColumnType("int unsigned")
@@ -188,6 +202,8 @@ namespace Rasa.Migrations.MySqlWorld
                         .HasColumnType("int unsigned")
                         .HasColumnName("class_id");
 
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
+
                     b.Property<uint>("MaxDamageAbsorbed")
                         .HasColumnType("int unsigned")
                         .HasColumnName("max_damage_absorbed");
@@ -211,6 +227,8 @@ namespace Rasa.Migrations.MySqlWorld
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
 
                     b.Property<uint>("ActionArgId")
                         .HasColumnType("int unsigned")
@@ -275,12 +293,29 @@ namespace Rasa.Migrations.MySqlWorld
                     b.ToTable("creature_appearance");
                 });
 
+            modelBuilder.Entity("Rasa.Structures.World.CreatureClassFlagEntry", b =>
+                {
+                    b.Property<uint>("ClassId")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("class_id");
+
+                    b.Property<uint>("FlagId")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("flag_id");
+
+                    b.HasKey("ClassId", "FlagId");
+
+                    b.ToTable("creature_class_flag");
+                });
+
             modelBuilder.Entity("Rasa.Structures.World.CreatureEntry", b =>
                 {
                     b.Property<uint>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
 
                     b.Property<uint>("Action1")
                         .HasColumnType("int unsigned")
@@ -352,27 +387,14 @@ namespace Rasa.Migrations.MySqlWorld
                     b.ToTable("creature");
                 });
 
-            modelBuilder.Entity("Rasa.Structures.World.CreatureClassFlagEntry", b =>
-                {
-                    b.Property<uint>("ClassId")
-                        .HasColumnType("int unsigned")
-                        .HasColumnName("class_id");
-
-                    b.Property<uint>("FlagId")
-                        .HasColumnType("int unsigned")
-                        .HasColumnName("flag_id");
-
-                    b.HasKey("ClassId", "FlagId");
-
-                    b.ToTable("creature_class_flag");
-                });
-
             modelBuilder.Entity("Rasa.Structures.World.CreatureStatEntry", b =>
                 {
                     b.Property<uint>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
 
                     b.Property<int>("Armor")
                         .HasColumnType("int")
@@ -405,6 +427,8 @@ namespace Rasa.Migrations.MySqlWorld
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
 
                     b.Property<string>("AugList")
                         .IsRequired()
@@ -440,6 +464,8 @@ namespace Rasa.Migrations.MySqlWorld
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
 
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
+
                     b.Property<uint>("SlotId")
                         .HasColumnType("int unsigned")
                         .HasColumnName("slot_id");
@@ -472,6 +498,8 @@ namespace Rasa.Migrations.MySqlWorld
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
 
                     b.Property<uint>("ClassId")
                         .HasColumnType("int unsigned")
@@ -514,6 +542,8 @@ namespace Rasa.Migrations.MySqlWorld
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
 
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
+
                     b.Property<uint>("DragAudioSetId")
                         .HasColumnType("int unsigned")
                         .HasColumnName("drag_audio_set_id");
@@ -553,14 +583,16 @@ namespace Rasa.Migrations.MySqlWorld
 
             modelBuilder.Entity("Rasa.Structures.World.ItemTemplateActionEntry", b =>
                 {
-                    b.Property<uint>("ActionId")
-                        .HasColumnType("int unsigned")
-                        .HasColumnName("action_id");
-
                     b.Property<uint>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
+
+                    b.Property<uint>("ActionId")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("action_id");
 
                     b.Property<uint>("ItemTemplateId")
                         .HasColumnType("int unsigned")
@@ -582,6 +614,8 @@ namespace Rasa.Migrations.MySqlWorld
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
 
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
+
                     b.Property<int>("ArmorValue")
                         .HasColumnType("int")
                         .HasColumnName("armor_value");
@@ -597,6 +631,8 @@ namespace Rasa.Migrations.MySqlWorld
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
 
                     b.Property<byte>("BoundToCharacterFlag")
                         .HasColumnType("tinyint unsigned")
@@ -671,6 +707,8 @@ namespace Rasa.Migrations.MySqlWorld
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
 
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
+
                     b.Property<byte>("RequirementType")
                         .HasColumnType("tinyint unsigned")
                         .HasColumnName("req_type");
@@ -691,6 +729,8 @@ namespace Rasa.Migrations.MySqlWorld
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
 
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
+
                     b.Property<byte>("RaceId")
                         .HasColumnType("tinyint unsigned")
                         .HasColumnName("race_id");
@@ -706,6 +746,8 @@ namespace Rasa.Migrations.MySqlWorld
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
 
                     b.Property<int>("SkillId")
                         .HasColumnType("int")
@@ -743,6 +785,8 @@ namespace Rasa.Migrations.MySqlWorld
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
 
                     b.Property<uint>("AeRadius")
                         .HasColumnType("int unsigned")
@@ -844,6 +888,8 @@ namespace Rasa.Migrations.MySqlWorld
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
 
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
+
                     b.Property<uint>("ClassId")
                         .HasColumnType("int unsigned")
                         .HasColumnName("class_id");
@@ -885,6 +931,8 @@ namespace Rasa.Migrations.MySqlWorld
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
 
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
+
                     b.Property<uint>("ClassId")
                         .HasColumnType("int unsigned")
                         .HasColumnName("class_id");
@@ -922,6 +970,8 @@ namespace Rasa.Migrations.MySqlWorld
                         .HasColumnType("int unsigned")
                         .HasColumnName("map_context_id");
 
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
+
                     b.Property<uint>("BaseRegion")
                         .HasColumnType("int unsigned")
                         .HasColumnName("base_region");
@@ -946,6 +996,8 @@ namespace Rasa.Migrations.MySqlWorld
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
 
                     b.Property<string>("Comment")
                         .IsRequired()
@@ -1011,13 +1063,13 @@ namespace Rasa.Migrations.MySqlWorld
                         .HasColumnType("bigint unsigned")
                         .HasColumnName("marker_entity_id");
 
-                    b.Property<string>("Comment")
-                        .HasColumnType("varchar(64)")
-                        .HasColumnName("comment");
-
                     b.Property<uint>("MapContextId")
                         .HasColumnType("int unsigned")
                         .HasColumnName("map_context_id");
+
+                    b.Property<string>("Comment")
+                        .HasColumnType("varchar(64)")
+                        .HasColumnName("comment");
 
                     b.Property<uint>("MarkerType")
                         .HasColumnType("int unsigned")
@@ -1027,18 +1079,17 @@ namespace Rasa.Migrations.MySqlWorld
                         .HasColumnType("double")
                         .HasColumnName("match_distance");
 
-                    b.Property<byte>("ObjectKind")
-                        .HasColumnType("tinyint unsigned")
-                        .HasColumnName("object_kind");
-
                     b.Property<uint>("ObjectId")
                         .HasColumnType("int unsigned")
                         .HasColumnName("object_id");
 
+                    b.Property<byte>("ObjectKind")
+                        .HasColumnType("tinyint unsigned")
+                        .HasColumnName("object_kind");
+
                     b.HasKey("MarkerEntityId", "MapContextId");
 
-                    b.HasIndex("MapContextId")
-                        .HasDatabaseName("map_marker_index_map_context_id");
+                    b.HasIndex(new[] { "MapContextId" }, "map_marker_index_map_context_id");
 
                     b.ToTable("map_marker");
                 });
@@ -1049,6 +1100,8 @@ namespace Rasa.Migrations.MySqlWorld
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
 
                     b.Property<string>("Comment")
                         .IsRequired()
@@ -1118,6 +1171,8 @@ namespace Rasa.Migrations.MySqlWorld
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
 
                     b.Property<byte>("CategoryId")
                         .HasColumnType("tinyint unsigned")
@@ -1189,6 +1244,8 @@ namespace Rasa.Migrations.MySqlWorld
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
 
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
+
                     b.Property<string>("Comment")
                         .IsRequired()
                         .HasColumnType("varchar(50)")
@@ -1229,6 +1286,8 @@ namespace Rasa.Migrations.MySqlWorld
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
 
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
+
                     b.Property<uint>("EnergyCost")
                         .HasColumnType("int unsigned")
                         .HasColumnName("energy_cost");
@@ -1261,6 +1320,8 @@ namespace Rasa.Migrations.MySqlWorld
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
 
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
+
                     b.Property<uint>("InputClassId")
                         .HasColumnType("int unsigned")
                         .HasColumnName("input_class_id");
@@ -1278,12 +1339,34 @@ namespace Rasa.Migrations.MySqlWorld
                     b.ToTable("recipe_input");
                 });
 
+            modelBuilder.Entity("Rasa.Structures.World.SkillCharacterEntry", b =>
+                {
+                    b.Property<uint>("Id")
+                        .HasColumnType("int(11) unsigned")
+                        .HasColumnName("id")
+                        .HasAnnotation("MySql:ValueGenerationStrategy", MySqlValueGenerationStrategy.None);
+
+                    b.Property<uint>("ClassId")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("class_id");
+
+                    b.Property<uint>("RequiredLevel")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("required_level");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("skill_character");
+                });
+
             modelBuilder.Entity("Rasa.Structures.World.SpawnPoolEntry", b =>
                 {
                     b.Property<uint>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
 
                     b.Property<byte>("AnimType")
                         .HasColumnType("tinyint unsigned")
@@ -1394,31 +1477,14 @@ namespace Rasa.Migrations.MySqlWorld
                     b.ToTable("spawnpool");
                 });
 
-            modelBuilder.Entity("Rasa.Structures.World.SkillCharacterEntry", b =>
-                {
-                    b.Property<uint>("Id")
-                        .HasColumnType("int unsigned")
-                        .HasColumnName("id");
-
-                    b.Property<uint>("ClassId")
-                        .HasColumnType("int unsigned")
-                        .HasColumnName("class_id");
-
-                    b.Property<uint>("RequiredLevel")
-                        .HasColumnType("int unsigned")
-                        .HasColumnName("required_level");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("skill_character");
-                });
-
             modelBuilder.Entity("Rasa.Structures.World.TeleporterEntry", b =>
                 {
                     b.Property<uint>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
 
                     b.Property<uint>("ClassId")
                         .HasColumnType("int unsigned")
@@ -1465,6 +1531,8 @@ namespace Rasa.Migrations.MySqlWorld
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
 
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
+
                     b.Property<uint>("PackageId")
                         .HasColumnType("int unsigned")
                         .HasColumnName("package_id");
@@ -1493,6 +1561,8 @@ namespace Rasa.Migrations.MySqlWorld
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int unsigned")
                         .HasColumnName("id");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<uint>("Id"));
 
                     b.Property<uint>("AmmoClassId")
                         .HasColumnType("int unsigned")

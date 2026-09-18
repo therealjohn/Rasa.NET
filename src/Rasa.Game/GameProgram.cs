@@ -26,6 +26,7 @@ namespace Rasa
     using Repositories.Char.CharacterLockbox;
     using Repositories.Char.CharacterLogos;
     using Repositories.Char.CharacterMission;
+    using Repositories.Char.CharacterMissionProgress;
     using Repositories.Char.CharacterOption;
     using Repositories.Char.CharacterSkills;
     using Repositories.Char.CharacterTeleporter;
@@ -105,6 +106,7 @@ namespace Rasa
             services.AddScoped<ICharacterLockboxRepository, CharacterLockboxRepository>();
             services.AddScoped<ICharacterLogosRepository, CharacterLogosRepository>();
             services.AddScoped<ICharacterMissionRepository, CharacterMissionRepository>();
+            services.AddScoped<ICharacterMissionProgressRepository, CharacterMissionProgressRepository>();
             services.AddScoped<ICharacterOptionRepository, CharacterOptionRepository>();
             services.AddScoped<ICharacterSkillsRepository, CharacterSkillsRepository>();
             services.AddScoped<ICharacterTeleporterRepository, CharacterTeleporterRepository>();
