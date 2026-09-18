@@ -237,6 +237,12 @@ src/Rasa.Auth/appsettings.env.json
 src/Rasa.Game/appsettings.env.json
 src/Rasa.DBL/databasesettings.env.json
 
+# Docker Compose local state and overrides
+/rasaauth.db
+/rasachar.db
+/rasaworld.db
+/appsettings.env.json
+
 # Local publish output (dotnet publish -o out\auth / out\game)
 out/
 
