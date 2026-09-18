@@ -2,11 +2,11 @@
 
 namespace Rasa.Structures
 {
-    public class MissionIndicator
+    public sealed class MissionIndicator
     {
-        public Vector3 Position { get; set; }
-        public double Radius { get; set; }
-        public uint IndicatorId { get; set; }
-        public bool Show3DEffect { get; set; }
+        public Vector3 Position { get; init; }
+        public double Radius { get; init; }
+        public uint IndicatorId { get; init; }
+        public bool Show3DEffect { get; init; }
     }
 }

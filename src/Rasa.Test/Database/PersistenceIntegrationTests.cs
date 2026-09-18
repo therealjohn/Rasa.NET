@@ -52,10 +52,13 @@ namespace Rasa.Test.Database
         public void CombinedCharacterPersistenceContractsAreExposed()
         {
             var accountSlotLookup = typeof(ICharacterMissionRepository).GetMethod(
-                "Get",
+                "GetByAccountAndSlot",
                 new[] { typeof(uint), typeof(uint) });
             Assert.IsNotNull(accountSlotLookup);
             Assert.AreEqual(typeof(List<CharacterMissionEntry>), accountSlotLookup.ReturnType);
+            Assert.IsNotNull(typeof(ICharacterMissionRepository).GetMethod(
+                "Get",
+                new[] { typeof(uint), typeof(uint) }));
             Assert.IsNotNull(typeof(ICharacterMissionRepository).GetMethod(
                 "GetByCharacterAndMission",
                 new[] { typeof(uint), typeof(uint) }));
@@ -465,7 +468,7 @@ namespace Rasa.Test.Database
                         .ToArray());
                 CollectionAssert.AreEquivalent(
                     new uint[] { 321, 429 },
-                    reopened.CharacterMissions.Get(17, 1)
+                    reopened.CharacterMissions.GetByAccountAndSlot(17, 1)
                         .Select(entry => entry.MissionId)
                         .ToArray());
                 var objective = reopened.CharacterMissionProgress.Get(123, 429)

@@ -18,6 +18,7 @@ namespace Rasa.Managers
     using Packets.Manifestation.Server;
     using Packets.MapChannel.Client;
     using Packets.MapChannel.Server;
+    using Repositories.Char;
     using Repositories.UnitOfWork;
     using Structures;
     using Structures.Char;
@@ -952,6 +953,7 @@ namespace Rasa.Managers
             SocialManager.Instance.SetSocialContactList(client);
 
             client.CallMethod(player.EntityId, new ActorInfoPacket(player));
+            MissionManager.Instance.PublishInitialState(client);
 
             // The regions the player is standing in; re-sent by RegionManager.Worker as they move.
             RegionManager.Instance.PlayerEnteredMap(client);
@@ -1140,6 +1142,139 @@ namespace Rasa.Managers
             };
 
             return entityData;
+        }
+
+        internal sealed class ProgressionGrant
+        {
+            internal bool HasChanges { get; init; }
+            internal uint ExperienceAward { get; init; }
+            internal uint TotalExperience { get; init; }
+            internal byte PreviousLevel { get; init; }
+            internal byte FinalLevel { get; init; }
+            internal uint PreviousCloneCredits { get; init; }
+            internal uint FinalCloneCredits { get; init; }
+        }
+
+        internal ProgressionGrant PlanExperience(
+            Client client,
+            uint experience,
+            CharacterEntry durableCharacter,
+            ICharUnitOfWork unitOfWork)
+        {
+            var player = client.Player;
+            if (experience == 0 || player.Level >= MaxPlayerLevel)
+                return new ProgressionGrant();
+            if (player.Level < 1 ||
+                durableCharacter.Id != player.Id ||
+                durableCharacter.Experience != player.Experience ||
+                durableCharacter.Level != player.Level ||
+                durableCharacter.CloneCredits != player.CloneCredits)
+                throw new GameplayRejectionException(
+                    "Runtime progression no longer matches durable character state.");
+
+            var totalExperience = checked(durableCharacter.Experience + experience);
+            var previousLevel = durableCharacter.Level;
+            var finalLevel = previousLevel;
+            while (finalLevel < MaxPlayerLevel)
+            {
+                var requiredExperience = GetLevelNeededExperience(finalLevel);
+                if (requiredExperience < 0 || totalExperience < requiredExperience)
+                    break;
+                finalLevel++;
+            }
+
+            var cloneCredits = durableCharacter.CloneCredits;
+            for (var level = previousLevel + 1; level <= finalLevel; level++)
+                if (Array.IndexOf(CloneCreditLevels, level) >= 0)
+                    cloneCredits = checked(cloneCredits + 1);
+
+            unitOfWork.Characters.UpdateCharacterProgression(
+                player.Id, totalExperience, finalLevel);
+            if (cloneCredits != durableCharacter.CloneCredits)
+                unitOfWork.Characters.UpdateCharacterCloneCredits(
+                    player.Id, cloneCredits);
+
+            return new ProgressionGrant
+            {
+                HasChanges = true,
+                ExperienceAward = experience,
+                TotalExperience = totalExperience,
+                PreviousLevel = previousLevel,
+                FinalLevel = finalLevel,
+                PreviousCloneCredits = durableCharacter.CloneCredits,
+                FinalCloneCredits = cloneCredits
+            };
+        }
+
+        internal void PublishExperience(Client client, ProgressionGrant grant)
+        {
+            if (grant == null || !grant.HasChanges)
+                return;
+
+            var player = client.Player;
+            player.Experience = grant.TotalExperience;
+            client.CallMethod(
+                player.EntityId,
+                new ExperienceChangedPacket(
+                    new XPInfo(
+                        grant.TotalExperience,
+                        grant.ExperienceAward,
+                        grant.ExperienceAward)));
+
+            var cloneCredits = grant.PreviousCloneCredits;
+            for (var level = grant.PreviousLevel + 1;
+                 level <= grant.FinalLevel;
+                 level++)
+            {
+                player.Level = (byte)level;
+                if (Array.IndexOf(CloneCreditLevels, player.Level) >= 0)
+                {
+                    cloneCredits++;
+                    player.CloneCredits = cloneCredits;
+                    client.CallMethod(
+                        player.EntityId,
+                        new CloneCreditsPacket(player.CloneCredits));
+                }
+
+                client.CellCallMethod(
+                    client,
+                    player.EntityId,
+                    new LevelUpPacket(player.Level));
+                var msgArg = new Dictionary<string, string>
+                {
+                    { "level", player.Level.ToString() },
+                    { "attributePts", GetAvailableAttributePoints(player).ToString() },
+                    { "skillPts", GetSkillPointsAvailable(player).ToString() }
+                };
+                client.CallMethod(
+                    SysEntity.CommunicatorId,
+                    new DisplayClientMessagePacket(
+                        PlayerMessage.PmLevelIncreased,
+                        msgArg,
+                        MsgFilterId.LeveledUp));
+                UpdateStatsValues(client, true);
+                client.CallMethod(
+                    player.EntityId,
+                    new AttributeInfoPacket(player.Attributes));
+                SendAvailableAllocationPoints(client);
+            }
+
+            player.Level = grant.FinalLevel;
+            player.CloneCredits = grant.FinalCloneCredits;
+            if (grant.FinalLevel != grant.PreviousLevel)
+                PartyManager.Instance.MemberInfoChanged(client);
+        }
+
+        internal bool ValidateProgressionForClient(Client client)
+        {
+            var player = client?.Player;
+            if (player != null && player.Level >= 1 && player.Level <= MaxPlayerLevel)
+                return true;
+
+            Logger.WriteLog(
+                LogType.Error,
+                $"Rejected progression for character {player?.Id ?? 0}: invalid level {player?.Level ?? 0}.");
+            return false;
         }
 
         internal void GainExperience(Client client, uint experience)

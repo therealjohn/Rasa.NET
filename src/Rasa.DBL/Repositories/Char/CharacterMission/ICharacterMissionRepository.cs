@@ -8,8 +8,12 @@ namespace Rasa.Repositories.Char.CharacterMission
     public interface ICharacterMissionRepository
     {
         IReadOnlyList<CharacterMissionEntry> Get(uint characterId);
-        List<CharacterMissionEntry> Get(uint accountId, uint characterSlot);
+        List<CharacterMissionEntry> GetByAccountAndSlot(
+            uint accountId,
+            uint characterSlot);
         int Count(uint characterId);
+        [CanBeNull]
+        CharacterMissionEntry Get(uint characterId, uint missionId);
         [CanBeNull]
         CharacterMissionEntry GetByCharacterAndMission(uint characterId, uint missionId);
         void Add(CharacterMissionEntry entry);

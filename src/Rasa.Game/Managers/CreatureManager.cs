@@ -29,6 +29,8 @@ namespace Rasa.Managers
         public const long CreatureLocationUpdateTime = 1500;
         public Dictionary<uint, Creature> LoadedCreatures = new();
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
+        private readonly ManifestationManager _manifestationManager;
+        private readonly MissionManager _missionManager;
         public static CreatureManager Instance
         {
             get
@@ -48,8 +50,18 @@ namespace Rasa.Managers
         }
 
         private CreatureManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory)
+            : this(gameUnitOfWorkFactory, new ManifestationManager(gameUnitOfWorkFactory))
+        {
+        }
+
+        internal CreatureManager(
+            IGameUnitOfWorkFactory gameUnitOfWorkFactory,
+            ManifestationManager manifestationManager,
+            MissionManager missionManager = null)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
+            _manifestationManager = manifestationManager;
+            _missionManager = missionManager;
         }
 
         /// <summary>
@@ -158,11 +170,13 @@ namespace Rasa.Managers
                 experience += (uint)(new Random().Next() % (experienceRange * 2 + 1)) - experienceRange;
 
                 // todo: Depending on level difference reduce experience
-                ManifestationManager.Instance.GainExperience(client, experience);
+                _manifestationManager.GainExperience(client, experience);
 
                 // Adrenaline is earned here and nowhere else: it does not regenerate. See
                 // ManifestationManager.AdrenalinePerKillPercent.
-                ManifestationManager.Instance.GainAdrenaline(client, ManifestationManager.Instance.AdrenalineForKill(client));
+                _manifestationManager.GainAdrenaline(
+                    client,
+                    _manifestationManager.AdrenalineForKill(client));
             }
 
             // The corpse is harvestable by whoever earned it, a fixed number of times. Set here
@@ -179,7 +193,12 @@ namespace Rasa.Managers
 
             // spawn loot
             if (killedBy != null && client != null)
+            {
                 LootDispenserManager.Instance.Loot(client, creature);
+                (_missionManager ?? MissionManager.Instance).RecordProgress(
+                    client,
+                    MissionProgressEvent.Creature(creature.DbId));
+            }
         }
 
         public Creature CreateCreature(uint dbId, SpawnPool spawnPool)

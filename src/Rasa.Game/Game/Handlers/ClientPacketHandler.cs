@@ -32,6 +32,12 @@
         {
             Client = client;
         }
+
+        [PacketHandler(GameOpcode.AbandonMission)]
+        private void AbandonMission(AbandonMissionPacket packet)
+        {
+            NpcManager.Instance.AbandonMission(Client, packet);
+        }
         
         [PacketHandler(GameOpcode.AllocateAttributePoints)]
         private void AllocateAttributePoints(AllocateAttributePointsPacket packet)
@@ -93,6 +99,12 @@
             NpcManager.Instance.CompleteNPCMission(Client, packet);
         }
 
+        [PacketHandler(GameOpcode.CompleteNPCObjective)]
+        private void CompleteNPCObjective(CompleteNPCObjectivePacket packet)
+        {
+            NpcManager.Instance.CompleteNPCObjective(Client, packet);
+        }
+
         [PacketHandler(GameOpcode.CreateClan)]
         private void CreateClan(CreateClanPacket packet)
         {
@@ -115,6 +127,12 @@
         private void LevelSkills(LevelSkillsPacket packet)
         {
             ManifestationManager.Instance.LevelSkills(Client, packet);
+        }
+
+        [PacketHandler(GameOpcode.RewardNPCMission)]
+        private void RewardNPCMission(RewardNPCMissionPacket packet)
+        {
+            NpcManager.Instance.RewardNPCMission(Client, packet);
         }
         
         [PacketHandler(GameOpcode.MapLoaded)]

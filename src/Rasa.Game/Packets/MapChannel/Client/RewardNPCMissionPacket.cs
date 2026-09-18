@@ -5,10 +5,10 @@ namespace Rasa.Packets.MapChannel.Client
     using Data;
     using Memory;
 
-    public class CompleteNPCMissionPacket : ClientPythonPacket
+    public class RewardNPCMissionPacket : ClientPythonPacket
     {
-        public override GameOpcode Opcode { get; } = GameOpcode.CompleteNPCMission;
-        
+        public override GameOpcode Opcode { get; } = GameOpcode.RewardNPCMission;
+
         public ulong EntityId { get; set; }
         public uint MissionId { get; set; }
         public int? SelectionIdx { get; set; }
@@ -18,7 +18,7 @@ namespace Rasa.Packets.MapChannel.Client
         {
             if (pr.ReadTuple() != 4)
                 throw new InvalidDataException(
-                    "NPC mission completion requires NPC, mission, selection and rating fields.");
+                    "NPC mission reward requires NPC, mission, selection and rating fields.");
             EntityId = pr.ReadULong();
             MissionId = pr.ReadUInt();
             SelectionIdx = pr.ReadNullableInt();

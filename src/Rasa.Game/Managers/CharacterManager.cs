@@ -20,6 +20,7 @@ namespace Rasa.Managers
     using Packets.Manifestation.Server;
     using Packets;
     using Repositories.Char;
+    using Repositories.Char.CharacterMissionProgress;
     using Repositories.UnitOfWork;
     using Repositories.World;
     using Structures;
@@ -31,6 +32,7 @@ namespace Rasa.Managers
         private static readonly object InstanceLock = new object();
         private readonly object _createLock = new();
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
+        private readonly MissionManager _missionManager;
 
         public const ulong SelectionPodStartEntityId = 100;
         public const byte MaxSelectionPods = 16;
@@ -53,9 +55,12 @@ namespace Rasa.Managers
             }
         }
 
-        public CharacterManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory)
+        public CharacterManager(
+            IGameUnitOfWorkFactory gameUnitOfWorkFactory,
+            MissionManager missionManager = null)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
+            _missionManager = missionManager;
         }
 
         public void StartCharacterSelection(Client client)
@@ -659,18 +664,20 @@ namespace Rasa.Managers
 
                 using (var unitOfWork = _gameUnitOfWorkFactory.CreateChar())
                 {
-                    unitOfWork.CharacterAppearances.DeleteForChar(charactersBySlot.Id);
+                    listings = 0;
+                    unitOfWork.ExecuteTransaction(() =>
+                    {
+                        unitOfWork.CharacterAppearances.DeleteForChar(charactersBySlot.Id);
+                        unitOfWork.CharacterMissions.RemoveAll(charactersBySlot.Id);
 
-                    // An auction row names its seller by id and carries no foreign key, so a
-                    // character deleted with listings running used to leave them standing:
-                    // still in other players' browse results, still buyable, and still naming
-                    // the character the proceeds were meant to go to. They go in the same
-                    // SaveChanges as the character row, so the two cannot come apart.
-                    listings = unitOfWork.Auctions.DeleteAuctionsBySeller(charactersBySlot.Id);
+                        // An auction row names its seller by id and carries no foreign key, so a
+                        // character deleted with listings running used to leave them standing.
+                        listings = unitOfWork.Auctions?.DeleteAuctionsBySeller(
+                            charactersBySlot.Id) ?? 0;
 
-                    // TODO delete ClanMember entry
-                    unitOfWork.Characters.Delete(charactersBySlot.Id);
-                    unitOfWork.Complete();
+                        // TODO delete ClanMember entry
+                        unitOfWork.Characters.Delete(charactersBySlot.Id);
+                    });
                 }
 
                 if (listings > 0)
@@ -776,8 +783,6 @@ namespace Rasa.Managers
             var characterAppearances = unitOfWork.CharacterAppearances.GetByCharacterId(character.Id);
             var appearanceData = new Dictionary<EquipmentData, AppearanceData>();
             var lockboxInfo = unitOfWork.CharacterLockboxes.Get(client.AccountEntry.Id);
-            var missions = unitOfWork.CharacterMissions.Get(client.AccountEntry.Id, client.AccountEntry.SelectedSlot);
-            var missionData = new Dictionary<int, MissionLog>();
             var clan = unitOfWork.Clans.GetClanByCharacterId(character.Id);
             var logos = unitOfWork.CharacterLogoses.GetLogos(character.Id);
 
@@ -798,12 +803,27 @@ namespace Rasa.Managers
                 Skills = MapChannelManager.Instance.GetPlayerSkills(character.Id),
                 Titles = unitOfWork.CharacterTitles.Get(character.Id),
                 Abilities = MapChannelManager.Instance.GetPlayerAbilities(character.Id),
-                Missions = missionData,
                 LoginTime = DateTime.Now,
                 Logos = logos
             };
+            HydrateMissions(newCharacter, unitOfWork);
 
             return newCharacter;
+        }
+
+        internal void HydrateMissions(
+            Manifestation player,
+            ICharUnitOfWork unitOfWork)
+        {
+            IReadOnlyList<CharacterMissionEntry> missions = null;
+            CharacterMissionProgressSnapshot progress = null;
+            unitOfWork.ExecuteTransaction(() =>
+            {
+                missions = unitOfWork.CharacterMissions.Get(player.Id);
+                progress = unitOfWork.CharacterMissionProgress.Get(player.Id);
+            });
+            (_missionManager ?? MissionManager.Instance)
+                .Hydrate(player, missions, progress);
         }
 
         /// <summary>
@@ -832,6 +852,9 @@ namespace Rasa.Managers
 
         public bool UpdateCharacter(Client client, CharacterUpdate job, object value = null)
         {
+            if (job == CharacterUpdate.Logos)
+                return TryAddLogos(client, (uint)value);
+
             using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
             switch (job)
             {
@@ -867,12 +890,6 @@ namespace Rasa.Managers
                     var totalTimePlayed = (uint)Math.Max(0, sessionMinutes) + client.Player.TotalTimePlayed;
 
                     unitOfWork.Characters.UpdateCharacterLogin(client.Player.Id, totalTimePlayed, client.Player.NumLogins);
-                    break;
-
-                case CharacterUpdate.Logos:
-                    client.Player.Logos.Add((uint)value);
-                    unitOfWork.CharacterLogoses.SetLogos(client.Player.Id, (uint)value);
-                    client.CallMethod(client.Player.EntityId, new LogosStoneAddedPacket((uint)value));
                     break;
 
                 case CharacterUpdate.Position:
@@ -916,6 +933,40 @@ namespace Rasa.Managers
             }
 
             return true;
+        }
+
+        internal bool TryAddLogos(Client client, uint logosId)
+        {
+            if (client?.Player == null || logosId == 0)
+                return false;
+
+            lock (client.SyncRoot)
+            {
+                if (client.Player.Logos.Contains(logosId))
+                    return false;
+
+                try
+                {
+                    using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+                    unitOfWork.CharacterLogoses.SetLogos(client.Player.Id, logosId);
+                }
+                catch (Exception error) when (GameplayRejectionException.IsExpected(error))
+                {
+                    Logger.WriteLog(
+                        LogType.Error,
+                        $"Unable to persist Logos {logosId} for character {client.Player.Id}: {error}");
+                    return false;
+                }
+
+                client.Player.Logos.Add(logosId);
+                client.CallMethod(
+                    client.Player.EntityId,
+                    new LogosStoneAddedPacket(logosId));
+                (_missionManager ?? MissionManager.Instance).RecordProgress(
+                    client,
+                    MissionProgressEvent.Logos(logosId));
+                return true;
+            }
         }
 
         private static bool PersistCurrency(
