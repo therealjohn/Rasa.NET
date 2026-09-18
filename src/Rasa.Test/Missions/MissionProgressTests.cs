@@ -487,6 +487,67 @@ namespace Rasa.Test.Missions
         public void RecoveredInactiveSourceIdentitySweepNeverReadsOrWritesCharacterProgress()
         {
             using var context = MissionTestContext.WithRecoveredDefinitions();
+            Assert.IsFalse(context.Manager.LoadedMissions[1069].IsOperational);
+            Assert.IsFalse(context.Manager.LoadedMissions[1407].IsOperational);
+            Assert.IsFalse(context.Manager.LoadedMissions[1449].IsOperational);
+
+            foreach (var definition in context.Manager.LoadedMissions.Values)
+            {
+                context.SeedMission(
+                    context.Client.Player.Id,
+                    definition.MissionId,
+                    (uint)MissionState.Active,
+                    false);
+                var runtimeObjectives = new Dictionary<uint, MissionObjectiveLog>();
+                foreach (var objective in definition.Objectives.Values)
+                {
+                    context.SeedObjective(
+                        context.Client.Player.Id,
+                        definition.MissionId,
+                        objective.ObjectiveId,
+                        MissionObjectiveState.Incomplete);
+                    runtimeObjectives.Add(
+                        objective.ObjectiveId,
+                        new MissionObjectiveLog(
+                            objective.ObjectiveId,
+                            MissionObjectiveState.Incomplete,
+                            new Dictionary<uint, uint>(),
+                            new Dictionary<uint, uint>()));
+                }
+                context.Client.Player.Missions[definition.MissionId] =
+                    new MissionLog(
+                        definition.MissionId,
+                        MissionState.Active,
+                        false,
+                        runtimeObjectives);
+            }
+            var recoveredWaypoints = context.Manager.LoadedMissions[1449].Objectives[1]
+                .ProgressRule.Subjects.OrderBy(id => id).ToArray();
+            var recoveredLogos = context.Manager.LoadedMissions.Values
+                .SelectMany(definition => definition.Objectives.Values)
+                .Where(objective =>
+                    objective.ProgressRule?.Kind == MissionProgressEventKind.LogosAcquired)
+                .SelectMany(objective => objective.ProgressRule.Subjects)
+                .Distinct()
+                .OrderBy(id => id)
+                .ToArray();
+            using (var unit = context.CreateChar())
+            {
+                foreach (var waypointId in recoveredWaypoints)
+                    unit.CharacterTeleporters.Add(new CharacterTeleporterEntry(
+                        context.Client.Player.Id,
+                        waypointId,
+                        (byte)WaypointType.Waypoint));
+                foreach (var logosId in recoveredLogos)
+                    unit.CharacterLogoses.SetLogos(context.Client.Player.Id, logosId);
+            }
+            context.Client.Player.GainedWaypoints.AddRange(
+                recoveredWaypoints.Select(waypointId => new CharacterTeleporterEntry(
+                    context.Client.Player.Id,
+                    waypointId,
+                    (byte)WaypointType.Waypoint)));
+            context.Client.Player.Logos.AddRange(recoveredLogos);
+
             var identities = new HashSet<uint>
             {
                 38, 42, 43, 75, 79, 80, 81, 82, 83, 84, 91,
@@ -516,6 +577,21 @@ namespace Rasa.Test.Missions
                 }
             }
 
+            var runtimeBefore = DescribeRuntimeAttempts(context);
+            var durableBefore = DescribeDurableAttempts(context);
+            var runtimeWaypointsBefore = context.Client.Player.GainedWaypoints
+                .Select(entry => entry.WaypointId).OrderBy(id => id).ToArray();
+            var runtimeLogosBefore = context.Client.Player.Logos.OrderBy(id => id).ToArray();
+            uint[] durableWaypointsBefore;
+            uint[] durableLogosBefore;
+            using (var unit = context.CreateChar())
+            {
+                durableWaypointsBefore = unit.CharacterTeleporters.Get(context.Client.Player.Id)
+                    .Select(entry => entry.WaypointId).OrderBy(id => id).ToArray();
+                durableLogosBefore = unit.CharacterLogoses.GetLogos(context.Client.Player.Id)
+                    .OrderBy(id => id).ToArray();
+            }
+            context.Drain();
             context.ResetCharUnitCount();
             var baselineSaves = context.SaveAttempts;
             foreach (var subject in identities.OrderBy(id => id))
@@ -536,6 +612,26 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(0, context.CharUnitsCreated);
             Assert.AreEqual(baselineSaves, context.SaveAttempts);
             Assert.AreEqual(0, context.Drain().Count);
+            CollectionAssert.AreEqual(runtimeBefore, DescribeRuntimeAttempts(context));
+            CollectionAssert.AreEqual(durableBefore, DescribeDurableAttempts(context));
+            CollectionAssert.AreEqual(
+                runtimeWaypointsBefore,
+                context.Client.Player.GainedWaypoints
+                    .Select(entry => entry.WaypointId).OrderBy(id => id).ToArray());
+            CollectionAssert.AreEqual(
+                runtimeLogosBefore,
+                context.Client.Player.Logos.OrderBy(id => id).ToArray());
+            using (var unit = context.CreateChar())
+            {
+                CollectionAssert.AreEqual(
+                    durableWaypointsBefore,
+                    unit.CharacterTeleporters.Get(context.Client.Player.Id)
+                        .Select(entry => entry.WaypointId).OrderBy(id => id).ToArray());
+                CollectionAssert.AreEqual(
+                    durableLogosBefore,
+                    unit.CharacterLogoses.GetLogos(context.Client.Player.Id)
+                        .OrderBy(id => id).ToArray());
+            }
         }
 
         [TestMethod]
@@ -628,6 +724,41 @@ namespace Rasa.Test.Missions
                     $"completable:{completeable.MissionId}",
                 _ => $"unexpected:{packet.GetType().Name}"
             };
+
+        private static string[] DescribeRuntimeAttempts(MissionTestContext context) =>
+            context.Client.Player.Missions.Values
+                .OrderBy(mission => mission.MissionId)
+                .SelectMany(mission => new[]
+                    {
+                        $"mission:{mission.MissionId}:{mission.State}:{mission.Completeable}"
+                    }
+                    .Concat(mission.Objectives.Values
+                        .OrderBy(objective => objective.ObjectiveId)
+                        .Select(objective =>
+                            $"objective:{mission.MissionId}:{objective.ObjectiveId}:{objective.State}:" +
+                            $"{string.Join(",", objective.Counters.OrderBy(counter => counter.Key))}:" +
+                            $"{string.Join(",", objective.ItemCounters.OrderBy(counter => counter.Key))}")))
+                .ToArray();
+
+        private static string[] DescribeDurableAttempts(MissionTestContext context) =>
+            context.Manager.LoadedMissions.Keys
+                .OrderBy(missionId => missionId)
+                .SelectMany(missionId =>
+                {
+                    var mission = context.ReadMission(missionId);
+                    var progress = context.ReadProgress(missionId).Missions[missionId];
+                    return new[]
+                        {
+                            $"mission:{mission.MissionId}:{mission.MissionState}:{mission.Completeable}"
+                        }
+                        .Concat(progress.Objectives.Values
+                            .OrderBy(objective => objective.ObjectiveId)
+                            .Select(objective =>
+                                $"objective:{missionId}:{objective.ObjectiveId}:{objective.State}:" +
+                                $"{string.Join(",", objective.Counters.OrderBy(counter => counter.Key))}:" +
+                                $"{string.Join(",", objective.ItemCounters.OrderBy(counter => counter.Key))}"));
+                })
+                .ToArray();
 
         private static Creature AddCreature(MissionTestContext context, uint dbId)
         {
