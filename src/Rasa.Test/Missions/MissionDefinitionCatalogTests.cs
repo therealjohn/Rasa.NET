@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace Rasa.Test.Missions
@@ -32,13 +33,49 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(1U, solis.PlayerFlagId);
             Assert.AreEqual(MissionObjectiveConversationType.Completion, solis.Type);
             Assert.AreEqual(112U, catalog[1069].Objectives[3].Conversations[0].NpcPackageId);
+            AssertProgressRule(
+                catalog[1069].Objectives[1].ProgressRule,
+                MissionProgressEventKind.LogosAcquired,
+                new uint[] { 10 });
             Assert.AreEqual(113U, catalog[1407].Objectives[1].Conversations[0].NpcPackageId);
             Assert.AreEqual(168U, catalog[1407].Objectives[10].Conversations[0].NpcPackageId);
+            Assert.IsNull(catalog[1407].Objectives[1].ProgressRule);
+            Assert.IsNull(catalog[1407].Objectives[10].ProgressRule);
             CollectionAssert.AreEquivalent(
                 new uint[] { 1, 3, 4, 5, 6, 7, 8, 20, 21, 22, 23, 24, 25, 40, 41, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 58 },
                 new List<uint>(catalog[1449].Objectives.Keys));
             Assert.AreEqual(12789U, catalog[1449].Objectives[1].ClientCounterTextIds[0]);
             Assert.AreEqual(13685U, catalog[1449].Objectives[55].ClientCounterTextIds[0]);
+            AssertProgressRule(
+                catalog[1449].Objectives[1].ProgressRule,
+                MissionProgressEventKind.WaypointAcquired,
+                new uint[] { 49, 50, 51, 57, 61, 73, 156 });
+            AssertProgressRule(
+                catalog[1449].Objectives[8].ProgressRule,
+                MissionProgressEventKind.LogosAcquired,
+                new uint[] { 1, 2, 6, 9, 10, 23, 24, 28, 38, 49, 53, 56 });
+            var officerSubjects = new Dictionary<uint, uint>
+            {
+                [20] = 82,
+                [21] = 83,
+                [22] = 84,
+                [23] = 79,
+                [24] = 80,
+                [25] = 75
+            };
+            foreach (var subject in officerSubjects)
+            {
+                AssertProgressRule(
+                    catalog[1449].Objectives[subject.Key].ProgressRule,
+                    MissionProgressEventKind.CreatureKilled,
+                    new[] { subject.Value });
+                Assert.AreEqual(subject.Key != 23,
+                    catalog[1449].Objectives[subject.Key].ProgressRule.SourceSpawnResolved);
+            }
+            foreach (var objectiveId in new uint[] { 3, 4, 5, 6, 7, 40, 48, 55, 58 })
+                Assert.IsNull(catalog[1449].Objectives[objectiveId].ProgressRule);
+            Assert.IsFalse(catalog[1449].Objectives.Values
+                .Any(objective => objective.Counters.Count > 0 || objective.ItemCounters.Count > 0));
         }
 
         [TestMethod]
@@ -81,6 +118,16 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(2U, second[5].Counters[0]);
             Assert.AreEqual(1U, second[5].ItemCounters[200]);
             Assert.AreEqual(MissionObjectiveState.Inactive, second[9].State);
+        }
+
+        private static void AssertProgressRule(
+            MissionProgressRule rule,
+            MissionProgressEventKind kind,
+            uint[] subjects)
+        {
+            Assert.IsNotNull(rule);
+            Assert.AreEqual(kind, rule.Kind);
+            CollectionAssert.AreEquivalent(subjects, new List<uint>(rule.Subjects));
         }
     }
 }

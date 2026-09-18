@@ -1,5 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
 
 namespace Rasa.Repositories.Char.CharacterLogos
@@ -27,17 +26,8 @@ namespace Rasa.Repositories.Char.CharacterLogos
         public void SetLogos(uint characterId, uint logosId)
         {
             var entry = new CharacterLogosEntry(characterId, logosId);
-
-            try
-            {
-                _charContext.CharacterLogosEntries.Add(entry);
-                _charContext.SaveChanges();
-            }
-            catch (Exception e)
-            {
-                Logger.WriteLog(LogType.Error, "Error adding logos:");
-                Logger.WriteLog(LogType.Error, e);
-            }
+            _charContext.CharacterLogosEntries.Add(entry);
+            _charContext.SaveChanges();
         }
     }
 }

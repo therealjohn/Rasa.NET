@@ -25,6 +25,7 @@ namespace Rasa.Managers
         private static readonly object InstanceLock = new object();
         private readonly object _createLock = new();
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
+        private readonly MissionManager _missionManager;
 
         public const ulong SelectionPodStartEntityId = 100;
         public const byte MaxSelectionPods = 16;
@@ -47,9 +48,12 @@ namespace Rasa.Managers
             }
         }
 
-        public CharacterManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory)
+        public CharacterManager(
+            IGameUnitOfWorkFactory gameUnitOfWorkFactory,
+            MissionManager missionManager = null)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
+            _missionManager = missionManager;
         }
 
         public void StartCharacterSelection(Client client)
@@ -440,6 +444,12 @@ namespace Rasa.Managers
 
         public void UpdateCharacter(Client client, CharacterUpdate job, object value = null)
         {
+            if (job == CharacterUpdate.Logos)
+            {
+                TryAddLogos(client, (uint)value);
+                return;
+            }
+
             using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
             switch (job)
             {
@@ -483,12 +493,6 @@ namespace Rasa.Managers
                     unitOfWork.Characters.UpdateCharacterLogin(client.Player.Id, (uint)totalTimePlayed, client.Player.NumLogins);
                     break;
 
-                case CharacterUpdate.Logos:
-                    client.Player.Logos.Add((uint)value);
-                    unitOfWork.CharacterLogoses.SetLogos(client.Player.Id, (uint)value);
-                    client.CallMethod(client.Player.EntityId, new LogosStoneAddedPacket((uint)value));
-                    break;
-
                 case CharacterUpdate.Position:
                     var data = value as WonkavatePacket;
 
@@ -527,6 +531,38 @@ namespace Rasa.Managers
                     break;
                 default:
                     break;
+            }
+        }
+
+        internal bool TryAddLogos(Client client, uint logosId)
+        {
+            if (client?.Player == null || logosId == 0)
+                return false;
+
+            lock (client.SyncRoot)
+            {
+                if (client.Player.Logos.Contains(logosId))
+                    return false;
+                try
+                {
+                    using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+                    unitOfWork.CharacterLogoses.SetLogos(client.Player.Id, logosId);
+                }
+                catch (Exception error) when (GameplayRejectionException.IsExpected(error))
+                {
+                    Logger.WriteLog(LogType.Error,
+                        $"Unable to persist Logos {logosId} for character {client.Player.Id}: {error}");
+                    return false;
+                }
+
+                client.Player.Logos.Add(logosId);
+                client.CallMethod(
+                    client.Player.EntityId,
+                    new LogosStoneAddedPacket(logosId));
+                (_missionManager ?? MissionManager.Instance).RecordProgress(
+                    client,
+                    MissionProgressEvent.Logos(logosId));
+                return true;
             }
         }
     }

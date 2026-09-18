@@ -547,6 +547,7 @@ namespace Rasa.Managers
                     if (publishCompleted)
                         client.CallMethod(client.Player.EntityId, new MissionCompletedPacket(missionId));
                     client.CallMethod(client.Player.EntityId, new MissionRewardedPacket(missionId));
+                    RecordProgress(client, MissionProgressEvent.Mission(missionId));
                     return true;
                 }
                 finally
@@ -777,6 +778,229 @@ namespace Rasa.Managers
             }
         }
 
+        internal bool RecordProgress(Client client, MissionProgressEvent progress)
+        {
+            if (client == null ||
+                !Enum.IsDefined(typeof(MissionProgressEventKind), progress.Kind) ||
+                progress.SubjectId == 0)
+                return false;
+
+            lock (client.SyncRoot)
+            {
+                if (!IsActivePlayer(client) || client.AccountEntry == null)
+                    return false;
+
+                var candidates = new List<ProgressCandidate>();
+                foreach (var mission in _loadedMissions.Values.Where(
+                    definition => definition.IsOperational))
+                {
+                    if (!client.Player.Missions.TryGetValue(
+                            mission.MissionId, out var runtimeMission) ||
+                        runtimeMission.State != MissionState.Active)
+                        continue;
+                    foreach (var objective in mission.Objectives.Values)
+                    {
+                        if (objective.ProgressRule == null ||
+                            !objective.ProgressRule.Matches(progress) ||
+                            !runtimeMission.Objectives.TryGetValue(
+                                objective.ObjectiveId, out var runtimeObjective) ||
+                            runtimeObjective.State != MissionObjectiveState.Incomplete ||
+                            !CanAdvanceFromRuntime(
+                                client.Player,
+                                objective.ProgressRule))
+                            continue;
+                        candidates.Add(new ProgressCandidate(
+                            mission, runtimeMission, objective, runtimeObjective));
+                    }
+                }
+                if (candidates.Count == 0)
+                    return false;
+
+                var publications = new List<ProgressPublication>();
+                var completableMissions = new HashSet<uint>();
+                try
+                {
+                    using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+                    unitOfWork.ExecuteTransaction(() =>
+                    {
+                        var durableCharacter = unitOfWork.Characters.Get(client.Player.Id);
+                        if (durableCharacter.AccountId != client.AccountEntry.Id)
+                            throw new GameplayRejectionException(
+                                "Durable character owner changed.");
+
+                        var waypointIds = new HashSet<uint>(
+                            client.Player.GainedWaypoints.Select(entry => entry.WaypointId));
+                        var logosIds = new HashSet<uint>(client.Player.Logos);
+                        IReadOnlySet<uint> durableWaypointIds = null;
+                        IReadOnlySet<uint> durableLogosIds = null;
+
+                        foreach (var missionGroup in candidates.GroupBy(
+                            candidate => candidate.Definition.MissionId))
+                        {
+                            var first = missionGroup.First();
+                            var durableMission = unitOfWork.CharacterMissions.Get(
+                                client.Player.Id, first.Definition.MissionId);
+                            var durableObjectives = unitOfWork.CharacterMissionProgress.GetTracked(
+                                client.Player.Id, first.Definition.MissionId);
+                            if (durableMission?.MissionState != (uint)MissionState.Active ||
+                                durableMission.Completeable != first.RuntimeMission.Completeable)
+                                throw new GameplayRejectionException(
+                                    "Durable mission state is stale.");
+
+                            foreach (var candidate in missionGroup)
+                            {
+                                if (!durableObjectives.TryGetValue(
+                                        candidate.ObjectiveDefinition.ObjectiveId,
+                                        out var durableObjective) ||
+                                    durableObjective.ObjectiveState !=
+                                        (byte)MissionObjectiveState.Incomplete ||
+                                    candidate.RuntimeObjective.State !=
+                                        MissionObjectiveState.Incomplete)
+                                    throw new GameplayRejectionException(
+                                        "Durable mission objective state is stale.");
+
+                                var rule = candidate.ObjectiveDefinition.ProgressRule;
+                                if (rule.RuleType == MissionProgressRuleType.CompleteDistinctSet)
+                                {
+                                    IReadOnlySet<uint> runtimeSubjects;
+                                    IReadOnlySet<uint> durableSubjects;
+                                    if (rule.Kind == MissionProgressEventKind.WaypointAcquired)
+                                    {
+                                        runtimeSubjects = waypointIds;
+                                        durableWaypointIds ??= new HashSet<uint>(
+                                            unitOfWork.CharacterTeleporters.Get(client.Player.Id)
+                                                .Select(entry => entry.WaypointId));
+                                        durableSubjects = durableWaypointIds;
+                                    }
+                                    else if (rule.Kind == MissionProgressEventKind.LogosAcquired)
+                                    {
+                                        runtimeSubjects = logosIds;
+                                        durableLogosIds ??= new HashSet<uint>(
+                                            unitOfWork.CharacterLogoses.GetLogos(client.Player.Id));
+                                        durableSubjects = durableLogosIds;
+                                    }
+                                    else
+                                        throw new GameplayRejectionException(
+                                            "Distinct progress rule has an unsupported event kind.");
+
+                                    if (!rule.AreAllSubjectsObserved(runtimeSubjects) ||
+                                        !rule.AreAllSubjectsObserved(durableSubjects))
+                                        throw new GameplayRejectionException(
+                                            "Distinct progress subjects are incomplete.");
+                                    durableObjective.ObjectiveState =
+                                        (byte)MissionObjectiveState.Completed;
+                                    publications.Add(ProgressPublication.ForCompleted(candidate));
+                                    continue;
+                                }
+
+                                if (rule.RuleType == MissionProgressRuleType.IncrementExactCounter)
+                                {
+                                    var counterId = rule.CounterId.Value;
+                                    if (!candidate.RuntimeObjective.Counters.TryGetValue(
+                                        counterId, out var runtimeValue))
+                                        throw new GameplayRejectionException(
+                                            "Runtime mission counter is missing.");
+                                    var durableCounter = durableObjective.Counters.SingleOrDefault(
+                                        counter => counter.CounterId == counterId);
+                                    if (durableCounter == null ||
+                                        durableCounter.CounterValue != runtimeValue ||
+                                        runtimeValue < rule.InitialValue.Value)
+                                        throw new GameplayRejectionException(
+                                            "Durable mission counter is stale.");
+                                    var value = checked(runtimeValue + 1);
+                                    if (runtimeValue >= rule.TargetValue.Value ||
+                                        value > rule.TargetValue.Value)
+                                        throw new GameplayRejectionException(
+                                            "Mission counter cannot advance monotonically.");
+                                    durableCounter.CounterValue = value;
+                                    var completed = value == rule.TargetValue.Value;
+                                    if (completed)
+                                        durableObjective.ObjectiveState =
+                                            (byte)MissionObjectiveState.Completed;
+                                    publications.Add(ProgressPublication.Counter(
+                                        candidate, counterId, value, completed));
+                                    continue;
+                                }
+
+                                durableObjective.ObjectiveState =
+                                    (byte)MissionObjectiveState.Completed;
+                                publications.Add(ProgressPublication.ForCompleted(candidate));
+                            }
+
+                            var completeable = first.Definition.Objectives.Values
+                                .Where(objective => objective.IsRequired.Value)
+                                .All(objective =>
+                                    durableObjectives.TryGetValue(
+                                        objective.ObjectiveId, out var durableObjective) &&
+                                    durableObjective.ObjectiveState ==
+                                        (byte)MissionObjectiveState.Completed);
+                            durableMission.Completeable = completeable;
+                            if (completeable && !first.RuntimeMission.Completeable)
+                                completableMissions.Add(first.Definition.MissionId);
+                        }
+                    });
+                }
+                catch (Exception error) when (GameplayRejectionException.IsExpected(error))
+                {
+                    Logger.WriteLog(LogType.Error,
+                        $"Unable to record mission progress {progress.Kind}:{progress.SubjectId} " +
+                        $"for character {client.Player.Id}: {error}");
+                    return false;
+                }
+
+                foreach (var publication in publications)
+                {
+                    if (publication.CounterId.HasValue)
+                    {
+                        publication.Candidate.RuntimeObjective.SetCounter(
+                            publication.CounterId.Value, publication.CounterValue.Value);
+                        var rule = publication.Candidate.ObjectiveDefinition.ProgressRule;
+                        client.CallMethod(
+                            client.Player.EntityId,
+                            new UpdateObjectiveCounterPacket(
+                                publication.Candidate.Definition.MissionId,
+                                publication.Candidate.ObjectiveDefinition.ObjectiveId,
+                                publication.CounterId.Value,
+                                publication.CounterValue.Value,
+                                rule.InitialValue.Value,
+                                rule.TargetValue.Value));
+                    }
+                    if (publication.Completed)
+                    {
+                        publication.Candidate.RuntimeObjective.State =
+                            MissionObjectiveState.Completed;
+                        client.CallMethod(
+                            client.Player.EntityId,
+                            new ObjectiveCompletedPacket(
+                                publication.Candidate.Definition.MissionId,
+                                publication.Candidate.ObjectiveDefinition.ObjectiveId));
+                    }
+                }
+                foreach (var missionId in completableMissions)
+                {
+                    client.Player.Missions[missionId].Completeable = true;
+                    client.CallMethod(
+                        client.Player.EntityId,
+                        new MissionCompleteablePacket(missionId, true));
+                }
+                return publications.Count > 0;
+            }
+        }
+
+        private static bool CanAdvanceFromRuntime(
+            Manifestation player,
+            MissionProgressRule rule)
+        {
+            if (rule.RuleType != MissionProgressRuleType.CompleteDistinctSet)
+                return true;
+            if (rule.Kind == MissionProgressEventKind.WaypointAcquired)
+                return rule.AreAllSubjectsObserved(new HashSet<uint>(
+                    player.GainedWaypoints.Select(entry => entry.WaypointId)));
+            if (rule.Kind == MissionProgressEventKind.LogosAcquired)
+                return rule.AreAllSubjectsObserved(new HashSet<uint>(player.Logos));
+            return false;
+        }
+
         private static bool IsPublishedState(MissionState state) =>
             state == MissionState.Active ||
             state == MissionState.Success ||
@@ -943,6 +1167,56 @@ namespace Rasa.Managers
         {
             Logger.WriteLog(LogType.Network, message);
             return false;
+        }
+
+        private readonly struct ProgressCandidate
+        {
+            internal Mission Definition { get; }
+            internal MissionLog RuntimeMission { get; }
+            internal MissionObjectiveDefinition ObjectiveDefinition { get; }
+            internal MissionObjectiveLog RuntimeObjective { get; }
+
+            internal ProgressCandidate(
+                Mission definition,
+                MissionLog runtimeMission,
+                MissionObjectiveDefinition objectiveDefinition,
+                MissionObjectiveLog runtimeObjective)
+            {
+                Definition = definition;
+                RuntimeMission = runtimeMission;
+                ObjectiveDefinition = objectiveDefinition;
+                RuntimeObjective = runtimeObjective;
+            }
+        }
+
+        private readonly struct ProgressPublication
+        {
+            internal ProgressCandidate Candidate { get; }
+            internal uint? CounterId { get; }
+            internal uint? CounterValue { get; }
+            internal bool Completed { get; }
+
+            private ProgressPublication(
+                ProgressCandidate candidate,
+                uint? counterId,
+                uint? counterValue,
+                bool completed)
+            {
+                Candidate = candidate;
+                CounterId = counterId;
+                CounterValue = counterValue;
+                Completed = completed;
+            }
+
+            internal static ProgressPublication ForCompleted(ProgressCandidate candidate) =>
+                new(candidate, null, null, true);
+
+            internal static ProgressPublication Counter(
+                ProgressCandidate candidate,
+                uint counterId,
+                uint counterValue,
+                bool completed) =>
+                new(candidate, counterId, counterValue, completed);
         }
     }
 }

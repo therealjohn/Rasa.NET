@@ -50,6 +50,7 @@ namespace Rasa.Structures
         public IReadOnlyList<uint> RevealedObjectiveIds { get; }
         public IReadOnlyList<uint> ActivatedObjectiveIds { get; }
         public IReadOnlyList<MissionIndicator> Indicators { get; }
+        public MissionProgressRule ProgressRule { get; }
         public bool HasCompleteServerContract { get; }
 
         public MissionObjectiveDefinition(
@@ -65,7 +66,8 @@ namespace Rasa.Structures
             IEnumerable<MissionObjectiveConversation> conversations,
             IEnumerable<uint> revealedObjectiveIds = null,
             IEnumerable<uint> activatedObjectiveIds = null,
-            IEnumerable<MissionIndicator> indicators = null)
+            IEnumerable<MissionIndicator> indicators = null,
+            MissionProgressRule progressRule = null)
         {
             ObjectiveId = objectiveId;
             ClientNameTextId = clientNameTextId;
@@ -92,6 +94,7 @@ namespace Rasa.Structures
             Indicators = indicators == null
                 ? null
                 : Array.AsReadOnly(indicators.Select(CloneIndicator).ToArray());
+            ProgressRule = progressRule;
             HasCompleteServerContract =
                 ClientNameTextId.HasValue &&
                 ClientBodyTextId.HasValue &&
@@ -105,7 +108,8 @@ namespace Rasa.Structures
                     counter.Value.CounterId == counter.Key &&
                     counter.Key < (uint)ClientCounterTextIds.Count &&
                     ClientCounterTextIds[(int)counter.Key].HasValue) &&
-                ItemCounters.All(counter => counter.Value.ItemClassId == counter.Key);
+                ItemCounters.All(counter => counter.Value.ItemClassId == counter.Key) &&
+                (ProgressRule == null || ProgressRule.IsCompatible(this));
         }
 
         internal MissionObjective CreateRuntime(

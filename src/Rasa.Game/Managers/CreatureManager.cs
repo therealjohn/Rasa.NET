@@ -30,6 +30,7 @@ namespace Rasa.Managers
         public Dictionary<uint, Creature> LoadedCreatures = new();
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
         private readonly ManifestationManager _manifestationManager;
+        private readonly MissionManager _missionManager;
         public static CreatureManager Instance
         {
             get
@@ -53,10 +54,14 @@ namespace Rasa.Managers
         {
         }
 
-        internal CreatureManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory, ManifestationManager manifestationManager)
+        internal CreatureManager(
+            IGameUnitOfWorkFactory gameUnitOfWorkFactory,
+            ManifestationManager manifestationManager,
+            MissionManager missionManager = null)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
             _manifestationManager = manifestationManager;
+            _missionManager = missionManager;
         }
 
         // 1 creature to n client's
@@ -164,6 +169,9 @@ namespace Rasa.Managers
                     return;
 
                 LootDispenserManager.Instance.Loot(client, creature);
+                (_missionManager ?? MissionManager.Instance).RecordProgress(
+                    client,
+                    MissionProgressEvent.Creature(creature.DbId));
             }
         }
 

@@ -294,6 +294,25 @@ partial mission rows, and any newly recovered client metadata, from appearing as
 playable content before their authoritative objective and reward contracts are
 known.
 
+Mission progress uses a small typed event boundary for successful waypoint,
+Logos, creature-kill, and mission-completion actions. A rule may complete one
+exact Logos, creature, or completed-mission subject; complete a waypoint or
+Logos objective after every distinct authored subject is durably owned; or
+increment one fully specified test-only counter. Generic production counters are
+not inferred. `RecordProgress` validates the active client plus runtime and
+durable mission state, writes all matched changes in one serializable
+transaction, and publishes counter, objective-completed, then
+mission-completable deltas after commit.
+
+The gameplay action commits and publishes first. Waypoint progress follows
+`WaypointGained`, Logos progress follows `LogosStoneAdded`, creature progress
+follows the authoritative killer's XP and loot processing, and completion
+progress follows reward and completion packets. A later expected mission
+progress persistence failure is logged with its event kind and subject, emits no
+mission delta, and does not roll back the successful waypoint, Logos, kill
+reward, or mission reward. No login catch-up is synthesized. Programming errors
+remain visible with their original identity and stack.
+
 The implemented state mapping is:
 
 - Active attempt: `MissionState.Active` with `Completeable = false`.
@@ -342,6 +361,35 @@ and four completion-conversation bindings. Missing ordinals, initial/required
 states, transitions, indicators, counters, prerequisites, repeatability, and
 rewards remain null/absent, so these definitions stay inactive and never appear
 in conversation packets.
+
+The source-only catalog also preserves these bounded progress slices:
+
+- Mission `1069`, objective `1`: exact Logos `10` (entity class `7364`, map
+  `1220`). Objectives `2` and `3` retain only completion conversations
+  `(168,1,Completion)` for Solis creature `42`/spawn `184` and
+  `(112,1,Completion)` for Apirka creature `43`/spawn `219`.
+- Mission `1407`, objective `1`: completion conversation
+  `(113,1,Completion)`, corroborated by Moawi creature `38`. Objective `10`
+  retains presentation and `(168,1,Completion)` conversation metadata only.
+  No escort entity, route, success/failure transition, or Ranger binding is
+  inferred.
+- Mission `1449`, objective `1`: distinct waypoints
+  `{49,50,51,57,61,73,156}`. Objective `8`: distinct Logos
+  `{1,2,6,9,10,23,24,28,38,49,53,56}`. Objectives `20` through `25` bind
+  exact creature IDs `{82,83,84,79,80,75}` respectively. Objective `23`
+  explicitly records that Horntail's map-1220 spawn is unresolved. Objectives
+  `3/4/5/6/7/40/48/55/58` and all other unsupported targets have no progress
+  rule.
+
+All three definitions have `IsOperational == false`, carry no production
+rewards, and produce no character mission/objective/counter writes or mission
+packets for any progress event. Source preservation is not activation.
+
+Run the progress and adapter boundary checks with:
+
+```powershell
+dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~Rasa.Test.Missions.MissionProgressTests|FullyQualifiedName~Rasa.Test.Missions.MissionDefinitionCatalogTests|FullyQualifiedName~Rasa.Test.World|FullyQualifiedName~Rasa.Test.Gameplay.LootTests|FullyQualifiedName~Rasa.Test.Gameplay.ExperienceProgressionTests"
+```
 
 ## MySQL persistence checks
 

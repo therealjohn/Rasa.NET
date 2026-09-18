@@ -1,0 +1,10 @@
+namespace Rasa.Data
+{
+    public enum MissionProgressEventKind
+    {
+        WaypointAcquired,
+        LogosAcquired,
+        CreatureKilled,
+        MissionCompleted
+    }
+}

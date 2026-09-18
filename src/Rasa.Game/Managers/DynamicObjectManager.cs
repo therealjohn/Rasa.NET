@@ -29,6 +29,7 @@ namespace Rasa.Managers
         private readonly Func<long> _clock;
         private readonly Action<Client, CharacterUpdate, object> _updateCharacter;
         private readonly Action<Client> _disconnect;
+        private readonly MissionManager _missionManager;
         private MapChannelManager Maps => _maps ?? MapChannelManager.Instance;
 
         public readonly Dictionary<ulong, Dropship> Dropships = new Dictionary<ulong, Dropship>();
@@ -53,7 +54,9 @@ namespace Rasa.Managers
 
         internal DynamicObjectManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory,
             MapChannelManager maps = null, Func<long> clock = null,
-            Action<Client, CharacterUpdate, object> updateCharacter = null, Action<Client> disconnect = null)
+            Action<Client, CharacterUpdate, object> updateCharacter = null,
+            Action<Client> disconnect = null,
+            MissionManager missionManager = null)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
             _maps = maps;
@@ -61,6 +64,7 @@ namespace Rasa.Managers
             _updateCharacter = updateCharacter ?? ((client, update, value) =>
                 CharacterManager.Instance.UpdateCharacter(client, update, value));
             _disconnect = disconnect ?? (client => client.Close(false));
+            _missionManager = missionManager;
         }
 
         internal void InitDynamicObjects()
@@ -592,15 +596,27 @@ namespace Rasa.Managers
 
         internal void CheckPlayerWaypoint(Client client, WaypointInfo objectData)
         {
-            // check if player has requested waypoint
-            foreach (var waypoint in client.Player.GainedWaypoints)
-                if (waypoint.WaypointId == objectData.WaypointId)
-                 return;
+            lock (client.SyncRoot)
+            {
+                foreach (var waypoint in client.Player.GainedWaypoints)
+                    if (waypoint.WaypointId == objectData.WaypointId)
+                        return;
 
-            var newWaypoint = new CharacterTeleporterEntry(client.Player.Id, objectData.WaypointId, (byte)objectData.WaypointType);
-            _updateCharacter(client, CharacterUpdate.Teleporter, newWaypoint);
-            client.Player.GainedWaypoints.Add(newWaypoint);
-            client.CallMethod(client.Player.EntityId, new WaypointGainedPacket(objectData.WaypointId, objectData.WaypointType));
+                var newWaypoint = new CharacterTeleporterEntry(
+                    client.Player.Id,
+                    objectData.WaypointId,
+                    (byte)objectData.WaypointType);
+                _updateCharacter(client, CharacterUpdate.Teleporter, newWaypoint);
+                client.Player.GainedWaypoints.Add(newWaypoint);
+                client.CallMethod(
+                    client.Player.EntityId,
+                    new WaypointGainedPacket(
+                        objectData.WaypointId,
+                        objectData.WaypointType));
+                (_missionManager ?? MissionManager.Instance).RecordProgress(
+                    client,
+                    MissionProgressEvent.Waypoint(objectData.WaypointId));
+            }
         }
 
         internal Dictionary<uint, MapWaypointInfoList> CreateListOfWaypoints(Client client, WaypointType waypointType)

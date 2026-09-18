@@ -25,8 +25,10 @@ namespace Rasa.Test.Missions
     using Rasa.Repositories.Char.Character;
     using Rasa.Repositories.Char.CharacterAppearance;
     using Rasa.Repositories.Char.CharacterInventory;
+    using Rasa.Repositories.Char.CharacterLogos;
     using Rasa.Repositories.Char.CharacterMission;
     using Rasa.Repositories.Char.CharacterMissionProgress;
+    using Rasa.Repositories.Char.CharacterTeleporter;
     using Rasa.Repositories.Char.GameAccount;
     using Rasa.Repositories.Char.Items;
     using Rasa.Repositories.UnitOfWork;
@@ -104,6 +106,53 @@ namespace Rasa.Test.Missions
 
         internal static MissionTestContext WithRecoveredDefinitions() =>
             new(MissionDefinitionCatalog.CreateRecoveredInactiveDefinitions());
+
+        internal static MissionTestContext WithCustomDefinitions(
+            IReadOnlyDictionary<uint, Mission> definitions,
+            IReadOnlyDictionary<uint, MissionRewardDefinition> rewards = null) =>
+            new(definitions, rewards);
+
+        internal static MissionTestContext WithProgressMission(
+            MissionProgressRule progressRule,
+            uint missionId = 321,
+            uint objectiveId = 1,
+            IReadOnlyDictionary<uint, MissionObjectiveCounterDefinition> counters = null)
+        {
+            counters ??= new Dictionary<uint, MissionObjectiveCounterDefinition>();
+            var counterTextIds = new uint?[3];
+            foreach (var counterId in counters.Keys)
+                counterTextIds[counterId] = 9000 + counterId;
+            var objective = new MissionObjectiveDefinition(
+                objectiveId,
+                1001,
+                1002,
+                counterTextIds,
+                0,
+                MissionObjectiveState.Incomplete,
+                true,
+                counters,
+                new Dictionary<uint, MissionObjectiveItemCounterDefinition>(),
+                Array.Empty<MissionObjectiveConversation>(),
+                Array.Empty<uint>(),
+                Array.Empty<uint>(),
+                Array.Empty<MissionIndicator>(),
+                progressRule);
+            var mission = new Mission(
+                missionId,
+                $"Mission {missionId}",
+                missionId,
+                77,
+                88,
+                5,
+                1,
+                2,
+                true,
+                false,
+                new[] { objective },
+                true);
+            return new MissionTestContext(
+                new Dictionary<uint, Mission> { [missionId] = mission });
+        }
 
         private static IReadOnlyDictionary<uint, Mission> CreateDefinitions(
             bool isOperational,
@@ -578,9 +627,10 @@ namespace Rasa.Test.Missions
                 characterAbilityDrawers: null,
                 characterAppearances: new CharacterAppearanceRepository(context),
                 characterInventories: new CharacterInventoryRepository(context),
-                characterLockboxes: null, characterLogoses: null,
+                characterLockboxes: null, characterLogoses: new CharacterLogosRepository(context),
                 characterMissions: new CharacterMissionRepository(context), characterOptions: null,
-                characterSkills: null, characterTeleporters: null, characterTitles: null,
+                characterSkills: null, characterTeleporters: new CharacterTeleporterRepository(context),
+                characterTitles: null,
                 clans: null, clanInventories: null, clanMembers: null, friends: null,
                 ignoreds: null, items: new ItemRepository(context), userOptions: null,
                 characterMissionProgress: new CharacterMissionProgressRepository(context));
