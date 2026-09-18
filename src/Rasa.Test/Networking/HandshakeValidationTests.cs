@@ -223,6 +223,163 @@ namespace Rasa.Test.Networking
             }
         }
 
+        [TestMethod]
+        public async Task ConcurrentAcceptedClientsReserveOnlyOneAvailableSlot()
+        {
+            var firstConnection = await ConnectAsync();
+            var secondConnection = await ConnectAsync();
+            using (firstConnection.Sender)
+            using (firstConnection.Accepted)
+            using (secondConnection.Sender)
+            using (secondConnection.Accepted)
+            using (var admissions = new CountdownEvent(2))
+            {
+                var config = CreateQueueConfig();
+                QueueManager manager = null;
+                manager = new QueueManager(
+                    config,
+                    () => manager.RedirectingClients >= 1,
+                    IPAddress.Loopback,
+                    8001,
+                    () =>
+                    {
+                        admissions.Signal();
+                        Assert.IsTrue(admissions.Wait(TimeSpan.FromSeconds(5)));
+                    });
+
+                await firstConnection.Sender.SendAsync(CreateQueueHandshake(config, 101, 1001));
+                await secondConnection.Sender.SendAsync(CreateQueueHandshake(config, 102, 1002));
+
+                var firstAccept = Task.Run(() => manager.AcceptClient(
+                    new LengthedSocket(firstConnection.Accepted, SizeType.Dword, false)));
+                var secondAccept = Task.Run(() => manager.AcceptClient(
+                    new LengthedSocket(secondConnection.Accepted, SizeType.Dword, false)));
+
+                await Task.WhenAll(firstAccept, secondAccept).WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.IsTrue(SpinWait.SpinUntil(
+                    () => manager.RedirectingClients + manager.QueuedClients == 2,
+                    TimeSpan.FromSeconds(5)));
+
+                Assert.AreEqual(1, manager.RedirectingClients);
+                Assert.AreEqual(1, manager.QueuedClients);
+
+                QueueClient[] clients;
+                lock (manager.Clients)
+                    clients = manager.Clients.ToArray();
+                foreach (var client in clients)
+                    client.Close();
+            }
+        }
+
+        [TestMethod]
+        public async Task FullQueueUpdateRemovesDisconnectedClientBehindLiveClient()
+        {
+            var firstConnection = await ConnectAsync();
+            var secondConnection = await ConnectAsync();
+            using (firstConnection.Sender)
+            using (firstConnection.Accepted)
+            using (secondConnection.Sender)
+            using (secondConnection.Accepted)
+            {
+                var config = CreateQueueConfig();
+                var manager = new QueueManager(
+                    config,
+                    () => true,
+                    IPAddress.Loopback,
+                    8001,
+                    null);
+                var first = new QueueClient(
+                    manager,
+                    new LengthedSocket(firstConnection.Accepted, SizeType.Dword, false));
+                var second = new QueueClient(
+                    manager,
+                    new LengthedSocket(secondConnection.Accepted, SizeType.Dword, false));
+                lock (manager.Clients)
+                {
+                    manager.Clients.Add(first);
+                    manager.Clients.Add(second);
+                }
+
+                AuthenticateAndLogin(first, config, 201, 2001);
+                AuthenticateAndLogin(second, config, 202, 2002);
+                second.Close();
+
+                manager.Update(0);
+
+                Assert.AreEqual(1, manager.QueuedClients);
+                Assert.AreEqual(QueueState.InQueue, first.State);
+                first.Close();
+            }
+        }
+
+        private static QueueConfig CreateQueueConfig()
+        {
+            return new QueueConfig
+            {
+                PublicKey = "queue-test-key",
+                Prime = "queue-test-prime",
+                Generator = "queue-test-generator"
+            };
+        }
+
+        private static byte[] CreateQueueHandshake(QueueConfig config, uint userId, uint oneTimeKey)
+        {
+            using var output = new MemoryStream();
+            WriteFrame(output, writer => new Rasa.Packets.Queue.Client.ClientKeyPacket
+            {
+                PublicKey = config.PublicKey
+            }.Write(writer));
+            WriteFrame(output, writer => new Rasa.Packets.Queue.Client.QueueLoginPacket
+            {
+                UserId = userId,
+                OneTimeKey = oneTimeKey
+            }.Write(writer));
+            return output.ToArray();
+        }
+
+        private static void WriteFrame(Stream output, Action<BinaryWriter> writePayload)
+        {
+            using var payload = new MemoryStream();
+            using (var writer = new BinaryWriter(payload, System.Text.Encoding.UTF8, true))
+                writePayload(writer);
+
+            using var outputWriter = new BinaryWriter(output, System.Text.Encoding.UTF8, true);
+            outputWriter.Write((int)payload.Length);
+            outputWriter.Write(payload.GetBuffer(), 0, (int)payload.Length);
+        }
+
+        private static void AuthenticateAndLogin(
+            QueueClient client,
+            QueueConfig config,
+            uint userId,
+            uint oneTimeKey)
+        {
+            using (var keyPayload = new MemoryStream())
+            using (var keyWriter = new BinaryWriter(keyPayload))
+            {
+                new Rasa.Packets.Queue.Client.ClientKeyPacket
+                {
+                    PublicKey = config.PublicKey
+                }.Write(keyWriter);
+                keyPayload.Position = 0;
+                using var keyReader = new BinaryReader(keyPayload);
+                client.HandleReceive(keyReader);
+            }
+
+            using var loginPayload = new MemoryStream();
+            using (var loginWriter = new BinaryWriter(loginPayload, System.Text.Encoding.UTF8, true))
+            {
+                new Rasa.Packets.Queue.Client.QueueLoginPacket
+                {
+                    UserId = userId,
+                    OneTimeKey = oneTimeKey
+                }.Write(loginWriter);
+            }
+            loginPayload.Position = 0;
+            using var loginReader = new BinaryReader(loginPayload);
+            client.HandleReceive(loginReader);
+        }
+
         private static async Task<(Socket Sender, Socket Accepted)> ConnectAsync()
         {
             using var listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);

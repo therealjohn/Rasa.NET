@@ -156,11 +156,24 @@ namespace Rasa.Queue
         private void OnAccept(LengthedSocket socket)
         {
             Socket.AcceptAsync();
+            AcceptClient(socket);
+        }
 
-            var client = new QueueClient(this, socket);
+        internal void AcceptClient(LengthedSocket socket)
+        {
+            var client = new QueueClient(this, socket, false);
             lock (Clients)
-                if (client.State != QueueState.Disconnected)
-                    Clients.Add(client);
+                Clients.Add(client);
+
+            try
+            {
+                client.Start();
+            }
+            catch
+            {
+                client.Close();
+                throw;
+            }
         }
 
         public void Disconnect(QueueClient client)
@@ -228,15 +241,15 @@ namespace Rasa.Queue
             return redirects;
         }
 
-        private void ClearDisconnected()
+        private void RemoveDisconnectedClients()
         {
-            while (_queuedClients.Count > 0)
-            {
-                var client = _queuedClients.Peek();
-                if (client.State != QueueState.Disconnected)
-                    break;
+            var count = _queuedClients.Count;
 
-                _queuedClients.Dequeue();
+            for (var i = 0; i < count; ++i)
+            {
+                var client = _queuedClients.Dequeue();
+                if (client.State != QueueState.Disconnected)
+                    _queuedClients.Enqueue(client);
             }
         }
 
@@ -251,7 +264,7 @@ namespace Rasa.Queue
                 if (_queuedClients.Count == 0)
                     return;
 
-                ClearDisconnected();
+                RemoveDisconnectedClients();
 
                 redirects = AdvanceQueue(freeSlots, DateTime.Now);
 

@@ -2,6 +2,7 @@
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
 
 namespace Rasa.Queue
 {
@@ -23,6 +24,7 @@ namespace Rasa.Queue
         /// expected-state transitions because each competes with teardown or another manager pass.
         /// </summary>
         private readonly QueueClientState _state = new QueueClientState();
+        private int _started;
         public QueueState State => _state.Value;
         public uint UserId { get; set; }
         public uint OneTimeKey { get; set; }
@@ -33,12 +35,26 @@ namespace Rasa.Queue
         public DateTime RedirectTime { get; private set; }
 
         public QueueClient(QueueManager manager, LengthedSocket socket)
+            : this(manager, socket, true)
+        {
+        }
+
+        internal QueueClient(QueueManager manager, LengthedSocket socket, bool start)
         {
             Manager = manager;
             Socket = socket;
             Socket.OnReceive += OnReceive;
             Socket.OnError += OnError;
             Socket.OnDrop += OnDrop;
+
+            if (start)
+                Start();
+        }
+
+        internal void Start()
+        {
+            if (Interlocked.Exchange(ref _started, 1) != 0)
+                return;
 
             Socket.ReceiveAsync();
 
@@ -48,8 +64,6 @@ namespace Rasa.Queue
                 Prime = Manager.Config.Prime,
                 Generator = Manager.Config.Generator
             });
-
-            SetState(QueueState.Authenticating);
         }
 
         private void OnReceive(BufferData data)
