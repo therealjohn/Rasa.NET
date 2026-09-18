@@ -192,7 +192,7 @@ namespace Rasa.Memory
             var value = (ReadByte() << 16)  | (ReadByte() << 8) | ReadByte();
 
             if ((value & 0x00800000) > 0)
-                value -= 0xFFFFFF;
+                value -= 0x1000000;
 
             ReadDebugByte(42);
 

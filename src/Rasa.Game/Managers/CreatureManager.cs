@@ -185,7 +185,7 @@ namespace Rasa.Managers
         public Creature CreateCreature(uint dbId, SpawnPool spawnPool)
         {
             // check is creature in database
-            if (!LoadedCreatures.ContainsKey(dbId))
+            if (!LoadedCreatures.TryGetValue(dbId, out var creatureEntry) || creatureEntry == null)
             {
                 Logger.WriteLog(LogType.Error, $"Creature with dbId={dbId}, isn't in database");
 
@@ -195,16 +195,14 @@ namespace Rasa.Managers
                 return null;
             }
 
-            var isCreature = false;
-            // check if classId have creature Augmentation
-            foreach (var aug in EntityClassManager.Instance.LoadedEntityClasses[LoadedCreatures[dbId].EntityClass].Augmentations)
-                if (aug == AugmentationType.Creature)
-                {
-                    isCreature = true;
-                    break;
-                }
+            if (!EntityClassManager.Instance.LoadedEntityClasses.TryGetValue(creatureEntry.EntityClass, out var entityClass) ||
+                entityClass == null)
+            {
+                Logger.WriteLog(LogType.Error, $"Creature with dbId={dbId} references missing entity class {creatureEntry.EntityClass}");
+                return null;
+            }
 
-            if (!isCreature)
+            if (entityClass.Augmentations == null || !entityClass.Augmentations.Contains(AugmentationType.Creature))
             {
                 Logger.WriteLog(LogType.Error, $"Creature with dbId = {dbId}, don't have creature Augmentation");
 
@@ -215,13 +213,12 @@ namespace Rasa.Managers
             }
 
             // create creature
-            var creatureEntry = LoadedCreatures[dbId];
             var creature = (Creature)creatureEntry.Clone();
 
             creature.SpawnPool = spawnPool;
 
             creature.State = CharacterState.Idle;
-            creature.Name = EntityClassManager.Instance.LoadedEntityClasses[creature.EntityClass].ClassName;
+            creature.Name = entityClass.ClassName;
 
             // set creature stats
             using var unitOfWork = _gameUnitOfWorkFactory.CreateWorld();

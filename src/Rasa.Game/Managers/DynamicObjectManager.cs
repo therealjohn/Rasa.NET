@@ -1,6 +1,8 @@
 ﻿using System.Collections.Generic;
+using System.Data.Common;
 using System.Linq;
 using System.Numerics;
+using Microsoft.EntityFrameworkCore;
 
 namespace Rasa.Managers
 {
@@ -23,6 +25,11 @@ namespace Rasa.Managers
         private static DynamicObjectManager _instance;
         private static readonly object InstanceLock = new object();
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
+        private readonly MapChannelManager _maps;
+        private readonly Func<long> _clock;
+        private readonly Action<Client, CharacterUpdate, object> _updateCharacter;
+        private readonly Action<Client> _disconnect;
+        private MapChannelManager Maps => _maps ?? MapChannelManager.Instance;
 
         public readonly Dictionary<ulong, Dropship> Dropships = new Dictionary<ulong, Dropship>();
         public readonly Dictionary<ulong, DynamicObject> Teleporters = new Dictionary<ulong, DynamicObject>();
@@ -83,9 +90,16 @@ namespace Rasa.Managers
             }
         }
 
-        private DynamicObjectManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory)
+        internal DynamicObjectManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory,
+            MapChannelManager maps = null, Func<long> clock = null,
+            Action<Client, CharacterUpdate, object> updateCharacter = null, Action<Client> disconnect = null)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
+            _maps = maps;
+            _clock = clock ?? (() => Environment.TickCount64);
+            _updateCharacter = updateCharacter ?? ((client, update, value) =>
+                CharacterManager.Instance.UpdateCharacter(client, update, value));
+            _disconnect = disconnect ?? (client => client.Close(false));
         }
 
         internal void InitDynamicObjects()
@@ -456,13 +470,13 @@ namespace Rasa.Managers
         #endregion
 
         #region Dropship
-        public void DropshipsWorker(long timePassed)
+        public void DropshipsWorker(MapChannel mapChannel, long timePassed)
         {
-            // Dropships is server-wide; each one is removed from its own map, not from
-            // whichever map the caller happened to be iterating.
-            foreach (var entry in Dropships)
+            foreach (var entry in Dropships.ToArray())
             {
                 var dropship = entry.Value;
+                if (dropship.MapContextId != mapChannel.MapInfo.MapContextId)
+                    continue;
 
                 if (dropship.DropshipType != DropshipType.Spawner && dropship.DropshipType != DropshipType.Teleporter)
                 {
@@ -476,7 +490,7 @@ namespace Rasa.Managers
                     continue;
 
                 if (dropship.Phase == 0 || dropship.Phase == 1 || dropship.Phase == 4)
-                    CellManager.Instance.CellCallMethod(dropship, new ForceStatePacket(dropship.StateId, 0));
+                    CellManager.Instance.CellCallMethod(mapChannel, dropship, new ForceStatePacket(dropship.StateId, 0));
 
                 switch (dropship.Phase)
                 {
@@ -506,8 +520,14 @@ namespace Rasa.Managers
                             var creatureList = SpawnPoolManager.Instance.CreateListOfCreatures(dropship.SpawnPool);
 
                             // spawn creatures
-                            SpawnPoolManager.Instance.SpawnCreatures(dropship.SpawnPool, creatureList);
-                            SpawnPoolManager.Instance.DecreaseQueuedCreatureCount(dropship.SpawnPool, dropship.SpawnPool.QueuedCreatures);
+                            try
+                            {
+                                SpawnPoolManager.Instance.SpawnCreatures(dropship.SpawnPool, creatureList);
+                            }
+                            finally
+                            {
+                                SpawnPoolManager.Instance.DecreaseQueuedCreatureCount(dropship.SpawnPool, creatureList.Count);
+                            }
                         }
 
                         break;
@@ -530,29 +550,15 @@ namespace Rasa.Managers
                             switch (dropship.Client.State)
                             {
                                 case ClientState.Ingame:
-                                    CellManager.Instance.RemoveFromWorld(dropship.Client);
-                                    dropship.Client.Player.MapChannel.ClientList.Remove(dropship.Client);
-
-                                    // Effects end with the map, as MapChannelManager.RemovePlayer ends them - a
-                                    // dropship ride never goes through it. A sprint used to ride along: the arrival
-                                    // introduced the player to everyone without it, their own client included, while
-                                    // the arrival's ActorInfo gave that client the sprint's speed and its drain picked
-                                    // up again, under an effect id handed out by the map they had left and with no
-                                    // buff on any screen to show for it.
-                                    GameEffectManager.Instance.ClearEffects(dropship.Client.Player);
-
-                                    CommunicatorManager.Instance.LeaveMapChannels(dropship.Client);
-                                    dropship.Client.CallMethod(SysEntity.ClientMethodId, new UnrequestMovementBlockPacket());
-                                    dropship.Client.CallMethod(SysEntity.ClientMethodId, new PreWonkavatePacket());
-                                    dropship.Client.CallMethod(SysEntity.CurrentInputStateId, new WonkavatePacket(dropship.DestinationMapId, 1, MapChannelManager.Instance.MapChannelArray[dropship.DestinationMapId].MapInfo.MapVersion, dropship.Destination, 0));
-                                    dropship.Client.Player.PlaceAt(dropship.Destination);
-                                    dropship.Client.Player.Target = 0;
-                                    dropship.Client.State = ClientState.Teleporting;
-                                    dropship.Client.AwaitingMapLoaded = true;
+                                    DepartDropship(dropship.Client, dropship);
                                     break;
                                 case ClientState.Teleporting:
-                                    dropship.Client.State = ClientState.Ingame;
-                                    ManifestationManager.Instance.ResetInactivity(dropship.Client);
+                                    if (dropship.Client.PendingTransfer == null &&
+                                        dropship.Client.Player.MapContextId == dropship.MapContextId)
+                                    {
+                                        dropship.Client.State = ClientState.Ingame;
+                                        ManifestationManager.Instance.ResetInactivity(dropship.Client);
+                                    }
                                     break;
                                 default:
                                     Logger.WriteLog(LogType.Error, $"Unsupported CLientState {dropship.Client.State}");
@@ -564,8 +570,7 @@ namespace Rasa.Managers
                             SpawnPoolManager.Instance.DecreaseQueueCount(dropship.SpawnPool);
 
                         // remove object
-                        if (MapChannelManager.Instance.MapChannelArray.TryGetValue(dropship.MapContextId, out var dropshipMap))
-                            CellManager.Instance.RemoveFromWorld(dropshipMap, dropship);
+                        CellManager.Instance.RemoveFromWorld(mapChannel, dropship);
 
                         Dropships.Remove(dropship.EntityId);
                         break;
@@ -734,16 +739,14 @@ namespace Rasa.Managers
                  return;
 
             var newWaypoint = new CharacterTeleporterEntry(client.Player.Id, objectData.WaypointId, (byte)objectData.WaypointType);
-            // add waypoint to player as he entered for the first time
-            client.CallMethod(client.Player.EntityId, new WaypointGainedPacket(objectData.WaypointId, objectData.WaypointType));
+            _updateCharacter(client, CharacterUpdate.Teleporter, newWaypoint);
             client.Player.GainedWaypoints.Add(newWaypoint);
+            client.CallMethod(client.Player.EntityId, new WaypointGainedPacket(objectData.WaypointId, objectData.WaypointType));
 
             // And on the map, where this is the one thing about a marker the client cannot work
             // out for itself. The marker changes colour under the player as they stand on it.
             MapMarkerManager.Instance.WaypointDiscovered(client, objectData.WaypointId);
 
-            // update Db
-            CharacterManager.Instance.UpdateCharacter(client, CharacterUpdate.Teleporter, newWaypoint);
         }
 
         internal Dictionary<uint, MapWaypointInfoList> CreateListOfWaypoints(Client client, WaypointType waypointType)
@@ -759,10 +762,16 @@ namespace Rasa.Managers
                 if ((WaypointType)waypoint.WaypointType != waypointType)
                     continue;
 
-                var teleporter = Teleporters[waypoint.WaypointId];
+                if (!Teleporters.TryGetValue(waypoint.WaypointId, out var teleporter))
+                {
+                    Logger.WriteLog(LogType.Error, $"Discovered waypoint {waypoint.WaypointId} has no world definition.");
+                    continue;
+                }
                 var teleporterData = teleporter.ObjectData as WaypointInfo;
+                if (teleporterData == null || teleporterData.Contested)
+                    continue;
 
-                if (teleporterData.WaypointType == WaypointType.Waypoint && teleporter.MapContextId != mapChannel.MapInfo.MapContextId)
+                if (teleporter.MapContextId != mapChannel.MapInfo.MapContextId)
                     continue;
 
                 if (teleporterData.WaypointType != waypointType)
@@ -775,9 +784,9 @@ namespace Rasa.Managers
                         Position = teleporter.Position
                     });
 
-                    listOfMapInstances.Add(new MapInstanceInfo(1, mapChannel.MapInfo.MapContextId, MapInstanceStatus.Low)); // ToDo: send mapInstanceStatus based on map population
                 }
             }
+            listOfMapInstances.Add(new MapInstanceInfo(mapChannel.InstanceId, mapChannel.MapInfo.MapContextId, MapInstanceStatus.Low));
 
             listOfWaypoints.Add(mapChannel.MapInfo.MapContextId, new MapWaypointInfoList(mapChannel.MapInfo.MapContextId, listOfMapInstances, waypointInfo));
 
@@ -786,76 +795,92 @@ namespace Rasa.Managers
 
         internal void SelectWaypoint(Client client, SelectWaypointPacket packet)
         {
-            // Both ids come from the client and used to be indexed straight into the map and
-            // teleporter dictionaries, so an unknown map or waypoint id threw KeyNotFoundException
-            // in the handler and the player was disconnected. Now the request is checked the way
-            // the waypoint window itself is built: the player has to be standing at a waypoint,
-            // the destination has to exist, and it has to be one this character has gained
-            // (dropships are offered to everyone, see CreateListOfDropships).
-            if (client.Player == null || client.State != ClientState.Ingame)
-                return;
-
-            // The client sends None for the map when it means the one it is on.
-            var mapContextId = packet.MapInstanceId != 0 ? packet.MapInstanceId : client.Player.MapContextId;
-
-            if (!MapChannelManager.Instance.MapChannelArray.TryGetValue(mapContextId, out var targetMap)
-                || !targetMap.Teleporters.TryGetValue(packet.WaypointId, out var teleporter)
-                || !(teleporter.ObjectData is WaypointInfo objData))
+            lock (client.SyncRoot)
             {
-                Logger.WriteLog(LogType.Debug, $"SelectWaypoint: {client.Player.Name} asked for unknown waypoint {packet.WaypointId} on map {mapContextId}");
-                return;
-            }
+                if (client.PendingTransfer != null)
+                {
+                    Logger.WriteLog(LogType.Network, "Ignored a duplicate waypoint selection during transfer.");
+                    return;
+                }
+                if (client.State != ClientState.Ingame || client.Player?.MapChannel == null || client.Player.Id == 0 ||
+                    client.Player.Disconected || client.Player.RemoveFromMap || client.Player.LogoutActive ||
+                    !CellManager.Instance.IsInWorld(client) ||
+                    !Teleporters.TryGetValue(packet.WaypointId, out var teleporter) ||
+                    teleporter.ObjectData is not WaypointInfo info ||
+                    !Maps.MapChannelArray.TryGetValue(teleporter.MapContextId, out var destinationMap))
+                {
+                    RejectTravel(client, "Invalid waypoint or player state.");
+                    return;
+                }
 
-            if (!IsAtWaypoint(client))
-            {
-                Logger.WriteLog(LogType.Debug, $"SelectWaypoint: {client.Player.Name} is not standing at a waypoint");
-                return;
-            }
+                var origin = client.Player.MapChannel;
+                var isDropship = info.WaypointType == WaypointType.Dropship;
+                if ((packet.MapInstanceId != 0 && packet.MapInstanceId != destinationMap.InstanceId) ||
+                    info.Contested ||
+                    !client.Player.GainedWaypoints.Any(waypoint => waypoint.WaypointId == packet.WaypointId &&
+                        waypoint.WaypointType == (byte)info.WaypointType) ||
+                    (!isDropship && info.WaypointType != WaypointType.Waypoint && info.WaypointType != WaypointType.LocalTeleporter) ||
+                    (!isDropship && destinationMap != origin))
+                {
+                    RejectTravel(client, "Waypoint is not discovered, available, or in the selected instance.");
+                    return;
+                }
 
-            if (objData.WaypointType != WaypointType.Dropship
-                && !client.Player.GainedWaypoints.Any(w => w.WaypointId == objData.WaypointId))
-            {
-                Logger.WriteLog(LogType.Debug, $"SelectWaypoint: {client.Player.Name} has not gained waypoint {objData.WaypointId}");
-                return;
-            }
+                var nearbySource = Teleporters.Values.Any(source =>
+                    source.MapContextId == origin.MapInfo.MapContextId &&
+                    source.ObjectData is WaypointInfo sourceInfo && sourceInfo.WaypointType == info.WaypointType &&
+                    (isDropship ? client.Player.IsNear5m(source) : client.Player.IsNear2m(source)));
+                var destination = isDropship ? teleporter.Position : teleporter.Position + new Vector3(0, 1, 0);
+                if (!nearbySource || !CellManager.TryGetCellCoordinates(destination, out _, out _) ||
+                    !double.IsFinite(teleporter.Rotation) || !float.IsFinite((float)teleporter.Rotation))
+                {
+                    RejectTravel(client, "No nearby departure station or invalid destination position.");
+                    return;
+                }
 
-            if (mapContextId != client.Player.MapContextId)
-            {
-                var dropship = new Dropship(Factions.AFS, DropshipType.Teleporter, client, teleporter.Position, mapContextId);
+                var timeout = client.Server?.Config.GameConfig.TransferTimeoutSeconds ??
+                    Config.GameConfig.DefaultTransferTimeoutSeconds;
+                if (timeout <= 0)
+                {
+                    Logger.WriteLog(LogType.Error, "TransferTimeoutSeconds must be positive.");
+                    RejectTravel(client, "Travel timeout configuration is invalid.");
+                    return;
+                }
 
-                CellManager.Instance.AddToWorld(client.Player.MapChannel, dropship);
-                Dropships.Add(dropship.EntityId, dropship);
+                var transfer = new PlayerTransfer
+                {
+                    OriginMap = origin,
+                    OriginPosition = client.Player.Position,
+                    OriginRotation = client.Player.Rotation,
+                    DestinationMap = destinationMap,
+                    DestinationPosition = destination,
+                    DestinationRotation = teleporter.Rotation,
+                    Deadline = checked(_clock() + timeout * 1000L),
+                    IsDropship = isDropship
+                };
+                client.PendingTransfer = transfer;
                 client.CallMethod(SysEntity.ClientMethodId, new RequestMovementBlockPacket());
 
-                client.LoadingMap = mapContextId;
-                return;
+                if (isDropship)
+                {
+                    var dropship = new Dropship(Factions.AFS, DropshipType.Teleporter, client,
+                        destination, destinationMap.MapInfo.MapContextId);
+                    transfer.DropshipId = dropship.EntityId;
+                    CellManager.Instance.AddToWorld(origin, dropship);
+                    Dropships.Add(dropship.EntityId, dropship);
+                    client.LoadingMap = destinationMap.MapInfo.MapContextId;
+                    return;
+                }
+
+                client.CellCallMethod(client, client.Player.EntityId, new PreTeleportPacket(TeleportType.Default));
+                client.State = ClientState.Teleporting;
+                client.SetWorldPosition(destination, teleporter.Rotation);
+                CellManager.Instance.UpdateVisibility(client);
+                client.CallMethod(client.Player.EntityId,
+                    new TeleportPacket(destination, teleporter.Rotation, TeleportType.Default, 5));
+                client.CallMethod(SysEntity.ClientMethodId, new BeginTeleportPacket());
+                client.CellMoveObject(client, new MoveObjectMessage(client.Player.EntityId, client.Movement), false);
             }
-
-            var movementData = new Models.Movement
-                (
-                new Vector3(
-                    teleporter.Position.X,
-                    teleporter.Position.Y + 1,
-                    teleporter.Position.Z),
-                0f,
-                0,
-                new Vector2((float)teleporter.Rotation, 0f)
-            );
-
-            // The server goes where it is sending them. This is a teleport within one map, so
-            // there is no map change to carry the position across, and it never wrote one: the
-            // player was moved on every screen while the server went on holding the pad they left
-            // from, which is what every range check on them was measured from until their next
-            // Move happened to correct it.
-            client.Player.PlaceAt(movementData.Position);
-            client.Player.Rotation = (float)teleporter.Rotation;
-
-            client.CellCallMethod(client, client.Player.EntityId, new PreTeleportPacket(TeleportType.Default));
-            client.CallMethod(client.Player.EntityId, new TeleportPacket(teleporter.Position, teleporter.Rotation, TeleportType.Default, 5));
-            client.CallMethod(SysEntity.ClientMethodId, new BeginTeleportPacket());
-            client.CellMoveObject(client, new MoveObjectMessage(client.Player.EntityId, movementData), false);
-
-            teleporter.TriggeredByPlayers.Remove(client);    // ToDO: maybe safely remove client
         }
 
         /// <summary>
@@ -884,16 +909,139 @@ namespace Rasa.Managers
 
         internal void TeleportAcknowledge(Client client)
         {
-            client.CallMethod(client.Player.EntityId, new TeleportArrivalPacket());
+            lock (client.SyncRoot)
+            {
+                if (client.State != ClientState.Teleporting || client.PendingTransfer == null ||
+                    client.PendingTransfer.IsDropship)
+                {
+                    Logger.WriteLog(LogType.Network, "Ignored an unexpected teleport acknowledgement.");
+                    return;
+                }
+                if (CheckTransferTimeout(client) || !PersistTransfer(client))
+                    return;
+
+                client.PendingTransfer = null;
+                client.State = ClientState.Ingame;
+                client.CallMethod(client.Player.EntityId, new TeleportArrivalPacket());
+                client.CallMethod(SysEntity.ClientMethodId, new UnrequestMovementBlockPacket());
+            }
+        }
+
+        private static void RejectTravel(Client client, string reason)
+        {
+            Logger.WriteLog(LogType.Network, $"Rejected travel: {reason}");
+            if (client.Player != null && client.State != ClientState.Disconnected)
+                client.CallMethod(client.Player.EntityId, new TeleportFailedPacket());
+        }
+
+        internal bool CheckTransferTimeout(Client client)
+        {
+            lock (client.SyncRoot)
+            {
+                var transfer = client.PendingTransfer;
+                if (transfer == null || _clock() < transfer.Deadline)
+                    return false;
+
+                Logger.WriteLog(LogType.Network,
+                    $"Transfer timed out for entity {client.Player.EntityId}; restoring its origin.");
+                if (transfer.HasDeparted && CellManager.Instance.IsInWorld(client))
+                    CellManager.Instance.RemoveFromWorld(client);
+                client.RestoreTransferOrigin();
+                CleanupClientDropships(client);
+                _disconnect(client);
+                return true;
+            }
+        }
+
+        private void DepartDropship(Client client, Dropship dropship)
+        {
+            lock (client.SyncRoot)
+            {
+                var transfer = client.PendingTransfer;
+                if (transfer == null || !transfer.IsDropship || transfer.HasDeparted ||
+                    transfer.DropshipId != dropship.EntityId || CheckTransferTimeout(client))
+                    return;
+
+                CommunicatorManager.Instance.LeaveMapChannels(client);
+                CellManager.Instance.RemoveFromWorld(client);
+                transfer.OriginMap.ClientList.RemoveAll(member => member == client);
+                transfer.HasDeparted = true;
+                client.Player.MapChannel = transfer.DestinationMap;
+                client.Player.MapContextId = transfer.DestinationMap.MapInfo.MapContextId;
+                client.SetWorldPosition(transfer.DestinationPosition, transfer.DestinationRotation);
+                client.LoadingMap = transfer.DestinationMap.MapInfo.MapContextId;
+                client.State = ClientState.Teleporting;
+                client.CallMethod(SysEntity.ClientMethodId, new UnrequestMovementBlockPacket());
+                client.CallMethod(SysEntity.ClientMethodId, new PreWonkavatePacket());
+                client.CallMethod(SysEntity.CurrentInputStateId, new WonkavatePacket(
+                    transfer.DestinationMap.MapInfo.MapContextId, transfer.DestinationMap.InstanceId,
+                    transfer.DestinationMap.MapInfo.MapVersion, transfer.DestinationPosition,
+                    (float)transfer.DestinationRotation));
+            }
+        }
+
+        internal bool IsExpectedMapLoad(Client client)
+        {
+            var transfer = client.PendingTransfer;
+            return client.State == ClientState.Teleporting &&
+                transfer?.HasDeparted == true && client.LoadingMap == transfer.DestinationMap.MapInfo.MapContextId &&
+                client.Player.MapChannel == transfer.DestinationMap;
+        }
+
+        internal bool CompleteMapLoadTransfer(Client client)
+        {
+            lock (client.SyncRoot)
+            {
+                if (!IsExpectedMapLoad(client))
+                    throw new InvalidOperationException("No matching map transfer to complete.");
+                if (!PersistTransfer(client))
+                    return false;
+                client.PendingTransfer = null;
+                return true;
+            }
+        }
+
+        private bool PersistTransfer(Client client)
+        {
+            try
+            {
+                _updateCharacter(client, CharacterUpdate.Position, null);
+                return true;
+            }
+            catch (Exception error) when (error is DbUpdateException || error is DbException)
+            {
+                Logger.WriteLog(LogType.Error, $"Unable to persist player transfer: {error.Message}");
+                client.RestoreTransferOrigin();
+                CleanupClientDropships(client);
+                _disconnect(client);
+                return false;
+            }
+        }
+
+        internal void CleanupClientDropships(Client client)
+        {
+            foreach (var dropship in Dropships.Values.Where(ship => ship.Client == client).ToArray())
+            {
+                if (Maps.MapChannelArray.TryGetValue(dropship.MapContextId, out var map))
+                    CellManager.Instance.RemoveFromWorld(map, dropship);
+                Dropships.Remove(dropship.EntityId);
+            }
         }
 
         internal void PlayerEnterWaypoint(DynamicObject obj)
         {
-            var cellSeed = CellManager.Instance.GetCellSeed(obj.Position);
-            var mapChannel = MapChannelManager.Instance.FindByContextId(obj.MapContextId);
-
-            foreach (var client in mapChannel.MapCellInfo.Cells[cellSeed].ClientList)
+            var mapChannel = Maps.FindByContextId(obj.MapContextId);
+            if (!CellManager.TryGetCellCoordinates(obj.Position, out var x, out var z))
             {
+                Logger.WriteLog(LogType.Error, $"Invalid waypoint position for {obj.EntityId}.");
+                return;
+            }
+            var cells = CellManager.Instance.CreateCellMatrix(mapChannel, x, z);
+
+            foreach (var client in CellManager.Instance.GetClientsInCells(mapChannel, cells))
+            {
+                if (client.State != ClientState.Ingame || client.PendingTransfer != null)
+                    continue;
                 // check if player is near waypoint
                 if (!client.Player.IsNear2m(obj))
                 {
@@ -915,7 +1063,9 @@ namespace Rasa.Managers
 
                 var waypointInfoList = CreateListOfWaypoints(client, objectData.WaypointType);
 
-                client.CallMethod(SysEntity.ClientMethodId, new EnteredWaypointPacket(obj.MapContextId, obj.MapContextId, waypointInfoList, objectData.WaypointType, objectData.WaypointId));
+                client.CallMethod(SysEntity.ClientMethodId,
+                    new EnteredWaypointPacket(mapChannel.InstanceId, obj.MapContextId,
+                        waypointInfoList, objectData.WaypointType, objectData.WaypointId));
 
                 // check if we already added him to the waypoint
             }
@@ -927,27 +1077,32 @@ namespace Rasa.Managers
             {
                 var client = obj.TriggeredByPlayers[i];
 
-                if (!client.Player.IsNear2m(obj))
+                if (client.State != ClientState.Ingame ||
+                    client.Player?.MapChannel?.MapInfo.MapContextId != obj.MapContextId ||
+                    !client.Player.IsNear2m(obj))
                 {
                     obj.TriggeredByPlayers.RemoveAt(i);
 
-                    client.CallMethod(SysEntity.ClientMethodId, new ExitedWaypointPacket());
+                    if (client.State != ClientState.Disconnected)
+                        client.CallMethod(SysEntity.ClientMethodId, new ExitedWaypointPacket());
                 }
             }
         }
 
-        internal Dictionary<uint, MapWaypointInfoList> CreateListOfDropships()
+        internal Dictionary<uint, MapWaypointInfoList> CreateListOfDropships(Client client)
 
         {
             var dropships = new Dictionary<uint, MapWaypointInfoList>();
 
-            // for now we add all dropships, ToDO: give player only gained dropships
             foreach (var entry in Teleporters)
             {
                 var teleporter = entry.Value;
                 var teleporterInfo = teleporter.ObjectData as WaypointInfo;
 
-                if (teleporterInfo.WaypointType == WaypointType.Dropship)
+                if (teleporterInfo?.WaypointType == WaypointType.Dropship && !teleporterInfo.Contested &&
+                    client.Player.GainedWaypoints.Any(known => known.WaypointId == teleporterInfo.WaypointId &&
+                        known.WaypointType == (byte)WaypointType.Dropship) &&
+                    Maps.MapChannelArray.TryGetValue(teleporter.MapContextId, out var channel))
                 {
                     if (dropships.ContainsKey(teleporter.MapContextId))
                     {
@@ -959,8 +1114,10 @@ namespace Rasa.Managers
                     else
                     {
                         //create new entry
-                        var instance = new List<MapInstanceInfo> { new MapInstanceInfo(1, teleporter.MapContextId, MapInstanceStatus.Low) };
-                        var waypoints = new List<WaypointInfo> { new WaypointInfo(teleporterInfo.WaypointId, teleporterInfo.Contested, new Vector3(-225.353f, 99.597f, -70.5246f), WaypointType.Dropship) };
+                        var instance = new List<MapInstanceInfo>
+                            { new MapInstanceInfo(channel.InstanceId, teleporter.MapContextId, MapInstanceStatus.Low) };
+                        var waypoints = new List<WaypointInfo>
+                            { new WaypointInfo(teleporterInfo.WaypointId, teleporterInfo.Contested, teleporter.Position, WaypointType.Dropship) };
 
                         var mapWaypointInfoList = new MapWaypointInfoList(teleporter.MapContextId, instance, waypoints);
 

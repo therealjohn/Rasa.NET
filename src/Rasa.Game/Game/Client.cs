@@ -2,10 +2,12 @@
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Data.Common;
 using System.IO;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
+using Microsoft.EntityFrameworkCore;
 
 namespace Rasa.Game
 {
@@ -55,8 +57,11 @@ namespace Rasa.Game
         public List<UserOptions> UserOptions = new();
 
         private readonly object _clientLock = new();
+        internal object SyncRoot => _clientLock;
+        internal PlayerTransfer PendingTransfer { get; set; }
         private readonly ClientPacketHandler _handler;
         private readonly PacketQueue _packetQueue = new();
+        private readonly bool[] _receivedSequence = new bool[256];
 
         // Inbound byte stream. Owned exclusively by the MainLoop thread: it is only ever
         // touched from Update()/TryDecodeNextPacket() and (after disconnect) Close().
@@ -196,6 +201,7 @@ namespace Rasa.Game
                 // and entity tables the MainLoop owns. Disconected goes first so the
                 // worker skips handing a dead socket back to character selection, and so
                 // the visibility and trigger passes stop treating the player as present.
+                RestoreTransferOrigin();
                 if (Player != null && Player.MapChannel != null)
                 {
                     Player.Disconected = true;
@@ -206,7 +212,7 @@ namespace Rasa.Game
 
                 try
                 {
-                    SaveCharacter();
+                    SaveCharacterOnDisconnect();
                 }
                 catch (Exception e)
                 {
@@ -267,21 +273,9 @@ namespace Rasa.Game
         // Cell send movement
         internal void CellMoveObject(Client client, MoveObjectMessage moveObjectMessage, bool ignoreSelf)
         {
-            var clientList = new List<Client>();
-
-            // A cell the player's matrix names but the map does not have is a stale matrix, not
-            // a reason to drop the connection; whoever is in the other cells still gets the move.
-            foreach (var cellSeed in client.Player.Cells)
-                if (client.Player.MapChannel.MapCellInfo.Cells.TryGetValue(cellSeed, out var cell))
-                    clientList.AddRange(cell.ClientList);
-
-            foreach (var tempClient in clientList)
-            {
-                if (tempClient == client && ignoreSelf)
-                    continue;
-
+            foreach (var tempClient in CellManager.Instance.GetClientsInCells(client.Player.MapChannel,
+                         client.Player.Cells, ignoreSelf ? client : null))
                 tempClient.SendMessage(moveObjectMessage, false, 1);
-            }
         }
 
         public void SendMessage(IClientMessage message, bool compress = false, byte channel = 0, bool delay = true)
@@ -292,6 +286,11 @@ namespace Rasa.Game
                 SendPacket(protocolPacket);
             else
                 _packetQueue.EnqueueOutgoing(protocolPacket);
+        }
+
+        internal IBasePacket DequeueOutgoingPacket()
+        {
+            return _packetQueue.PopOutgoing();
         }
 
         public void SendPacket(IBasePacket packet)
@@ -395,43 +394,8 @@ namespace Rasa.Game
                     break;
 
                 case ClientMessageOpcode.Move:
-                    if (Player == null)
-                    {
-                        return;
-                    }
-
                     var moveMessage = GetMessageAs<MoveMessage>(protocolPacket);
-                    if (moveMessage.Movement == null)
-                    {
-                        return;
-                    }
-
-                    // Only a player who is in the world moves in it. Between a map change and the
-                    // client's MapLoaded the character already points at the new map and its
-                    // arrival position, while the client's last few Move packets - sent before it
-                    // saw PreWonkavate - are still arriving with old-map coordinates. Applying one
-                    // overwrote the arrival position, and relaying it indexed the new map's cell
-                    // table with the old map's cells, which threw and cost the player the
-                    // connection every time they walked through a pass.
-                    if (State != ClientState.Ingame)
-                        return;
-
-                    // Where the client says it is, believed only as far as the character could
-                    // have walked since the last one. A refused Move is dropped and the client is
-                    // put back; everything below it reads Position as the truth.
-                    if (!ManifestationManager.Instance.AcceptMove(this, moveMessage.Movement))
-                        return;
-
-                    Player.Position = moveMessage.Movement.Position;
-                    Player.Rotation = moveMessage.Movement.ViewDirection.X;
-                    Movement = moveMessage.Movement;
-
-                    ManifestationManager.Instance.NotifyPlayerActivity(this);
-
-                    // send your movement to other players in visibility range
-                    var moveObjectMessage = new MoveObjectMessage(Player.EntityId, moveMessage.Movement);
-                    CellMoveObject(this, moveObjectMessage, true);
-
+                    HandleMovement(moveMessage.Movement);
                     break;
 
                 case ClientMessageOpcode.CallServerMethod:
@@ -459,6 +423,60 @@ namespace Rasa.Game
                     SendMessage(pingMessage, delay: false);
                     break;
             }
+        }
+
+        internal bool HandleMovement(Movement movement)
+        {
+            lock (_clientLock)
+            {
+                if (State != ClientState.Ingame || Player?.MapChannel == null || Player.Id == 0 ||
+                    PendingTransfer != null || Player.Disconected || Player.RemoveFromMap ||
+                    !CellManager.Instance.IsInWorld(this))
+                {
+                    Logger.WriteLog(LogType.Network, $"Ignored movement outside the active world state: {State}.");
+                    return false;
+                }
+
+                if (movement == null ||
+                    !CellManager.TryGetCellCoordinates(movement.Position, out _, out _) ||
+                    !float.IsFinite(movement.Velocity) || movement.Velocity < 0 ||
+                    !float.IsFinite(movement.ViewDirection.X) || !float.IsFinite(movement.ViewDirection.Y))
+                {
+                    Logger.WriteLog(LogType.Network, "Rejected movement with invalid coordinates or motion values.");
+                    return false;
+                }
+
+                if (!ManifestationManager.Instance.AcceptMove(this, movement))
+                    return false;
+
+                Player.Position = movement.Position;
+                Player.Rotation = movement.ViewDirection.X;
+                Movement = movement;
+                ManifestationManager.Instance.NotifyPlayerActivity(this);
+                CellManager.Instance.UpdateVisibility(this);
+                CellMoveObject(this, new MoveObjectMessage(Player.EntityId, movement), true);
+                return true;
+            }
+        }
+
+        internal void SetWorldPosition(Vector3 position, double rotation)
+        {
+            Player.Position = position;
+            Player.Rotation = rotation;
+            Movement = new Movement(position, new Vector2((float)rotation, 0));
+        }
+
+        internal void RestoreTransferOrigin()
+        {
+            var transfer = PendingTransfer;
+            if (transfer == null || Player == null)
+                return;
+
+            Player.MapChannel = transfer.OriginMap;
+            Player.MapContextId = transfer.OriginMap.MapInfo.MapContextId;
+            SetWorldPosition(transfer.OriginPosition, transfer.OriginRotation);
+            LoadingMap = transfer.OriginMap.MapInfo.MapContextId;
+            PendingTransfer = null;
         }
 
         /// <summary>
@@ -755,22 +773,11 @@ namespace Rasa.Game
             // Advance the stream by removing the already processed data
             _incomingDataQueue.RemoveBytes(packetSize);
 
-            // Throw away any packet that came out of order, if it came on a channel
-            if (rawPacket.Channel != 0)
+            if (rawPacket.Channel != 0 && !TryAcceptSequence(rawPacket.Channel, rawPacket.SequenceNumber))
             {
-                // If an out of sequence packet arrived, then throw it away
-                if (rawPacket.SequenceNumber < ReceiveSequence[rawPacket.Channel])
-                {
-                    // Movement arrives on a sequenced channel, so this is reachable in normal
-                    // play. Dropping the stale packet is correct; breaking into a debugger on
-                    // a headless server is not.
-                    Logger.WriteLog(LogType.Debug, $"Dropped out-of-order packet on channel {rawPacket.Channel} (seq {rawPacket.SequenceNumber} < {ReceiveSequence[rawPacket.Channel]}) from {Socket.RemoteAddress}.");
-
-                    return true;
-                }
-
-                // AddOrUpdate the receive sequence for the channel
-                ReceiveSequence[rawPacket.Channel] = rawPacket.SequenceNumber;
+                Logger.WriteLog(LogType.Debug,
+                    $"Dropped out-of-order packet on channel {rawPacket.Channel} (seq {rawPacket.SequenceNumber}, last {ReceiveSequence[rawPacket.Channel]}) from {Socket.RemoteAddress}.");
+                return true;
             }
 
             // Some internal send timeout check, skip the packet
@@ -784,6 +791,20 @@ namespace Rasa.Game
 
             packet = rawPacket;
 
+            return true;
+        }
+
+        internal bool TryAcceptSequence(byte channel, uint sequence)
+        {
+            if (channel == 0)
+                return true;
+
+            if (_receivedSequence[channel] &&
+                unchecked((int)(sequence - ReceiveSequence[channel])) <= 0)
+                return false;
+
+            _receivedSequence[channel] = true;
+            ReceiveSequence[channel] = sequence;
             return true;
         }
         #endregion
@@ -804,6 +825,20 @@ namespace Rasa.Game
             using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
             unitOfWork.Characters.SaveCharacter(player);
             unitOfWork.Complete();
+        }
+
+        internal bool SaveCharacterOnDisconnect()
+        {
+            try
+            {
+                SaveCharacter();
+                return true;
+            }
+            catch (Exception error) when (error is DbUpdateException || error is DbException)
+            {
+                Logger.WriteLog(LogType.Error, $"Unable to save character {Player?.Id} on disconnect: {error.Message}");
+                return false;
+            }
         }
 
         public void ReloadGameAccountEntry()

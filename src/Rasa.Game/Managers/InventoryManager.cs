@@ -1663,6 +1663,35 @@ namespace Rasa.Managers
             //client.CallMethod(SysEntity.ClientInventoryManagerId, new InventoryCreatePacket(InventoryType.EquipedInventory, client.MapClient.Inventory.EquippedInventory, 22));
         }
 
+        internal void ResendForMap(Client client)
+        {
+            var inventory = client.Player.Inventory;
+            var groups = new[]
+            {
+                (InventoryType.Personal, inventory.PersonalInventory),
+                (InventoryType.HomeInventory, inventory.HomeInventory),
+                (InventoryType.WeaponDrawerInventory, inventory.WeaponDrawer),
+                (InventoryType.EquipedInventory, inventory.EquippedInventory)
+            };
+            var sent = new HashSet<ulong>();
+            foreach (var (type, slots) in groups)
+            {
+                for (var slot = 0; slot < slots.Count; slot++)
+                {
+                    var entityId = slots[slot];
+                    if (entityId == 0)
+                        continue;
+                    var item = EntityManager.Instance.GetItem(entityId) ??
+                        throw new InvalidOperationException($"Missing inventory entity {entityId} during map transfer.");
+                    if (sent.Add(entityId))
+                        ItemManager.Instance.SendItemDataToClient(client, item, false);
+                    client.CallMethod(SysEntity.ClientInventoryManagerId,
+                        new InventoryAddItemPacket(type, entityId, (uint)slot));
+                }
+            }
+            client.CallMethod(SysEntity.ClientInventoryManagerId, new LockboxTabPermissionsPacket(client.Player.LockboxTabs));
+        }
+
         public void SetupLocalClanInventory(Client client)
         {
             if (client.Player.ClanId == 0)

@@ -182,6 +182,10 @@ namespace Rasa.Game
 
                 foreach (var client in Clients)
                 {
+                    if (client.PendingTransfer != null &&
+                        MapChannelManager.Instance.CheckTransferTimeout(client))
+                        continue;
+
                     // Client.Update guards its own handlers and disconnects the client that
                     // threw. This is for the rest of it - Close(), the socket, the packet
                     // queue - so a fault in one connection cannot leave every client after it
@@ -237,7 +241,7 @@ namespace Rasa.Game
                     // Disconnect for this lock - as one closed on a socket thread does, holding
                     // that connection's own lock while it waits.
                     foreach (var client in dropped)
-                        MapChannelManager.Instance.RemoveStrandedPlayer(client);
+                        MapChannelManager.Instance.CleanupDisconnected(client);
                 }
             }
         }

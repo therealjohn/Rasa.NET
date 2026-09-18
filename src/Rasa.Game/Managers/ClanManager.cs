@@ -1,7 +1,9 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Data.Common;
 using System.Linq;
+using Microsoft.EntityFrameworkCore;
 
 namespace Rasa.Managers
 {
@@ -923,27 +925,34 @@ namespace Rasa.Managers
             _invites.Remove(client.Player.Id);
 
             var clanId = client.Player.ClanId;
-            if (clanId > 0)
+            if (clanId == 0)
+                return;
+
+            if (client.State == ClientState.Loading)
+                return;
+
+            CleanupClan(client);
+            if (ClanMembers.TryGetValue(clanId, out var cachedMembers) && cachedMembers.IsValueCreated)
+                cachedMembers.Value?.RemoveAll(member => member.CharacterId == client.Player.Id);
+
+            if (!Server.Clients.Any(other => other != client && other.State != ClientState.Disconnected &&
+                    other.Player?.ClanId == clanId))
+                return;
+            if (!Clans.ContainsKey(clanId) || !ClanMembers.ContainsKey(clanId))
             {
-                // A map change comes through here too - MapChannelManager.ChangeMap takes the player
-                // off the old map, already Loading, before sending them to the new one - and a member
-                // crossing a zone border has not left anything. MapLoaded tells the clan where they
-                // arrived. This used to unregister them regardless, and unregistering runs CleanupClan
-                // on the member's own client: whoever walked through a map link or was summoned came
-                // out the other side with ClanId 0 and an empty clan lockbox, and clan chat, the
-                // lockbox and every rank action refused them as clanless until they relogged.
-                if (client.State == ClientState.Loading)
-                    return;
+                Logger.WriteLog(LogType.Error,
+                    $"Clan {clanId} metadata is unavailable for roster refresh after departure.");
+                return;
+            }
 
-                ClanMemberEntry member = GetClanMember(clanId, client.Player.Id);
-
-                if (member == null)
-                    return;
-
-                UnregisterClanMember(member);
-
-                // The rest of the clan sees this member go offline: one line each.
-                SendMemberData(MemberDataFor(client, member, false), client.Player.Id);
+            try
+            {
+                SetMemberDataForOnlineMembers(clanId, client.Player.Id);
+            }
+            catch (Exception error) when (error is DbException || error is DbUpdateException)
+            {
+                Logger.WriteLog(LogType.Error,
+                    $"Unable to refresh clan {clanId} roster after departure: {error.Message}");
             }
         }
 

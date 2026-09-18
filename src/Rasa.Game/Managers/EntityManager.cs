@@ -50,15 +50,20 @@ namespace Rasa.Managers
         public void DestroyPhysicalEntity(Client client, ulong entityId, EntityType entityType)
         {
             client.CallMethod(SysEntity.ClientMethodId, new DestroyPhysicalEntityPacket(entityId));
+            ReleaseEntity(entityId, entityType);
+        }
 
-            // Unregister before freeing: FreeEntity refuses an id that is still registered, so
-            // the old order leaked every id destroyed this way - a player's whole inventory on
-            // each map change and logout - and logged a line per item.
+        internal void ReleaseEntity(ulong entityId, EntityType entityType)
+        {
+            if (!RegisteredEntities.TryGetValue(entityId, out var registeredType) || registeredType != entityType)
+                return;
+
             switch (entityType)
             {
                 case EntityType.Character:
                     UnregisterEntity(entityId);
                     UnregisterPlayer(entityId);
+                    UnregisterActor(entityId);
                     FreeEntity(entityId);
                     break;
                 case EntityType.Npc:
@@ -66,6 +71,7 @@ namespace Rasa.Managers
                 case EntityType.Creature:
                     UnregisterEntity(entityId);
                     UnregisterCreature(entityId);
+                    UnregisterActor(entityId);
                     FreeEntity(entityId);
                     break;
                 case EntityType.Item:
@@ -84,7 +90,6 @@ namespace Rasa.Managers
                     Debugger.Break();
                     break;
             }
-                    
         }
 
         public ulong GetEntityId

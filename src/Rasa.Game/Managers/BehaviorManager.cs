@@ -725,6 +725,7 @@ namespace Rasa.Managers
             // creature deletion and update queue
             var queue_creatureDeletion = new List<Creature>();
             var queue_creatureCellUpdate = new List<Creature>();
+            var processedCreatures = new HashSet<Creature>(ReferenceEqualityComparer.Instance);
             // todo: When on heavy load, the server should increase the time between calls to
             //       this function. (check player updating as a reference)
 
@@ -743,13 +744,17 @@ namespace Rasa.Managers
 
                     for (var f = 0; f < mapCell.CreatureList.Count; f++)
                     {
-                        CreatureThink(mapChannel, mapCell.CreatureList[f], elapsed, out var needDeletion, out var needCellUpdate);
+                        var creature = mapCell.CreatureList[f];
+                        if (creature == null || !processedCreatures.Add(creature))
+                            continue;
+
+                        CreatureThink(mapChannel, creature, elapsed, out var needDeletion, out var needCellUpdate);
 
                         if (needDeletion)
-                            queue_creatureDeletion.Add(mapCell.CreatureList[f]);
+                            queue_creatureDeletion.Add(creature);
 
                         if (needCellUpdate) // update cell (even when creature is also deleted)
-                            queue_creatureCellUpdate.Add(mapCell.CreatureList[f]);
+                            queue_creatureCellUpdate.Add(creature);
 
                         // need to delete creature & we still have a free space in the deletion queue
                         // not so nice hack to remove creatures from the map cell when creature_cellUpdateLocation is called
@@ -800,9 +805,6 @@ namespace Rasa.Managers
                     }
                     // remove creature from world
                     CellManager.Instance.RemoveCreatureFromWorld(mapChannel, creatureList[f]);
-
-                    if (creatureList[f].SpawnPool != null)
-                        SpawnPoolManager.Instance.DecreaseDeadCreatureCount(creatureList[f].SpawnPool);
                 }
             }
         }

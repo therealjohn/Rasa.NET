@@ -1,4 +1,6 @@
 ﻿using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Numerics;
 
 namespace Rasa.Managers
@@ -17,7 +19,7 @@ namespace Rasa.Managers
         private static readonly object InstanceLock = new object();
         public static readonly float CellSize = 25.6f;
         public static readonly float CellBias = 32768.0f;
-        private readonly uint CellViewRange = 2;   // view 2 cell's in every direction
+        private const uint CellViewRange = 2;
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
         public static CellManager Instance
         {
@@ -150,12 +152,17 @@ namespace Rasa.Managers
         // Player
         public void AddToWorld(Client client)
         {
-            if (client.Player == null)
+            if (client.Player?.MapChannel == null ||
+                !TryGetCellCoordinates(client.Player.Position, out var CellPosX, out var CellPosZ))
+            {
+                Logger.WriteLog(LogType.Error, "Cannot add a player without a valid map position.");
                 return;
-
-            // calculate initial cell
-            var CellPosX = (uint)(client.Player.Position.X / CellSize + CellBias);
-            var CellPosZ = (uint)(client.Player.Position.Z / CellSize + CellBias);
+            }
+            if (IsInWorld(client))
+            {
+                UpdateVisibility(client);
+                return;
+            }
 
             // create matrix
             var cellMatrix = CreateCellMatrix(client.Player.MapChannel, CellPosX, CellPosZ);
@@ -166,15 +173,12 @@ namespace Rasa.Managers
             client.Player.Cells = cellMatrix;
 
             // notify client about players, creatures, objects
-            var ListOfClients = new List<Client>();
+            var ListOfClients = GetClientsInCells(client.Player.MapChannel, cellMatrix);
             var ListOfCreatures = new List<Creature>();
             var ListOfObjects = new List<DynamicObject>();
 
             foreach (var cellSeed in cellMatrix)
             {
-                foreach (var player in client.Player.MapChannel.MapCellInfo.Cells[cellSeed].ClientList)
-                    ListOfClients.Add(player);
-
                 foreach (var creature in client.Player.MapChannel.MapCellInfo.Cells[cellSeed].CreatureList)
                     ListOfCreatures.Add(creature);
 
@@ -191,32 +195,26 @@ namespace Rasa.Managers
             DynamicObjectManager.Instance.CellIntroduceDynamicObjectsToClient(client, ListOfObjects);
         }
 
-        internal void RemoveCreatureFromWorld(MapChannel mapChannel, Creature creature)
+        internal bool RemoveCreatureFromWorld(MapChannel mapChannel, Creature creature)
         {
             if (creature == null)
-                return;
+                return false;
 
-            // Tell the players who can see it. This used to go through DestroyPhysicalEntity
-            // per player, which also unregisters the entity - so a corpse nobody was near when
-            // it timed out was never unregistered at all, and stayed in the entity tables
-            // (with its id never freed) for the life of the process.
-            foreach (var cellSeed in creature.Cells)
-                if (mapChannel.MapCellInfo.Cells.TryGetValue(cellSeed, out var cell))
-                    foreach (var player in cell.ClientList)
-                        player.CallMethod(SysEntity.ClientMethodId, new DestroyPhysicalEntityPacket(creature.EntityId));
+            var isRegistered = EntityManager.Instance.Creatures.TryGetValue(creature.EntityId, out var registered) &&
+                registered == creature;
+            if (isRegistered)
+                foreach (var player in GetClientsInCells(mapChannel, creature.Cells))
+                    player.CallMethod(SysEntity.ClientMethodId, new DestroyPhysicalEntityPacket(creature.EntityId));
+            foreach (var cell in mapChannel.MapCellInfo.Cells.Values)
+                cell.CreatureList.RemoveAll(candidate => candidate == creature);
+            if (!isRegistered)
+                return false;
 
-            // Its loot with it: a dispenser is a separate entity attached to the corpse, and
-            // it was left in the map's table forever, with its id.
             LootDispenserManager.Instance.RemoveForCreature(mapChannel, creature);
-
-            // Unregister once, whoever was or was not watching.
-            EntityManager.Instance.UnregisterEntity(creature.EntityId);
-            EntityManager.Instance.UnregisterCreature(creature.EntityId);
-            EntityManager.Instance.FreeEntity(creature.EntityId);
-
-            // remove creature from cell
-            if (mapChannel.MapCellInfo.Cells.TryGetValue(creature.Cells[2, 2], out var homeCell))
-                homeCell.CreatureList.Remove(creature);
+            EntityManager.Instance.ReleaseEntity(creature.EntityId, EntityType.Creature);
+            if (creature.State == CharacterState.Dead && creature.SpawnPool != null)
+                SpawnPoolManager.Instance.DecreaseDeadCreatureCount(creature.SpawnPool);
+            return true;
         }
 
         public void DoWork(MapChannel mapChannel)
@@ -230,6 +228,8 @@ namespace Rasa.Managers
 
         public MapCell GetCell(MapChannel mapChannel, uint cellPosX, uint cellPosZ)
         {
+            if (cellPosX > ushort.MaxValue || cellPosZ > ushort.MaxValue)
+                throw new InvalidDataException("Cell coordinates exceed their 16-bit key fields.");
             var cellSeed = (cellPosX & 0xFFFF) | (cellPosZ << 16);
 
             if (mapChannel.MapCellInfo.Cells.ContainsKey(cellSeed))
@@ -281,13 +281,15 @@ namespace Rasa.Managers
             if (entityId == 0)
                 return;
 
-            DynamicObjectManager.Instance.CellDiscardDynamicObjectToClients(entityId, Server.Clients);
+            DynamicObjectManager.Instance.CellDiscardDynamicObjectToClients(entityId,
+                mapChannel.ClientList.Where(client => client?.Player?.MapChannel == mapChannel &&
+                    client.State != ClientState.Disconnected).Distinct().ToList());
         }
 
         public uint GetCellSeed(Vector3 position)
         {
-            var cellPosX = (uint)(position.X / CellSize + CellBias);
-            var cellPosZ = (uint)(position.Z / CellSize + CellBias);
+            if (!TryGetCellCoordinates(position, out var cellPosX, out var cellPosZ))
+                throw new InvalidDataException("Position cannot be represented by the world cell grid.");
             var cellSeed = (cellPosX & 0xFFFF) | (cellPosZ << 16);
 
             return cellSeed;
@@ -295,103 +297,140 @@ namespace Rasa.Managers
 
         public void RemoveFromWorld(Client client)
         {
-            // Read after the null check, not before it.
-            if (client.Player == null)
-                return;
-
-            var mapChannel = client.Player.MapChannel;
-
+            var mapChannel = client.Player?.MapChannel;
             if (mapChannel == null)
                 return;
+            DetachClient(mapChannel, client);
+        }
 
-            //notify players
-            var ListOfClients = new List<Client>();
+        internal void DetachClient(MapChannel map, Client client)
+        {
+            var memberships = map.MapCellInfo.Cells.Values.Where(cell => cell.ClientList.Contains(client)).ToArray();
+            if (memberships.Length == 0)
+                return;
+            var observers = new HashSet<Client>();
+            foreach (var cell in memberships)
+            {
+                var cells = CreateCellMatrix(map, cell.CellPosX, cell.CellPosZ);
+                observers.UnionWith(GetClientsInCells(map, cells, client));
+            }
+            var notify = observers.ToList();
+            ManifestationManager.Instance.CellDiscardClientToPlayers(client, notify);
+            if (client.State != ClientState.Disconnected)
+                ManifestationManager.Instance.CellDiscardPlayersToClient(client, notify);
 
-            foreach (var cell in CellsIn(mapChannel, client.Player.Cells))
-                ListOfClients.AddRange(cell.ClientList);
-
-            ManifestationManager.Instance.CellDiscardClientToPlayers(client, ListOfClients);
-            ManifestationManager.Instance.CellDiscardPlayersToClient(client, ListOfClients);
-
-            // remove player from cell. A player who dropped during the loading screen never had
-            // a matrix built, so this asked for cell 0 and threw - which abandoned the rest of
-            // RemovePlayer on every such disconnect.
-            if (mapChannel.MapCellInfo.Cells.TryGetValue(client.Player.Cells[2, 2], out var homeCell))
-                homeCell.ClientList.Remove(client);
+            foreach (var cell in memberships)
+                cell.ClientList.RemoveAll(player => player == client);
+            if (client.Player.MapChannel == map)
+                client.Player.Cells = new uint[5, 5];
         }
 
         public void UpdateVisibility(MapChannel mapChannel)
         {
-            foreach (var client in mapChannel.ClientList)
+            foreach (var client in mapChannel.ClientList.ToArray())
+                if (client?.Player?.MapChannel == mapChannel)
+                    UpdateVisibility(client);
+        }
+
+        internal void UpdateVisibility(Client client)
+        {
+            var player = client.Player;
+            if (player?.MapChannel == null || player.Disconected ||
+                client.State == ClientState.Disconnected || client.State == ClientState.Loading)
+                return;
+            if (!TryGetCellCoordinates(player.Position, out var x, out var z))
             {
-                if (client.Player.Disconected || client.Player == null || client.State == ClientState.Loading)
-                    continue;
-
-                var cellPosX = (uint)(client.Player.Position.X / CellSize + CellBias);
-                var cellPosZ = (uint)(client.Player.Position.Z / CellSize + CellBias);
-
-                // create matrix
-                var cellMatrix = CreateCellMatrix(mapChannel, cellPosX, cellPosZ);
-
-                // get info about cell we need to update
-                var needUpdate = new List<uint>();
-                var needDelete = new List<uint>();
-
-                GetCellMatrixDiff(client.Player.Cells, cellMatrix, out needUpdate, out needDelete);
-
-                // remove Player from old cell. A cell this map has not got is one the player was
-                // never in, so there is nothing to take them out of.
-                if (mapChannel.MapCellInfo.Cells.TryGetValue(client.Player.Cells[2, 2], out var oldCell))
-                    oldCell.ClientList.Remove(client);
-
-                // remove players, creatures, object that left visibility range
-                var DiscardClients = new List<Client>();
-                var DiscardCreatures = new List<Creature>();
-                var DiscardObjects = new List<DynamicObject>();
-
-                // The cells being left come from the player's stored matrix, which is the one
-                // that can name cells of a map they are no longer on.
-                foreach (var cellSeed in needDelete)
-                {
-                    if (!mapChannel.MapCellInfo.Cells.TryGetValue(cellSeed, out var leaving))
-                        continue;
-
-                    DiscardClients.AddRange(leaving.ClientList);
-                    DiscardCreatures.AddRange(leaving.CreatureList);
-                    DiscardObjects.AddRange(leaving.DynamicObjectList);
-                }
-
-                ManifestationManager.Instance.CellDiscardPlayersToClient(client, DiscardClients);
-                CreatureManager.Instance.CellDiscardCreaturesToClient(client, DiscardCreatures);
-                DynamicObjectManager.Instance.CellDiscardDynamicObjectsToClient(client, DiscardObjects);
-
-                // add player to new cell
-                mapChannel.MapCellInfo.Cells[cellMatrix[2, 2]].ClientList.Add(client);
-                // set new player visibility
-                client.Player.Cells = cellMatrix;
-
-                // notify client about players, creatures, objects
-                var AddClients = new List<Client>();
-                var AddCreatures = new List<Creature>();
-                var AddObjects = new List<DynamicObject>();
-
-                foreach (var cellSeed in needUpdate)
-                {
-                    foreach (var player in client.Player.MapChannel.MapCellInfo.Cells[cellSeed].ClientList)
-                        AddClients.Add(player);
-
-                    foreach (var creature in client.Player.MapChannel.MapCellInfo.Cells[cellSeed].CreatureList)
-                        AddCreatures.Add(creature);
-
-                    foreach (var dinamicObject in client.Player.MapChannel.MapCellInfo.Cells[cellSeed].DynamicObjectList)
-                        AddObjects.Add(dinamicObject);
-                }
-
-                ManifestationManager.Instance.CellIntroduceClientToPlayers(client, AddClients);
-                ManifestationManager.Instance.CellIntroducePlayersToClient(client, AddClients);
-                CreatureManager.Instance.CellIntroduceCreaturesToClient(client, AddCreatures);
-                DynamicObjectManager.Instance.CellIntroduceDynamicObjectsToClient(client, AddObjects);
+                Logger.WriteLog(LogType.Error, $"Cannot update visibility for invalid player position: {player.EntityId}.");
+                return;
             }
+            if (!IsInWorld(client))
+            {
+                AddToWorld(client);
+                return;
+            }
+
+            var map = player.MapChannel;
+            var newCenter = (x & 0xFFFF) | (z << 16);
+            if (player.Cells[2, 2] == newCenter)
+            {
+                var members = map.MapCellInfo.Cells[newCenter].ClientList;
+                if (members.Count(member => member == client) > 1)
+                {
+                    members.RemoveAll(member => member == client);
+                    members.Add(client);
+                }
+                return;
+            }
+
+            var next = CreateCellMatrix(map, x, z);
+            GetCellMatrixDiff(player.Cells, next, out var added, out var removed);
+            var leaving = GetClientsInCells(map, removed, client);
+            var removedCells = GetCells(map, removed).ToList();
+            foreach (var cell in GetCells(map, player.Cells.Cast<uint>()))
+                cell.ClientList.RemoveAll(member => member == client);
+            map.MapCellInfo.Cells[newCenter].ClientList.Add(client);
+            player.Cells = next;
+
+            ManifestationManager.Instance.CellDiscardClientToPlayers(client, leaving);
+            ManifestationManager.Instance.CellDiscardPlayersToClient(client, leaving);
+            CreatureManager.Instance.CellDiscardCreaturesToClient(client,
+                removedCells.SelectMany(cell => cell.CreatureList).Distinct().ToList());
+            DynamicObjectManager.Instance.CellDiscardDynamicObjectsToClient(client,
+                removedCells.SelectMany(cell => cell.DynamicObjectList).Distinct().ToList());
+
+            var entering = GetClientsInCells(map, added, client);
+            var addedCells = GetCells(map, added).ToList();
+            ManifestationManager.Instance.CellIntroduceClientToPlayers(client, entering);
+            ManifestationManager.Instance.CellIntroducePlayersToClient(client, entering);
+            CreatureManager.Instance.CellIntroduceCreaturesToClient(client,
+                addedCells.SelectMany(cell => cell.CreatureList).Distinct().ToList());
+            DynamicObjectManager.Instance.CellIntroduceDynamicObjectsToClient(client,
+                addedCells.SelectMany(cell => cell.DynamicObjectList).Distinct().ToList());
+        }
+
+        internal static bool TryGetCellCoordinates(Vector3 position, out uint x, out uint z)
+        {
+            x = z = 0;
+            if (!float.IsFinite(position.X) || !float.IsFinite(position.Y) || !float.IsFinite(position.Z))
+                return false;
+            var biasedX = position.X / CellSize + CellBias;
+            var biasedZ = position.Z / CellSize + CellBias;
+            if (biasedX < CellViewRange || biasedZ < CellViewRange ||
+                biasedX >= ushort.MaxValue - CellViewRange + 1 ||
+                biasedZ >= ushort.MaxValue - CellViewRange + 1)
+                return false;
+            x = (uint)biasedX;
+            z = (uint)biasedZ;
+            return true;
+        }
+
+        internal bool IsInWorld(Client client)
+        {
+            var player = client.Player;
+            return player?.MapChannel != null && player.Cells != null &&
+                player.MapChannel.MapCellInfo.Cells.TryGetValue(player.Cells[2, 2], out var cell) &&
+                cell.ClientList.Contains(client);
+        }
+
+        internal List<Client> GetClientsInCells(MapChannel map, uint[,] cells, Client excluded = null)
+        {
+            return GetClientsInCells(map, cells.Cast<uint>(), excluded);
+        }
+
+        private static List<Client> GetClientsInCells(MapChannel map, IEnumerable<uint> cells, Client excluded)
+        {
+            return GetCells(map, cells).SelectMany(cell => cell.ClientList)
+                .Where(client => client != null && client != excluded &&
+                    client.State != ClientState.Disconnected && client.Player?.MapChannel == map &&
+                    !client.Player.Disconected)
+                .Distinct().ToList();
+        }
+
+        private static IEnumerable<MapCell> GetCells(MapChannel map, IEnumerable<uint> seeds)
+        {
+            foreach (var seed in seeds.Distinct())
+                if (map.MapCellInfo.Cells.TryGetValue(seed, out var cell))
+                    yield return cell;
         }
 
         public void GetCellMatrixDiff(uint[,] oldCellMatrix, uint[,] newCellMatrix, out List<uint> needUpdate, out List<uint> needDelete)
@@ -478,24 +517,24 @@ namespace Rasa.Managers
             // create matrix
             var cellMatrix = CreateCellMatrix(mapChannel, cellPosX, cellPosZ);
 
-            foreach (var cellSeed in cellMatrix)
-                foreach (var client in mapChannel.MapCellInfo.Cells[cellSeed].ClientList)
-                    client.MoveObject(creature.EntityId, movementData);
+            foreach (var client in GetClientsInCells(mapChannel, cellMatrix))
+                client.MoveObject(creature.EntityId, movementData);
         }
 
         internal void CellCallMethod(DynamicObject obj, PythonPacket packet)
         {
-            // calculate initial cell(x, z)
-            var cellPosX = (uint)(obj.Position.X / CellSize + CellBias);
-            var cellPosZ = (uint)(obj.Position.Z / CellSize + CellBias);
             var mapChannel = MapChannelManager.Instance.FindByContextId(obj.MapContextId);
+            CellCallMethod(mapChannel, obj, packet);
+        }
 
-            // create matrix
+        internal void CellCallMethod(MapChannel mapChannel, DynamicObject obj, PythonPacket packet)
+        {
+            if (!TryGetCellCoordinates(obj.Position, out var cellPosX, out var cellPosZ))
+                throw new InvalidDataException("Dynamic object position is outside the cell grid.");
             var cellMatrix = CreateCellMatrix(mapChannel, cellPosX, cellPosZ);
 
-            foreach (var cellSeed in cellMatrix)
-                foreach (var client in mapChannel.MapCellInfo.Cells[cellSeed].ClientList)
-                    client.CallMethod(obj.EntityId, packet);
+            foreach (var client in GetClientsInCells(mapChannel, cellMatrix))
+                client.CallMethod(obj.EntityId, packet);
         }
 
         internal void CellCallMethod(Creature creature, PythonPacket packet)
@@ -508,16 +547,14 @@ namespace Rasa.Managers
             // create matrix
             var cellMatrix = CreateCellMatrix(mapChannel, cellPosX, cellPosZ);
 
-            foreach (var cellSeed in cellMatrix)
-                foreach (var client in mapChannel.MapCellInfo.Cells[cellSeed].ClientList)
-                    client.CallMethod(creature.EntityId, packet);
+            foreach (var client in GetClientsInCells(mapChannel, cellMatrix))
+                client.CallMethod(creature.EntityId, packet);
         }
 
         internal void CellCallMethod(MapChannel mapChannel, Actor origin, PythonPacket packet)
         {
-            foreach (var cell in CellsIn(mapChannel, origin.Cells))
-                foreach (var client in cell.ClientList)
-                    client.CallMethod(origin.EntityId, packet);
+            foreach (var client in GetClientsInCells(mapChannel, origin.Cells))
+                client.CallMethod(origin.EntityId, packet);
         }
 
         /// <summary>

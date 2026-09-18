@@ -703,10 +703,10 @@ namespace Rasa.Managers
             // Only from the pod screen. From the world this replaced the manifestation while
             // the old one was still in its map's cells and every manager's tables - never
             // removed, a frozen copy for everyone else, and the client in two maps at once.
-            if (client.State != ClientState.CharacterSelection)
+            if (client.State != ClientState.CharacterSelection || client.PendingTransfer != null)
             {
                 Logger.WriteLog(LogType.Security,
-                    $"AccountId = {client.AccountEntry.Id} tried to switch to the character in slot {packet.SlotNum} while in state {client.State}.");
+                    $"AccountId = {client.AccountEntry?.Id} tried to switch to the character in slot {packet.SlotNum} while in state {client.State}.");
                 return;
             }
 
