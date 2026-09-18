@@ -14,6 +14,7 @@ namespace Rasa.Packets.Protocol
     {
         public const int HeaderSize = 4;
         public const int MaxSize = ushort.MaxValue;
+        public const int MaxExpandedSize = 4 * MaxSize;
 
         public ClientMessageOpcode Type { get; private set; } = ClientMessageOpcode.None;
 
@@ -114,6 +115,9 @@ namespace Rasa.Packets.Protocol
                         var uncompressedSize = br.ReadInt32();
                         if (uncompressedSize <= 0)
                             throw new InvalidDataException("Decompressed protocol size must be positive.");
+                        if (uncompressedSize > MaxExpandedSize)
+                            throw new InvalidDataException(
+                                $"Decompressed protocol size cannot exceed {MaxExpandedSize} bytes.");
 
                         var compressed = br.ReadBytesExactly((int)(br.BaseStream.Length - br.BaseStream.Position));
                         readBr = new BinaryReader(

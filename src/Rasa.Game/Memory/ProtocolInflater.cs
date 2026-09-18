@@ -6,12 +6,17 @@ using Org.BouncyCastle.Utilities.Zlib;
 
 namespace Rasa.Memory
 {
+    using Packets.Protocol;
+
     internal static class ProtocolInflater
     {
         internal static MemoryStream Decompress(byte[] input, int expectedLength)
         {
             if (expectedLength <= 0)
                 throw new InvalidDataException("Decompressed protocol size must be positive.");
+            if (expectedLength > ProtocolPacket.MaxExpandedSize)
+                throw new InvalidDataException(
+                    $"Decompressed protocol size cannot exceed {ProtocolPacket.MaxExpandedSize} bytes.");
 
             var output = new MemoryStream();
             var buffer = ArrayPool<byte>.Shared.Rent(8192);

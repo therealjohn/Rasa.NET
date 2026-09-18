@@ -64,6 +64,29 @@ namespace Rasa.Test.Networking
             CollectionAssert.AreEqual(input, result.ToArray());
         }
 
+        [TestMethod]
+        public void AcceptsTheMaximumExpandedProtocolPayload()
+        {
+            var input = Encoding.UTF8.GetBytes(new string('a', ProtocolPacket.MaxExpandedSize));
+            var compressed = Compress(input, CompressionLevel.Optimal);
+            Assert.IsTrue(compressed.Length < ProtocolPacket.MaxSize);
+
+            using var result = ProtocolInflater.Decompress(compressed, input.Length);
+
+            Assert.AreEqual(ProtocolPacket.MaxExpandedSize, result.Length);
+        }
+
+        [TestMethod]
+        public void RejectsExpandedPayloadAboveMaximumBeforeInflating()
+        {
+            var error = Assert.ThrowsExactly<InvalidDataException>(() =>
+                ProtocolInflater.Decompress(new byte[] { 0x07 }, ProtocolPacket.MaxExpandedSize + 1));
+
+            Assert.AreEqual(
+                $"Decompressed protocol size cannot exceed {ProtocolPacket.MaxExpandedSize} bytes.",
+                error.Message);
+        }
+
         private static byte[] Compress(byte[] input, CompressionLevel level)
         {
             using var output = new MemoryStream();

@@ -46,6 +46,13 @@ namespace Rasa.Extensions
             return (int)length;
         }
 
+        public static void EnsureFullyConsumed(this BinaryReader reader, string what)
+        {
+            var stream = reader.BaseStream;
+            if (stream.CanSeek && stream.Position != stream.Length)
+                throw new InvalidDataException($"{what} contains trailing bytes.");
+        }
+
         public static string ReadUtf8StringOn(this BinaryReader reader, int length)
         {
             var bytes = reader.ReadBytesExactly(length);

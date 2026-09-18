@@ -97,15 +97,18 @@ namespace Rasa.Test.Networking
         [TestMethod]
         public void ForgedExpandedLengthDoesNotReserveTheClaimedBuffer()
         {
-            const int claimedLength = 128 * ushort.MaxValue;
+            const int claimedLength = 4 * ushort.MaxValue + 1;
             using var stream = new MemoryStream(CreateCompressedPing(123, claimedLength));
             using var reader = new BinaryReader(stream);
             using var buffers = new ArrayPoolTracker();
             var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
 
-            Assert.ThrowsExactly<EndOfStreamException>(() => new ProtocolPacket().Read(reader));
+            var error = Assert.ThrowsExactly<InvalidDataException>(() => new ProtocolPacket().Read(reader));
 
             var allocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+            Assert.AreEqual(
+                $"Decompressed protocol size cannot exceed {4 * ushort.MaxValue} bytes.",
+                error.Message);
             Assert.IsTrue(buffers.LargestRent < claimedLength,
                 "An unverified expansion length must not reserve that much pooled memory.");
             Assert.IsTrue(allocated < claimedLength,

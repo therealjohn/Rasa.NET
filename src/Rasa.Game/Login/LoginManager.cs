@@ -20,6 +20,9 @@ namespace Rasa.Login
 
         public void ExchangeDone(LoginClient client)
         {
+            if (!client.TryCompleteExchange())
+                return;
+
             lock (Clients)
                 Clients.Remove(client);
 

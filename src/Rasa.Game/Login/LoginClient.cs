@@ -19,7 +19,7 @@ namespace Rasa.Login
         public BigNum PrivateKey { get; } = new BigNum();
         public BigNum PublicKey { get; } = new BigNum();
         public BigNum K { get; } = new BigNum();
-        private int _closed;
+        private int _lifecycle;
 
         public LoginClient(LoginManager manager, LengthedSocket socket)
         {
@@ -64,8 +64,6 @@ namespace Rasa.Login
 
             Socket.Send(new ClientKeyOkPacket());
 
-            Cleanup();
-
             Manager.ExchangeDone(this);
         }
 
@@ -89,9 +87,18 @@ namespace Rasa.Login
             Socket.OnEncrypt = null;
         }
 
+        internal bool TryCompleteExchange()
+        {
+            if (Interlocked.CompareExchange(ref _lifecycle, 2, 0) != 0)
+                return false;
+
+            Cleanup();
+            return true;
+        }
+
         public void Close()
         {
-            if (Interlocked.Exchange(ref _closed, 1) != 0)
+            if (Interlocked.CompareExchange(ref _lifecycle, 1, 0) != 0)
                 return;
 
             Socket.Close();

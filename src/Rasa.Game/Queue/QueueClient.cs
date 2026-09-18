@@ -18,12 +18,13 @@ namespace Rasa.Queue
 
         /// <summary>
         /// Read on the main loop by every QueueManager pass and written on the socket threads as
-        /// the handshake advances, so the transitions go through <see cref="_clientLock"/>. They
+        /// the handshake advances, so the transitions go through <see cref="QueueClientState"/>. They
         /// are single writes rather than read-modify-writes everywhere except MarkArrived, which
         /// is the one that has to be atomic: it is the main loop deciding a handed-off client has
         /// arrived at the world port, against the client's own thread closing the socket.
         /// </summary>
-        public QueueState State { get; private set; }
+        private readonly QueueClientState _state = new QueueClientState();
+        public QueueState State => _state.Value;
         public uint UserId { get; set; }
         public uint OneTimeKey { get; set; }
         public DateTime EnqueueTime { get; private set; }
@@ -100,18 +101,17 @@ namespace Rasa.Queue
 
                     UserId = loginPacket.UserId;
                     OneTimeKey = loginPacket.OneTimeKey;
-                    SetState(QueueState.InQueue);
-
-                    Manager.Enqueue(this);
-                    EnqueueTime = DateTime.Now;
+                    SetState(QueueState.InQueue, () =>
+                    {
+                        Manager.Enqueue(this);
+                        EnqueueTime = DateTime.Now;
+                    });
                     break;
 
                 default:
                     throw new InvalidDataException("Received packet in an invalid queue state.");
             }
         }
-
-        private readonly object _clientLock = new object();
 
         /// <summary>
         /// Advances the handshake, unless this connection has already gone. A socket thread that
@@ -121,13 +121,12 @@ namespace Rasa.Queue
         /// </summary>
         private void SetState(QueueState state)
         {
-            lock (_clientLock)
-            {
-                if (State == QueueState.Disconnected)
-                    return;
+            _state.TrySet(state);
+        }
 
-                State = state;
-            }
+        private bool SetState(QueueState state, Action action)
+        {
+            return _state.TrySet(state, action);
         }
 
         private void OnError(SocketAsyncEventArgs args)
@@ -151,13 +150,8 @@ namespace Rasa.Queue
         /// </summary>
         public void Close()
         {
-            lock (_clientLock)
-            {
-                if (State == QueueState.Disconnected)
-                    return;
-
-                State = QueueState.Disconnected;
-            }
+            if (!_state.TryDisconnect())
+                return;
 
             Socket.Close();
 
@@ -173,9 +167,7 @@ namespace Rasa.Queue
         /// </summary>
         internal void MarkArrived()
         {
-            lock (_clientLock)
-                if (State == QueueState.Redirecting)
-                    State = QueueState.Arrived;
+            _state.TrySet(QueueState.Redirecting, QueueState.Arrived);
         }
 
         public void Redirect(IPAddress ip, int port)
@@ -199,6 +191,66 @@ namespace Rasa.Queue
                 Position = position,
                 EstimatedTime = estimatedTime
             });
+        }
+    }
+
+    internal sealed class QueueClientState
+    {
+        private readonly object _lock = new object();
+        private QueueState _value;
+
+        internal QueueState Value
+        {
+            get
+            {
+                lock (_lock)
+                    return _value;
+            }
+        }
+
+        internal bool TrySet(QueueState value)
+        {
+            lock (_lock)
+            {
+                if (_value == QueueState.Disconnected)
+                    return false;
+
+                _value = value;
+                return true;
+            }
+        }
+
+        internal bool TrySet(QueueState value, Action action)
+        {
+            if (!TrySet(value))
+                return false;
+
+            action();
+            return true;
+        }
+
+        internal bool TrySet(QueueState expected, QueueState value)
+        {
+            lock (_lock)
+            {
+                if (_value != expected)
+                    return false;
+
+                _value = value;
+                return true;
+            }
+        }
+
+        internal bool TryDisconnect()
+        {
+            lock (_lock)
+            {
+                if (_value == QueueState.Disconnected)
+                    return false;
+
+                _value = QueueState.Disconnected;
+                return true;
+            }
         }
     }
 }

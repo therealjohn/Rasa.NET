@@ -1,12 +1,15 @@
 using System;
-using System.Reflection;
+using System.Net;
+using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace Rasa.Test.Networking
 {
+    using Rasa.Cryptography;
     using Rasa.Memory;
+    using Rasa.Networking;
     using Rasa.Test.Memory;
 
     [TestClass]
@@ -20,52 +23,73 @@ namespace Rasa.Test.Networking
                 Logger.UpdateConfig(new Logger.LoggerConfig());
 
             BufferManager.Initialize(8192, 8, 8);
+            LengthedSocket.InitializeEventArgsPool(64);
         }
 
         [TestMethod]
-        public void ReceiveRacingDisconnectReturnsItsRentedChunk()
+        public async Task ReceiveRacingDisconnectReturnsItsRentedChunk()
         {
-            var client = new Rasa.Game.Client(null, new Rasa.Game.Handlers.ClientPacketHandler());
-            var state = typeof(Rasa.Game.Client).GetProperty("State");
-            state.SetValue(client, Enum.Parse(state.PropertyType, "Connected"));
-            var data = BufferManager.RequestBuffer();
-            data.Length = 100;
-            var sync = typeof(Rasa.Game.Client).GetField("_pendingChunksLock",
-                BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(client);
-            var receive = typeof(Rasa.Game.Client).GetMethod("OnReceive",
-                BindingFlags.Instance | BindingFlags.NonPublic);
-
-            Assert.IsNotNull(sync);
-            Assert.IsNotNull(receive);
-
-            Monitor.Enter(sync);
-            try
+            var (sender, accepted) = await ConnectAsync();
+            using (sender)
+            using (var rentStarted = new ManualResetEventSlim())
+            using (var releaseRent = new ManualResetEventSlim())
             {
-                using var started = new ManualResetEventSlim();
-                var worker = Task.Run(() =>
+                var transport = new LengthedSocket(accepted, SizeType.Dword, false)
                 {
-                    using var buffers = new ArrayPoolTracker(128);
-                    started.Set();
-                    receive.Invoke(client, new object[] { data });
-                    buffers.AssertReturned();
-                });
+                    AutoReceive = false
+                };
+                var cryptData = new ClientCryptData();
+                GameCryptManager.Initialize(cryptData, new byte[64]);
+                var client = new Rasa.Game.Client(null, new Rasa.Game.Handlers.ClientPacketHandler());
+                client.RegisterAtServer(null, transport, cryptData);
 
-                Assert.IsTrue(started.Wait(TimeSpan.FromSeconds(5)));
-                Thread.Sleep(25);
-                state.SetValue(client, Enum.Parse(state.PropertyType, "Disconnected"));
-                Monitor.Exit(sync);
-                sync = null;
+                var blocked = 0;
+                using var buffers = new ArrayPoolTracker(
+                    16,
+                    currentThreadOnly: false,
+                    onRent: _ =>
+                    {
+                        if (Interlocked.CompareExchange(ref blocked, 1, 0) != 0)
+                            return;
 
-                Assert.IsTrue(worker.Wait(TimeSpan.FromSeconds(5)));
-                worker.GetAwaiter().GetResult();
+                        rentStarted.Set();
+                        Assert.IsTrue(releaseRent.Wait(TimeSpan.FromSeconds(5)));
+                    });
+
+                await sender.SendAsync(CreateEncryptedFrame(cryptData));
+                Assert.IsTrue(rentStarted.Wait(TimeSpan.FromSeconds(5)));
+
+                client.Close(false);
+                releaseRent.Set();
+
+                Assert.IsTrue(SpinWait.SpinUntil(
+                    () => buffers.AllReturned,
+                    TimeSpan.FromSeconds(5)));
+                buffers.AssertReturned();
+                Assert.AreEqual("Disconnected", client.State.ToString());
             }
-            finally
-            {
-                if (sync != null)
-                    Monitor.Exit(sync);
+        }
 
-                BufferManager.FreeBuffer(data);
-            }
+        private static byte[] CreateEncryptedFrame(ClientCryptData cryptData)
+        {
+            var payload = new byte[8];
+            payload[0] = 1;
+            var length = payload.Length;
+            GameCryptManager.Encrypt(payload, 0, ref length, payload.Length, cryptData);
+            var frame = new byte[4 + length];
+            BitConverter.GetBytes(length).CopyTo(frame, 0);
+            payload.AsSpan(0, length).CopyTo(frame.AsSpan(4));
+            return frame;
+        }
+
+        private static async Task<(Socket Sender, Socket Accepted)> ConnectAsync()
+        {
+            using var listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            listener.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+            listener.Listen(1);
+            var sender = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            await sender.ConnectAsync(listener.LocalEndPoint);
+            return (sender, await listener.AcceptAsync());
         }
     }
 }

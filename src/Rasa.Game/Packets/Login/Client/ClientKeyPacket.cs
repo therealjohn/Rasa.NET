@@ -19,6 +19,7 @@ namespace Rasa.Packets.Login.Client
                 throw new InvalidDataException("Game key length must be between 1 and 64 bytes.");
 
             B.ReadBigEndian(br.ReadBytesExactly(bLen), 0, bLen);
+            br.EnsureFullyConsumed("Game key payload");
         }
 
         public void Write(BinaryWriter bw)

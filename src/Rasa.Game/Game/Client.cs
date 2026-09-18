@@ -185,7 +185,7 @@ namespace Rasa.Game
 
                 Socket.Close();
 
-                Server.Disconnect(this);
+                Server?.Disconnect(this);
 
                 // A dropped connection (Alt+F4, crash, network loss) never runs the /logout
                 // flow, and that flow was the only thing that set RemoveFromMap - so the
