@@ -17,9 +17,13 @@ namespace Rasa.Repositories.Char
     using CharacterLockbox;
     using CharacterLogos;
     using CharacterMission;
+    using CharacterMissionDeadline;
     using CharacterMissionProgress;
+    using CharacterMissionScenario;
     using CharacterOption;
+    using CharacterQualification;
     using CharacterSkills;
+    using CharacterStartingExperience;
     using CharacterTeleporter;
     using CharacterTitle;
     using Friend;
@@ -42,9 +46,13 @@ namespace Rasa.Repositories.Char
             ICharacterLockboxRepository characterLockboxes,
             ICharacterLogosRepository characterLogoses,
             ICharacterMissionRepository characterMissions,
+            ICharacterMissionDeadlineRepository characterMissionDeadlines,
             ICharacterMissionProgressRepository characterMissionProgress,
+            ICharacterMissionScenarioRepository characterMissionScenario,
             ICharacterOptionRepository characterOptions,
+            ICharacterQualificationRepository characterQualifications,
             ICharacterSkillsRepository characterSkills,
+            ICharacterStartingExperienceRepository characterStartingExperience,
             ICharacterTeleporterRepository characterTeleporters,
             ICharacterTitleRepository characterTitles,
             IAuctionRepository auctions,
@@ -68,9 +76,13 @@ namespace Rasa.Repositories.Char
             CharacterLockboxes = characterLockboxes;
             CharacterLogoses = characterLogoses;
             CharacterMissions = characterMissions;
+            CharacterMissionDeadlines = characterMissionDeadlines;
             CharacterMissionProgress = characterMissionProgress;
+            CharacterMissionScenario = characterMissionScenario;
             CharacterOptions = characterOptions;
+            CharacterQualifications = characterQualifications;
             CharacterSkills = characterSkills;
+            CharacterStartingExperience = characterStartingExperience;
             CharacterTeleporters = characterTeleporters;
             CharacterTitles = characterTitles;
             Clans = clans;
@@ -93,9 +105,13 @@ namespace Rasa.Repositories.Char
         public ICharacterLockboxRepository CharacterLockboxes { get; }
         public ICharacterLogosRepository CharacterLogoses { get; }
         public ICharacterMissionRepository CharacterMissions { get; }
+        public ICharacterMissionDeadlineRepository CharacterMissionDeadlines { get; }
         public ICharacterMissionProgressRepository CharacterMissionProgress { get; }
+        public ICharacterMissionScenarioRepository CharacterMissionScenario { get; }
         public ICharacterOptionRepository CharacterOptions { get; }
+        public ICharacterQualificationRepository CharacterQualifications { get; }
         public ICharacterSkillsRepository CharacterSkills { get; }
+        public ICharacterStartingExperienceRepository CharacterStartingExperience { get; }
         public ICharacterTeleporterRepository CharacterTeleporters { get; }
         public ICharacterTitleRepository CharacterTitles { get; }
         public IAuctionRepository Auctions { get; }

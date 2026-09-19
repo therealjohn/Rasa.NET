@@ -36,7 +36,10 @@ namespace Rasa.Structures.Char
         [Required]
         public bool Completeable { get; set; }
 
+        public CharacterMissionDeadlineEntry Deadline { get; set; }
         public ICollection<CharacterMissionObjectiveEntry> Objectives { get; set; } =
             new List<CharacterMissionObjectiveEntry>();
+        public ICollection<CharacterMissionScenarioStepEntry> ScenarioSteps { get; set; } =
+            new List<CharacterMissionScenarioStepEntry>();
     }
 }

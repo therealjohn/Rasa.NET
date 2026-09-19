@@ -26,9 +26,13 @@ namespace Rasa
     using Repositories.Char.CharacterLockbox;
     using Repositories.Char.CharacterLogos;
     using Repositories.Char.CharacterMission;
+    using Repositories.Char.CharacterMissionDeadline;
     using Repositories.Char.CharacterMissionProgress;
+    using Repositories.Char.CharacterMissionScenario;
     using Repositories.Char.CharacterOption;
+    using Repositories.Char.CharacterQualification;
     using Repositories.Char.CharacterSkills;
+    using Repositories.Char.CharacterStartingExperience;
     using Repositories.Char.CharacterTeleporter;
     using Repositories.Char.CharacterTitle;
     using Repositories.Char.Clan;
@@ -106,9 +110,13 @@ namespace Rasa
             services.AddScoped<ICharacterLockboxRepository, CharacterLockboxRepository>();
             services.AddScoped<ICharacterLogosRepository, CharacterLogosRepository>();
             services.AddScoped<ICharacterMissionRepository, CharacterMissionRepository>();
+            services.AddScoped<ICharacterMissionDeadlineRepository, CharacterMissionDeadlineRepository>();
             services.AddScoped<ICharacterMissionProgressRepository, CharacterMissionProgressRepository>();
+            services.AddScoped<ICharacterMissionScenarioRepository, CharacterMissionScenarioRepository>();
             services.AddScoped<ICharacterOptionRepository, CharacterOptionRepository>();
+            services.AddScoped<ICharacterQualificationRepository, CharacterQualificationRepository>();
             services.AddScoped<ICharacterSkillsRepository, CharacterSkillsRepository>();
+            services.AddScoped<ICharacterStartingExperienceRepository, CharacterStartingExperienceRepository>();
             services.AddScoped<ICharacterTeleporterRepository, CharacterTeleporterRepository>();
             services.AddScoped<ICharacterTitleRepository, CharacterTitleRepository>();
             services.AddScoped<IClanRepository, ClanRepository>();

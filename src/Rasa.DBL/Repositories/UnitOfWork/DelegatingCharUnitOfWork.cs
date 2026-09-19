@@ -17,9 +17,13 @@ namespace Rasa.Repositories.UnitOfWork
     using Char.CharacterLockbox;
     using Char.CharacterLogos;
     using Char.CharacterMission;
+    using Char.CharacterMissionDeadline;
     using Char.CharacterMissionProgress;
+    using Char.CharacterMissionScenario;
     using Char.CharacterOption;
+    using Char.CharacterQualification;
     using Char.CharacterSkills;
+    using Char.CharacterStartingExperience;
     using Char.CharacterTeleporter;
     using Char.CharacterTitle;
     using Char.Friend;
@@ -58,12 +62,24 @@ namespace Rasa.Repositories.UnitOfWork
 
         public ICharacterMissionRepository CharacterMissions => _parent.CharacterMissions;
 
+        public ICharacterMissionDeadlineRepository CharacterMissionDeadlines =>
+            _parent.CharacterMissionDeadlines;
+
         public ICharacterMissionProgressRepository CharacterMissionProgress =>
             _parent.CharacterMissionProgress;
 
+        public ICharacterMissionScenarioRepository CharacterMissionScenario =>
+            _parent.CharacterMissionScenario;
+
         public ICharacterOptionRepository CharacterOptions => _parent.CharacterOptions;
 
+        public ICharacterQualificationRepository CharacterQualifications =>
+            _parent.CharacterQualifications;
+
         public ICharacterSkillsRepository CharacterSkills => _parent.CharacterSkills;
+
+        public ICharacterStartingExperienceRepository CharacterStartingExperience =>
+            _parent.CharacterStartingExperience;
 
         public ICharacterTeleporterRepository CharacterTeleporters => _parent.CharacterTeleporters;
 

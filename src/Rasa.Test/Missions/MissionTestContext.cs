@@ -29,7 +29,11 @@ namespace Rasa.Test.Missions
     using Rasa.Repositories.Char.CharacterInventory;
     using Rasa.Repositories.Char.CharacterLogos;
     using Rasa.Repositories.Char.CharacterMission;
+    using Rasa.Repositories.Char.CharacterMissionDeadline;
     using Rasa.Repositories.Char.CharacterMissionProgress;
+    using Rasa.Repositories.Char.CharacterMissionScenario;
+    using Rasa.Repositories.Char.CharacterQualification;
+    using Rasa.Repositories.Char.CharacterStartingExperience;
     using Rasa.Repositories.Char.CharacterTeleporter;
     using Rasa.Repositories.Char.Clan;
     using Rasa.Repositories.Char.ClanInventory;
@@ -798,16 +802,21 @@ namespace Rasa.Test.Missions
                 characterAppearances: new CharacterAppearanceRepository(context),
                 characterInventories: new CharacterInventoryRepository(context),
                 characterLockboxes: null, characterLogoses: new CharacterLogosRepository(context),
-                characterMissions: new CharacterMissionRepository(context), characterOptions: null,
+                characterMissions: new CharacterMissionRepository(context),
+                characterMissionDeadlines: new CharacterMissionDeadlineRepository(context),
+                characterMissionProgress: new CharacterMissionProgressRepository(context),
+                characterMissionScenario: new CharacterMissionScenarioRepository(context),
+                characterOptions: null,
+                characterQualifications: new CharacterQualificationRepository(context),
                 characterSkills: null, characterTeleporters: new CharacterTeleporterRepository(context),
+                characterStartingExperience: new CharacterStartingExperienceRepository(context),
                 characterTitles: null,
                 auctions: new AuctionRepository(context), clans: new ClanRepository(context),
                 clanInventories: new ClanInventoryRepository(context),
                 clanMembers: new ClanMemberRepository(context),
                 clanLockboxLogs: new ClanLockboxLogRepository(context),
                 friends: null, ignoreds: null,
-                items: new ItemRepository(context), petitions: null, userOptions: null,
-                characterMissionProgress: new CharacterMissionProgressRepository(context));
+                items: new ItemRepository(context), petitions: null, userOptions: null);
         }
 
         internal void ResetCharUnitCount() => _charUnitsCreated = 0;

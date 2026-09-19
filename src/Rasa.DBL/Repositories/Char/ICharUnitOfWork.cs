@@ -16,10 +16,14 @@
     using CharacterLockbox;
     using CharacterLogos;
     using CharacterMission;
+    using CharacterMissionDeadline;
     using CharacterMissionProgress;
+    using CharacterMissionScenario;
     using CharacterOption;
+    using CharacterQualification;
     using CharacterTeleporter;
     using CharacterTitle;
+    using CharacterStartingExperience;
     using Friend;
     using Ignored;
     using Items;
@@ -41,9 +45,13 @@
         ICharacterLockboxRepository CharacterLockboxes { get; }
         ICharacterLogosRepository CharacterLogoses { get; }
         ICharacterMissionRepository CharacterMissions { get; }
+        ICharacterMissionDeadlineRepository CharacterMissionDeadlines { get; }
         ICharacterMissionProgressRepository CharacterMissionProgress { get; }
+        ICharacterMissionScenarioRepository CharacterMissionScenario { get; }
         ICharacterOptionRepository CharacterOptions { get; }
+        ICharacterQualificationRepository CharacterQualifications { get; }
         ICharacterSkillsRepository CharacterSkills { get; }
+        ICharacterStartingExperienceRepository CharacterStartingExperience { get; }
         ICharacterTeleporterRepository CharacterTeleporters { get; }
         ICharacterTitleRepository CharacterTitles { get; }
         IClanRepository Clans { get; }

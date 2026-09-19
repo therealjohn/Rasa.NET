@@ -349,6 +349,32 @@ namespace Rasa.Migrations.MySqlChar
                     b.ToTable("character_logos");
                 });
 
+            modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionDeadlineEntry", b =>
+                {
+                    b.Property<uint>("CharacterId")
+                        .HasColumnType("int(11) unsigned")
+                        .HasColumnName("character_id");
+
+                    b.Property<uint>("MissionId")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("mission_id");
+
+                    b.Property<DateTime>("DueAtUtc")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("due_at_utc");
+
+                    b.Property<byte>("State")
+                        .HasColumnType("tinyint(3) unsigned")
+                        .HasColumnName("state");
+
+                    b.HasKey("CharacterId", "MissionId");
+
+                    b.ToTable("character_mission_deadline", t =>
+                        {
+                            t.HasCheckConstraint("CK_character_mission_deadline_state", "state IN (1, 2, 3, 4)");
+                        });
+                });
+
             modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionEntry", b =>
                 {
                     b.Property<uint>("CharacterId")
@@ -454,6 +480,25 @@ namespace Rasa.Migrations.MySqlChar
                     b.ToTable("character_mission_objective_item_counter");
                 });
 
+            modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionScenarioStepEntry", b =>
+                {
+                    b.Property<uint>("CharacterId")
+                        .HasColumnType("int(11) unsigned")
+                        .HasColumnName("character_id");
+
+                    b.Property<uint>("MissionId")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("mission_id");
+
+                    b.Property<string>("StepKey")
+                        .HasColumnType("varchar(64)")
+                        .HasColumnName("step_key");
+
+                    b.HasKey("CharacterId", "MissionId", "StepKey");
+
+                    b.ToTable("character_mission_scenario_step");
+                });
+
             modelBuilder.Entity("Rasa.Structures.Char.CharacterOptionEntry", b =>
                 {
                     b.Property<uint>("CharacterId")
@@ -472,6 +517,24 @@ namespace Rasa.Migrations.MySqlChar
                     b.HasKey("CharacterId", "OptionId");
 
                     b.ToTable("character_option");
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.CharacterQualificationEntry", b =>
+                {
+                    b.Property<uint>("CharacterId")
+                        .HasColumnType("int(11) unsigned")
+                        .HasColumnName("character_id");
+
+                    b.Property<byte>("QualificationKey")
+                        .HasColumnType("tinyint(3) unsigned")
+                        .HasColumnName("qualification_key");
+
+                    b.HasKey("CharacterId", "QualificationKey");
+
+                    b.ToTable("character_qualification", t =>
+                        {
+                            t.HasCheckConstraint("CK_character_qualification_key", "qualification_key IN (1)");
+                        });
                 });
 
             modelBuilder.Entity("Rasa.Structures.Char.CharacterSkillsEntry", b =>
@@ -495,6 +558,29 @@ namespace Rasa.Migrations.MySqlChar
                     b.HasKey("CharacterId", "SkillId");
 
                     b.ToTable("character_skills");
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.CharacterStartingExperienceEntry", b =>
+                {
+                    b.Property<uint>("CharacterId")
+                        .HasColumnType("int(11) unsigned")
+                        .HasColumnName("character_id");
+
+                    b.Property<string>("ContentRevision")
+                        .IsRequired()
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("content_revision");
+
+                    b.Property<byte>("State")
+                        .HasColumnType("tinyint(3) unsigned")
+                        .HasColumnName("state");
+
+                    b.HasKey("CharacterId");
+
+                    b.ToTable("character_starting_experience", t =>
+                        {
+                            t.HasCheckConstraint("CK_character_starting_experience_state", "state IN (1, 2, 3, 4, 5)");
+                        });
                 });
 
             modelBuilder.Entity("Rasa.Structures.Char.CharacterTeleporterEntry", b =>
@@ -957,6 +1043,17 @@ namespace Rasa.Migrations.MySqlChar
                     b.Navigation("GameAccount");
                 });
 
+            modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionDeadlineEntry", b =>
+                {
+                    b.HasOne("Rasa.Structures.Char.CharacterMissionEntry", "Mission")
+                        .WithOne("Deadline")
+                        .HasForeignKey("Rasa.Structures.Char.CharacterMissionDeadlineEntry", "CharacterId", "MissionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Mission");
+                });
+
             modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionEntry", b =>
                 {
                     b.HasOne("Rasa.Structures.Char.CharacterEntry", null)
@@ -999,6 +1096,39 @@ namespace Rasa.Migrations.MySqlChar
                     b.Navigation("Objective");
                 });
 
+            modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionScenarioStepEntry", b =>
+                {
+                    b.HasOne("Rasa.Structures.Char.CharacterMissionEntry", "Mission")
+                        .WithMany("ScenarioSteps")
+                        .HasForeignKey("CharacterId", "MissionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Mission");
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.CharacterQualificationEntry", b =>
+                {
+                    b.HasOne("Rasa.Structures.Char.CharacterEntry", "Character")
+                        .WithMany()
+                        .HasForeignKey("CharacterId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Character");
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.CharacterStartingExperienceEntry", b =>
+                {
+                    b.HasOne("Rasa.Structures.Char.CharacterEntry", "Character")
+                        .WithOne()
+                        .HasForeignKey("Rasa.Structures.Char.CharacterStartingExperienceEntry", "CharacterId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Character");
+                });
+
             modelBuilder.Entity("Rasa.Structures.Char.ClanMemberEntry", b =>
                 {
                     b.HasOne("Rasa.Structures.Char.CharacterEntry", "Character")
@@ -1027,7 +1157,11 @@ namespace Rasa.Migrations.MySqlChar
 
             modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionEntry", b =>
                 {
+                    b.Navigation("Deadline");
+
                     b.Navigation("Objectives");
+
+                    b.Navigation("ScenarioSteps");
                 });
 
             modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionObjectiveEntry", b =>

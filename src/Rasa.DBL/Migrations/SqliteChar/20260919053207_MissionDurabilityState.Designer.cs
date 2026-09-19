@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Rasa.Context.Char;
 
@@ -11,9 +12,11 @@ using Rasa.Context.Char;
 namespace Rasa.Migrations.SqliteChar
 {
     [DbContext(typeof(SqliteCharContext))]
-    partial class SqliteCharContextModelSnapshot : ModelSnapshot
+    [Migration("20260919053207_MissionDurabilityState")]
+    partial class MissionDurabilityState
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.20");

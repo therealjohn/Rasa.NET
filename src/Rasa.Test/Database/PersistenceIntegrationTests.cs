@@ -25,9 +25,13 @@ namespace Rasa.Test.Database
     using Rasa.Repositories.Char.Auction;
     using Rasa.Repositories.Char.Character;
     using Rasa.Repositories.Char.CharacterAbilityDrawer;
+    using Rasa.Repositories.Char.CharacterMissionDeadline;
     using Rasa.Repositories.Char.CharacterInventory;
     using Rasa.Repositories.Char.CharacterMission;
     using Rasa.Repositories.Char.CharacterMissionProgress;
+    using Rasa.Repositories.Char.CharacterMissionScenario;
+    using Rasa.Repositories.Char.CharacterQualification;
+    using Rasa.Repositories.Char.CharacterStartingExperience;
     using Rasa.Repositories.Char.ClanInventory;
     using Rasa.Repositories.Char.ClanLockboxLog;
     using Rasa.Repositories.Char.Items;
@@ -70,7 +74,23 @@ namespace Rasa.Test.Database
             Assert.IsNotNull(typeof(ICharacterRepository).GetMethod(
                 "UpdateCharacterAbilitySlot",
                 new[] { typeof(uint), typeof(byte) }));
+            Assert.IsNotNull(typeof(ICharacterMissionDeadlineRepository).GetMethod(
+                "Get",
+                new[] { typeof(uint), typeof(uint) }));
+            Assert.IsNotNull(typeof(ICharacterMissionScenarioRepository).GetMethod(
+                "HasStep",
+                new[] { typeof(uint), typeof(uint), typeof(string) }));
+            Assert.IsNotNull(typeof(ICharacterStartingExperienceRepository).GetMethod(
+                "Get",
+                new[] { typeof(uint) }));
+            Assert.IsNotNull(typeof(ICharacterQualificationRepository).GetMethod(
+                "HasQualification",
+                new[] { typeof(uint), typeof(CharacterQualificationKey) }));
             Assert.IsNotNull(typeof(ICharUnitOfWork).GetProperty("CharacterMissionProgress"));
+            Assert.IsNotNull(typeof(ICharUnitOfWork).GetProperty("CharacterMissionDeadlines"));
+            Assert.IsNotNull(typeof(ICharUnitOfWork).GetProperty("CharacterMissionScenario"));
+            Assert.IsNotNull(typeof(ICharUnitOfWork).GetProperty("CharacterStartingExperience"));
+            Assert.IsNotNull(typeof(ICharUnitOfWork).GetProperty("CharacterQualifications"));
             Assert.IsNotNull(typeof(ICharUnitOfWork).GetMethod(
                 "ExecuteTransaction",
                 new[] { typeof(Action) }));
@@ -125,6 +145,58 @@ namespace Rasa.Test.Database
         }
 
         [TestMethod]
+        public void CombinedCharModelIncludesMissionDurabilityStartingExperienceAndQualifications()
+        {
+            using var context = CreateContext(typeof(SqliteCharContext), "unused");
+            var model = context.GetService<IDesignTimeModel>().Model;
+            var deadline = RequireEntity(model, "Rasa.Structures.Char.CharacterMissionDeadlineEntry");
+            var scenarioStep = RequireEntity(model, "Rasa.Structures.Char.CharacterMissionScenarioStepEntry");
+            var startingExperience = RequireEntity(model, "Rasa.Structures.Char.CharacterStartingExperienceEntry");
+            var qualification = RequireEntity(model, "Rasa.Structures.Char.CharacterQualificationEntry");
+
+            CollectionAssert.AreEqual(
+                new[] { "CharacterId", "MissionId" },
+                deadline.FindPrimaryKey()?.Properties.Select(property => property.Name).ToArray());
+            CollectionAssert.AreEqual(
+                new[] { "CharacterId", "MissionId", "StepKey" },
+                scenarioStep.FindPrimaryKey()?.Properties.Select(property => property.Name).ToArray());
+            CollectionAssert.AreEqual(
+                new[] { "CharacterId" },
+                startingExperience.FindPrimaryKey()?.Properties.Select(property => property.Name).ToArray());
+            CollectionAssert.AreEqual(
+                new[] { "CharacterId", "QualificationKey" },
+                qualification.FindPrimaryKey()?.Properties.Select(property => property.Name).ToArray());
+
+            Assert.AreEqual("due_at_utc", deadline.FindProperty("DueAtUtc")?.GetColumnName());
+            Assert.AreEqual("state", deadline.FindProperty("State")?.GetColumnName());
+            Assert.AreEqual("step_key", scenarioStep.FindProperty("StepKey")?.GetColumnName());
+            Assert.AreEqual("varchar(64)", scenarioStep.FindProperty("StepKey")?.GetColumnType());
+            Assert.AreEqual("content_revision", startingExperience.FindProperty("ContentRevision")?.GetColumnName());
+            Assert.AreEqual("varchar(32)", startingExperience.FindProperty("ContentRevision")?.GetColumnType());
+            Assert.AreEqual("qualification_key", qualification.FindProperty("QualificationKey")?.GetColumnName());
+
+            Assert.AreEqual(
+                DeleteBehavior.Cascade,
+                deadline.GetForeignKeys().Single().DeleteBehavior);
+            Assert.AreEqual(
+                DeleteBehavior.Cascade,
+                scenarioStep.GetForeignKeys().Single().DeleteBehavior);
+            Assert.AreEqual(
+                DeleteBehavior.Cascade,
+                startingExperience.GetForeignKeys().Single().DeleteBehavior);
+            Assert.AreEqual(
+                DeleteBehavior.Cascade,
+                qualification.GetForeignKeys().Single().DeleteBehavior);
+
+            Assert.IsTrue(deadline.GetCheckConstraints().Any(constraint =>
+                constraint.Name == "CK_character_mission_deadline_state"));
+            Assert.IsTrue(startingExperience.GetCheckConstraints().Any(constraint =>
+                constraint.Name == "CK_character_starting_experience_state"));
+            Assert.IsTrue(qualification.GetCheckConstraints().Any(constraint =>
+                constraint.Name == "CK_character_qualification_key"));
+        }
+
+        [TestMethod]
         public void Pr95WorldModelRetainsIndexesAndColumnContracts()
         {
             using var context = CreateContext(typeof(SqliteWorldContext), "unused");
@@ -171,7 +243,8 @@ namespace Rasa.Test.Database
                         {
                             "20260917130621_AbilityTraySelection",
                             "20260917200225_MissionCharacterState",
-                            "20260918001335_MissionObjectiveProgress"
+                            "20260918001335_MissionObjectiveProgress",
+                            "20260919053207_MissionDurabilityState"
                         },
                         migrations);
                 }
@@ -182,7 +255,8 @@ namespace Rasa.Test.Database
                         {
                             "20260917130734_AbilityTraySelection",
                             "20260917200310_MissionCharacterState",
-                            "20260918002055_MissionObjectiveProgress"
+                            "20260918002055_MissionObjectiveProgress",
+                            "20260919053307_MissionDurabilityState"
                         },
                         migrations);
                 }
@@ -281,7 +355,25 @@ namespace Rasa.Test.Database
                 StringAssert.Contains(script, "AbilityTraySelection");
                 StringAssert.Contains(script, "MissionCharacterState");
                 StringAssert.Contains(script, "MissionObjectiveProgress");
+                StringAssert.Contains(script, "MissionDurabilityState");
             }
+        }
+
+        [TestMethod]
+        [DataRow(typeof(SqliteCharContext))]
+        [DataRow(typeof(MySqlCharContext))]
+        public void CharMigrationsGenerateOfflineSqlForMissionDurabilityAndStartingExperience(Type contextType)
+        {
+            using var context = CreateContext(contextType, "unused");
+            var script = context.GetService<IMigrator>().GenerateScript();
+
+            StringAssert.Contains(script, "character_mission_deadline");
+            StringAssert.Contains(script, "character_mission_scenario_step");
+            StringAssert.Contains(script, "character_starting_experience");
+            StringAssert.Contains(script, "character_qualification");
+            StringAssert.Contains(script, "CK_character_mission_deadline_state");
+            StringAssert.Contains(script, "CK_character_starting_experience_state");
+            StringAssert.Contains(script, "CK_character_qualification_key");
         }
 
         [TestMethod]
@@ -331,7 +423,7 @@ namespace Rasa.Test.Database
                     "INSERT INTO character (id, account_id, slot, name, race, class, gender, scale, " +
                     "experience, level, credit, body, mind, spirit, map_context_id, coord_x, coord_y, " +
                     "coord_z, rotation) VALUES " +
-                    "(123, 17, 1, 'Task4Preserved', 1, 1, 0, 1, 4000, 9, 100, 0, 0, 0, 1220, 1, 2, 3, 0)");
+                    "(123, 17, 1, 'Task4Preserved', 1, 1, 0, 1, 4000, 9, 100, 0, 0, 0, 7777, 1, 2, 3, 0)");
                 context.Database.ExecuteSqlRaw(
                     "INSERT INTO character_mission (character_id, mission_id, mission_state) " +
                     "VALUES (123, 321, 0)");
@@ -376,6 +468,12 @@ namespace Rasa.Test.Database
                     "SELECT counter_value AS Value FROM character_mission_objective_item_counter " +
                     "WHERE character_id = 123 AND mission_id = 429 AND objective_id = 5 " +
                     "AND item_class_id = 200").Single());
+                Assert.AreEqual(7777, reopened.Database.SqlQueryRaw<int>(
+                    "SELECT map_context_id AS Value FROM character WHERE id = 123").Single());
+                Assert.AreEqual(5, reopened.Database.SqlQueryRaw<int>(
+                    "SELECT state AS Value FROM character_starting_experience WHERE character_id = 123").Single());
+                Assert.AreEqual("deployment_11", reopened.Database.SqlQueryRaw<string>(
+                    "SELECT content_revision AS Value FROM character_starting_experience WHERE character_id = 123").Single());
                 Assert.IsFalse(reopened.Database.GetPendingMigrations().Any());
             });
         }
@@ -712,20 +810,32 @@ namespace Rasa.Test.Database
             var clanInventories = new ClanInventoryRepository(context);
             var clanLockboxLogs = new ClanLockboxLogRepository(context);
             var items = new ItemRepository(context);
+            var deadlines = new CharacterMissionDeadlineRepository(context);
             var progress = new CharacterMissionProgressRepository(context);
+            var scenario = new CharacterMissionScenarioRepository(context);
+            var qualifications = new CharacterQualificationRepository(context);
+            var startingExperience = new CharacterStartingExperienceRepository(context);
             using var unit = CreateUnit(
                 context,
                 auctions,
                 clanInventories,
                 clanLockboxLogs,
                 items,
-                progress);
+                deadlines,
+                progress,
+                scenario,
+                qualifications,
+                startingExperience);
 
             Assert.AreSame(auctions, unit.Auctions);
             Assert.AreSame(clanInventories, unit.ClanInventories);
             Assert.AreSame(clanLockboxLogs, unit.ClanLockboxLogs);
             Assert.AreSame(items, unit.Items);
+            Assert.AreSame(deadlines, unit.CharacterMissionDeadlines);
             Assert.AreSame(progress, unit.CharacterMissionProgress);
+            Assert.AreSame(scenario, unit.CharacterMissionScenario);
+            Assert.AreSame(qualifications, unit.CharacterQualifications);
+            Assert.AreSame(startingExperience, unit.CharacterStartingExperience);
         }
 
         private static IEntityType RequireEntity(IModel model, string name)
@@ -781,10 +891,18 @@ namespace Rasa.Test.Database
             ClanInventoryRepository clanInventories = null,
             ClanLockboxLogRepository clanLockboxLogs = null,
             ItemRepository items = null,
-            CharacterMissionProgressRepository progress = null)
+            CharacterMissionDeadlineRepository deadlines = null,
+            CharacterMissionProgressRepository progress = null,
+            CharacterMissionScenarioRepository scenario = null,
+            CharacterQualificationRepository qualifications = null,
+            CharacterStartingExperienceRepository startingExperience = null)
         {
             items ??= new ItemRepository(context);
+            deadlines ??= new CharacterMissionDeadlineRepository(context);
             progress ??= new CharacterMissionProgressRepository(context);
+            scenario ??= new CharacterMissionScenarioRepository(context);
+            qualifications ??= new CharacterQualificationRepository(context);
+            startingExperience ??= new CharacterStartingExperienceRepository(context);
             return new CharUnitOfWork(
                 context,
                 gameAccounts: null,
@@ -796,9 +914,13 @@ namespace Rasa.Test.Database
                 characterLockboxes: null,
                 characterLogoses: null,
                 characterMissions: new CharacterMissionRepository(context),
+                characterMissionDeadlines: deadlines,
                 characterMissionProgress: progress,
+                characterMissionScenario: scenario,
                 characterOptions: null,
+                characterQualifications: qualifications,
                 characterSkills: null,
+                characterStartingExperience: startingExperience,
                 characterTeleporters: null,
                 characterTitles: null,
                 auctions: auctions,
