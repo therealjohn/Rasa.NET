@@ -72,7 +72,11 @@ namespace Rasa.Structures
             foreach (var convergence in _runtimeConvergence)
                 convergence();
             foreach (var failurePlan in _failurePlans)
-                failurePlan.Publish(client, missionManager);
+                failurePlan.Publish(
+                    client,
+                    missionManager,
+                    missionManager.TryExecuteScenario,
+                    missionManager.TryExecuteFailureTransitionScenario);
             foreach (var progressPlan in _progressPlans)
                 progressPlan.Publish(client);
             foreach (var rewardGrant in _rewardGrants)

@@ -175,6 +175,57 @@ namespace Rasa.Test.Missions
             Assert.IsNotNull(BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, 2564));
         }
 
+        [TestMethod]
+        public void AbandoningRetryDuringActiveDeadlineFailsAndResetsMission2005OnceWithoutReofferingRetry()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create();
+            var youngblood = AcceptRetryMission(harness);
+
+            var dropship = FindScenarioObject(harness, "bootcamp-dropship-debris");
+            Assert.IsTrue(dropship.IsEnabled);
+
+            Assert.IsTrue(harness.Manager.TryAbandon(harness.Client, 2005));
+
+            AssertFailedRetryReset(
+                harness,
+                youngblood,
+                dropship,
+                expectedDeadlineState: CharacterMissionDeadlineState.Cancelled);
+
+            Assert.IsFalse(harness.Manager.TryAcceptNpcMission(
+                harness.Client,
+                youngblood.EntityId,
+                2005));
+            Assert.IsFalse(harness.Manager.TryAbandon(harness.Client, 2005));
+            AssertResetScenarioRecordedOnce(harness, 2005, 4, stepCount: 4);
+        }
+
+        [TestMethod]
+        public void AbandoningRetryDuringTheFuseFailsAndResetsMission2005OnceWithoutReofferingRetry()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create();
+            var youngblood = AcceptRetryMission(harness);
+
+            var dropship = FindScenarioObject(harness, "bootcamp-dropship-debris");
+            harness.UseObjectAndRecover(dropship);
+            Assert.IsFalse(dropship.IsEnabled);
+
+            Assert.IsTrue(harness.Manager.TryAbandon(harness.Client, 2005));
+
+            AssertFailedRetryReset(
+                harness,
+                youngblood,
+                dropship,
+                expectedDeadlineState: CharacterMissionDeadlineState.Cancelled);
+
+            Assert.IsFalse(harness.Manager.TryAcceptNpcMission(
+                harness.Client,
+                youngblood.EntityId,
+                2005));
+            Assert.IsFalse(harness.Manager.TryAbandon(harness.Client, 2005));
+            AssertResetScenarioRecordedOnce(harness, 2005, 4, stepCount: 4);
+        }
+
         private static void StartTimedFinale(BootcampRuntimeTestHarness.Harness harness)
         {
             var youngblood = harness.AddNpc(
@@ -215,6 +266,75 @@ namespace Rasa.Test.Missions
             using var unit = harness.Context.CreateChar();
             return unit.CharacterMissionDeadlines.Get(harness.Client.Player.Id, missionId)
                    ?? throw new AssertFailedException($"Missing mission deadline for {missionId}.");
+        }
+
+        private static Creature AcceptRetryMission(BootcampRuntimeTestHarness.Harness harness)
+        {
+            StartTimedFinale(harness);
+            harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
+            harness.UtcNow += BombDeadline + TimeSpan.FromSeconds(1);
+            Assert.IsTrue(harness.Manager.EvaluateDeadlines(harness.Client));
+
+            var youngblood = BootcampRuntimeTestHarness.FindCreature(
+                harness.BootcampMap,
+                BootcampRuntimeTestHarness.CaptainYoungbloodCreatureId)
+                ?? throw new AssertFailedException("Missing Captain Youngblood.");
+            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+                harness.Client,
+                youngblood.EntityId,
+                2005));
+            return youngblood;
+        }
+
+        private static void AssertFailedRetryReset(
+            BootcampRuntimeTestHarness.Harness harness,
+            Creature youngblood,
+            DynamicObject dropship,
+            CharacterMissionDeadlineState expectedDeadlineState)
+        {
+            Assert.AreEqual(MissionState.Failed, harness.Client.Player.Missions[2005].State);
+            Assert.AreEqual(
+                MissionObjectiveState.Failed,
+                harness.Client.Player.Missions[2005].Objectives[1].State);
+            Assert.AreEqual(expectedDeadlineState, ReadDeadline(harness, 2005).State);
+            Assert.IsTrue(dropship.IsEnabled);
+            Assert.IsNotNull(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
+            Assert.IsNotNull(FindScenarioObject(harness, "bootcamp-dropship-debris"));
+            Assert.IsNull(BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, 39));
+            Assert.IsNull(BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, 50));
+            Assert.IsNull(BootcampRuntimeTestHarness.FindNpcByPackage(
+                harness.BootcampMap,
+                BootcampRuntimeTestHarness.CorporalVanValkenbergPackageId));
+            AssertResetScenarioRecordedOnce(harness, 2005, 4, stepCount: 4);
+
+            var classification = harness.Manager.ClassifyNpcConversation(harness.Client.Player, youngblood);
+            if (!classification.TryGetStatus(out _, out var missionIds))
+                return;
+            CollectionAssert.DoesNotContain(missionIds, 2005U);
+        }
+
+        private static void AssertResetScenarioRecordedOnce(
+            BootcampRuntimeTestHarness.Harness harness,
+            uint missionId,
+            uint resetScenarioId,
+            uint stepCount)
+        {
+            var keys = ReadScenarioKeys(harness, missionId);
+            for (var stepId = 1U; stepId <= stepCount; stepId++)
+                Assert.AreEqual(
+                    1,
+                    keys.Count(key => key == $"scenario:{resetScenarioId}:step:{stepId}"),
+                    $"Expected reset scenario {resetScenarioId} step {stepId} exactly once.");
+        }
+
+        private static string[] ReadScenarioKeys(
+            BootcampRuntimeTestHarness.Harness harness,
+            uint missionId)
+        {
+            using var unit = harness.Context.CreateChar();
+            return unit.CharacterMissionScenario.Get(harness.Client.Player.Id, missionId)
+                .Select(entry => entry.StepKey)
+                .ToArray();
         }
     }
 }

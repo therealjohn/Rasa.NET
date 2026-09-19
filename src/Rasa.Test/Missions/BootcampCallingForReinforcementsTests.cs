@@ -1,6 +1,7 @@
 extern alias RasaGame;
 
 using System;
+using System.Linq;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 using ClientState = RasaGame::Rasa.Data.ClientState;
@@ -9,6 +10,7 @@ namespace Rasa.Test.Missions
 {
     using Rasa.Data;
     using Rasa.Game;
+    using Rasa.Repositories.Char.CharacterMissionScenario;
     using Rasa.Structures;
     using Rasa.Structures.Char;
 
@@ -201,27 +203,72 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
+        public void AbandoningDuringActiveDeadlineFailsAndResetsMission1995OnceWhileUnlockingRetry()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create();
+            var youngblood = StartCrashSiteScene(harness);
+            harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
+
+            var dropship = FindScenarioObject(harness, "bootcamp-dropship-debris");
+            Assert.IsTrue(dropship.IsEnabled);
+
+            Assert.IsTrue(harness.Manager.TryAbandon(harness.Client, 1995));
+
+            AssertFailedMissionReset(
+                harness,
+                missionId: 1995,
+                objectiveId: 1,
+                resetScenarioId: 5,
+                dropship,
+                expectRetryAvailable: true,
+                retryMissionId: 2005,
+                retryNpc: youngblood);
+
+            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+                harness.Client,
+                youngblood.EntityId,
+                2005));
+            var retryDeadline = ReadDeadline(harness, 2005);
+
+            Assert.IsFalse(harness.Manager.TryAbandon(harness.Client, 1995));
+            AssertResetScenarioRecordedOnce(harness, 1995, 5, stepCount: 4);
+            Assert.AreEqual(CharacterMissionDeadlineState.Active, ReadDeadline(harness, 2005).State);
+            Assert.AreEqual(retryDeadline.DueAtUtc, ReadDeadline(harness, 2005).DueAtUtc);
+        }
+
+        [TestMethod]
         public void AbandoningDuringTheFuseFailsTheMissionAndMakesRetryAvailable()
         {
             using var harness = BootcampRuntimeTestHarness.Create();
             var youngblood = StartCrashSiteScene(harness);
             harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
-            harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-dropship-debris"));
+            var dropship = FindScenarioObject(harness, "bootcamp-dropship-debris");
+            harness.UseObjectAndRecover(dropship);
+
+            Assert.IsFalse(dropship.IsEnabled);
 
             Assert.IsTrue(harness.Manager.TryAbandon(harness.Client, 1995));
-            Assert.AreEqual(MissionState.Failed, harness.Client.Player.Missions[1995].State);
-            Assert.AreEqual(
-                MissionObjectiveState.Failed,
-                harness.Client.Player.Missions[1995].Objectives[1].State);
 
-            harness.UtcNow += TimeSpan.FromSeconds(30);
-            Assert.IsFalse(harness.Manager.TickScenarios(harness.Client));
-            Assert.IsNull(BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, 2564));
+            AssertFailedMissionReset(
+                harness,
+                missionId: 1995,
+                objectiveId: 1,
+                resetScenarioId: 5,
+                dropship,
+                expectRetryAvailable: true,
+                retryMissionId: 2005,
+                retryNpc: youngblood);
 
-            var classification = harness.Manager.ClassifyNpcConversation(harness.Client.Player, youngblood);
-            Assert.IsTrue(classification.TryGetStatus(out var status, out var missionIds));
-            Assert.AreEqual(ConversationStatus.Available, status);
-            CollectionAssert.Contains(missionIds, 2005U);
+            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+                harness.Client,
+                youngblood.EntityId,
+                2005));
+            var retryDeadline = ReadDeadline(harness, 2005);
+
+            Assert.IsFalse(harness.Manager.TryAbandon(harness.Client, 1995));
+            AssertResetScenarioRecordedOnce(harness, 1995, 5, stepCount: 4);
+            Assert.AreEqual(CharacterMissionDeadlineState.Active, ReadDeadline(harness, 2005).State);
+            Assert.AreEqual(retryDeadline.DueAtUtc, ReadDeadline(harness, 2005).DueAtUtc);
         }
 
         private static Creature StartCrashSiteScene(BootcampRuntimeTestHarness.Harness harness)
@@ -266,6 +313,69 @@ namespace Rasa.Test.Missions
             using var unit = harness.Context.CreateChar();
             return unit.CharacterMissionDeadlines.Get(harness.Client.Player.Id, missionId)
                    ?? throw new AssertFailedException($"Missing mission deadline for {missionId}.");
+        }
+
+        private static void AssertFailedMissionReset(
+            BootcampRuntimeTestHarness.Harness harness,
+            uint missionId,
+            uint objectiveId,
+            uint resetScenarioId,
+            DynamicObject dropship,
+            bool expectRetryAvailable,
+            uint retryMissionId,
+            Creature retryNpc)
+        {
+            Assert.AreEqual(MissionState.Failed, harness.Client.Player.Missions[missionId].State);
+            Assert.AreEqual(
+                MissionObjectiveState.Failed,
+                harness.Client.Player.Missions[missionId].Objectives[objectiveId].State);
+            Assert.AreEqual(CharacterMissionDeadlineState.Cancelled, ReadDeadline(harness, missionId).State);
+            Assert.IsTrue(dropship.IsEnabled);
+            Assert.IsNotNull(BootcampRuntimeTestHarness.FindScenarioObject(
+                harness.BootcampMap,
+                "bootcamp-conrad-corpse"));
+            Assert.IsNotNull(BootcampRuntimeTestHarness.FindScenarioObject(
+                harness.BootcampMap,
+                "bootcamp-dropship-debris"));
+            Assert.IsNull(BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, 39));
+            Assert.IsNull(BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, 50));
+            Assert.IsNull(BootcampRuntimeTestHarness.FindNpcByPackage(
+                harness.BootcampMap,
+                BootcampRuntimeTestHarness.CorporalVanValkenbergPackageId));
+            AssertResetScenarioRecordedOnce(harness, missionId, resetScenarioId, stepCount: 4);
+
+            var classification = harness.Manager.ClassifyNpcConversation(harness.Client.Player, retryNpc);
+            if (!classification.TryGetStatus(out _, out var missionIds))
+                missionIds = new System.Collections.Generic.List<uint>();
+
+            if (expectRetryAvailable)
+                CollectionAssert.Contains(missionIds, retryMissionId);
+            else
+                CollectionAssert.DoesNotContain(missionIds, retryMissionId);
+        }
+
+        private static void AssertResetScenarioRecordedOnce(
+            BootcampRuntimeTestHarness.Harness harness,
+            uint missionId,
+            uint resetScenarioId,
+            uint stepCount)
+        {
+            var keys = ReadScenarioKeys(harness, missionId);
+            for (var stepId = 1U; stepId <= stepCount; stepId++)
+                Assert.AreEqual(
+                    1,
+                    keys.Count(key => key == $"scenario:{resetScenarioId}:step:{stepId}"),
+                    $"Expected reset scenario {resetScenarioId} step {stepId} exactly once.");
+        }
+
+        private static string[] ReadScenarioKeys(
+            BootcampRuntimeTestHarness.Harness harness,
+            uint missionId)
+        {
+            using var unit = harness.Context.CreateChar();
+            return unit.CharacterMissionScenario.Get(harness.Client.Player.Id, missionId)
+                .Select(entry => entry.StepKey)
+                .ToArray();
         }
     }
 }

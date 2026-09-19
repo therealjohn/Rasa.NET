@@ -761,8 +761,23 @@ namespace Rasa.Managers
         internal bool TryExecuteScenario(Client client, uint missionId, uint scenarioId) =>
             _scenarioService.TryExecute(client, missionId, scenarioId);
 
+        internal bool TryExecuteFailureTransitionScenario(Client client, uint missionId, uint scenarioId) =>
+            _scenarioService.TryExecuteFailureTransition(client, missionId, scenarioId);
+
         internal bool TickScenarios(Client client) =>
             _scenarioService.Tick(client);
+
+        private static void PublishStartedScenarios(
+            Client client,
+            uint missionId,
+            IEnumerable<uint> scenarioIds,
+            Func<Client, uint, uint, bool> startScenario)
+        {
+            foreach (var scenarioId in scenarioIds ?? Array.Empty<uint>())
+                TryPublish(
+                    () => startScenario?.Invoke(client, missionId, scenarioId),
+                    $"mission {missionId} start scenario {scenarioId}");
+        }
 
         internal void RecordScenarioCreatureDeath(SpawnPool spawnPool) =>
             (_scenarioService as MissionScenarioService)?.RecordScenarioCreatureDeath(spawnPool);
@@ -1833,7 +1848,11 @@ namespace Rasa.Managers
                     });
                     if (authoredFailure)
                     {
-                        authoredFailurePlan.Publish(client, this);
+                        authoredFailurePlan.Publish(
+                            client,
+                            this,
+                            TryExecuteScenario,
+                            TryExecuteFailureTransitionScenario);
                         return true;
                     }
                     if (!removed)
@@ -1921,6 +1940,10 @@ namespace Rasa.Managers
                 definition,
                 durableMission,
                 durableObjectives);
+            unitOfWork.CharacterMissionDeadlines.SetState(
+                client.Player.Id,
+                definition.MissionId,
+                CharacterMissionDeadlineState.Cancelled);
             publicationPlan = new MissionFailurePublicationPlan(
                 definition.MissionId,
                 authoredFailure.Objective.ObjectiveId,
@@ -2352,6 +2375,11 @@ namespace Rasa.Managers
                 completableMissions,
                 (progressClient, progressedMissionId, scenarioId) =>
                     _scenarioService.TryExecute(progressClient, progressedMissionId, scenarioId),
+                (progressClient, progressedMissionId, scenarioId) =>
+                    _scenarioService.TryExecuteFailureTransition(
+                        progressClient,
+                        progressedMissionId,
+                        scenarioId),
                 this);
         }
 
@@ -2915,7 +2943,11 @@ namespace Rasa.Managers
                     (startScenarioIds ?? Array.Empty<uint>()).ToArray());
             }
 
-            internal void Publish(Client client, MissionManager manager)
+            internal void Publish(
+                Client client,
+                MissionManager manager,
+                Func<Client, uint, uint, bool> startScenario = null,
+                Func<Client, uint, uint, bool> startFailureScenario = null)
             {
                 if (!client.Player.Missions.TryGetValue(_missionId, out var mission) ||
                     !mission.Objectives.TryGetValue(_objectiveId, out var objective))
@@ -2939,18 +2971,27 @@ namespace Rasa.Managers
                         client,
                         new MissionFailedPacket(_missionId),
                         $"mission {_missionId} failed after objective failure");
+
+                MissionManager.PublishStartedScenarios(
+                    client,
+                    _missionId,
+                    StartScenarioIds,
+                    _missionState == MissionState.Failed
+                        ? startFailureScenario
+                        : startScenario);
             }
         }
 
         internal sealed class MissionProgressPublicationPlan
         {
             internal static readonly MissionProgressPublicationPlan Empty =
-                new(Array.Empty<ProgressPublication>(), Array.Empty<MissionFailurePublicationPlan>(), Array.Empty<uint>(), null, null);
+                new(Array.Empty<ProgressPublication>(), Array.Empty<MissionFailurePublicationPlan>(), Array.Empty<uint>(), null, null, null);
 
             private readonly ProgressPublication[] _publications;
             private readonly MissionFailurePublicationPlan[] _failurePlans;
             private readonly uint[] _completableMissions;
             private readonly Func<Client, uint, uint, bool> _startScenario;
+            private readonly Func<Client, uint, uint, bool> _startFailureScenario;
             private readonly MissionManager _manager;
 
             internal bool HasChanges => _publications.Length > 0 || _failurePlans.Length > 0;
@@ -2960,12 +3001,14 @@ namespace Rasa.Managers
                 IEnumerable<MissionFailurePublicationPlan> failurePlans,
                 IEnumerable<uint> completableMissions,
                 Func<Client, uint, uint, bool> startScenario,
+                Func<Client, uint, uint, bool> startFailureScenario,
                 MissionManager manager)
             {
                 _publications = publications.ToArray();
                 _failurePlans = failurePlans.ToArray();
                 _completableMissions = completableMissions.ToArray();
                 _startScenario = startScenario;
+                _startFailureScenario = startFailureScenario;
                 _manager = manager;
             }
 
@@ -3089,30 +3132,18 @@ namespace Rasa.Managers
                         $"mission {missionId} completable");
 
                 foreach (var failurePlan in _failurePlans)
-                    failurePlan.Publish(client, _manager);
+                    failurePlan.Publish(
+                        client,
+                        _manager,
+                        _startScenario,
+                        _startFailureScenario);
 
                 foreach (var publication in _publications)
-                    foreach (var scenarioId in publication.StartScenarioIds)
-                        TryPublish(
-                            () =>
-                            {
-                                _startScenario?.Invoke(
-                                    client,
-                                    publication.MissionId,
-                                    scenarioId);
-                            },
-                            $"mission {publication.MissionId} start scenario {scenarioId}");
-                foreach (var failurePlan in _failurePlans)
-                    foreach (var scenarioId in failurePlan.StartScenarioIds)
-                        TryPublish(
-                            () =>
-                            {
-                                _startScenario?.Invoke(
-                                    client,
-                                    failurePlan.MissionId,
-                                    scenarioId);
-                            },
-                            $"mission {failurePlan.MissionId} start scenario {scenarioId}");
+                    MissionManager.PublishStartedScenarios(
+                        client,
+                        publication.MissionId,
+                        publication.StartScenarioIds,
+                        _startScenario);
             }
 
             private static bool TryGetRuntimeObjective(

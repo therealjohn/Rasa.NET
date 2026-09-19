@@ -19,6 +19,7 @@ namespace Rasa.Managers
     public interface IMissionScenarioService
     {
         bool TryExecute(Client client, uint missionId, uint scenarioId);
+        bool TryExecuteFailureTransition(Client client, uint missionId, uint scenarioId);
         bool Tick(Client client);
         void Rebuild(uint characterId, MapChannel mapChannel);
         void Release(uint characterId, MapChannel mapChannel);
@@ -66,6 +67,22 @@ namespace Rasa.Managers
             lock (client.SyncRoot)
             {
                 return TryExecuteCore(client, missionId, scenarioId, null);
+            }
+        }
+
+        public bool TryExecuteFailureTransition(Client client, uint missionId, uint scenarioId)
+        {
+            if (client == null)
+                return false;
+
+            lock (client.SyncRoot)
+            {
+                return TryExecuteCore(
+                    client,
+                    missionId,
+                    scenarioId,
+                    pendingSchedule: null,
+                    allowFailedMission: true);
             }
         }
 
@@ -166,7 +183,8 @@ namespace Rasa.Managers
             Client client,
             uint missionId,
             uint scenarioId,
-            MissionScenarioStepState? pendingSchedule)
+            MissionScenarioStepState? pendingSchedule,
+            bool allowFailedMission = false)
         {
             var manager = _missionManager();
             if (manager == null ||
@@ -176,7 +194,7 @@ namespace Rasa.Managers
                 !manager.TryGetOperationalMission(missionId, out var missionDefinition) ||
                 !manager.TryGetScenarioDefinition(missionId, scenarioId, out var scenario) ||
                 !client.Player.Missions.TryGetValue(missionId, out var runtimeMission) ||
-                runtimeMission.State != MissionState.Active)
+                !IsMissionStateEligible(runtimeMission.State, allowFailedMission))
                 return false;
 
             using var plan = new MissionScenarioPlan();
@@ -192,7 +210,12 @@ namespace Rasa.Managers
                     var durableObjectives = unitOfWork.CharacterMissionProgress.GetTracked(
                         client.Player.Id,
                         missionId);
-                    if (durableMission?.MissionState != (uint)MissionState.Active)
+                    if (!IsMissionStateEligible(
+                            durableMission?.MissionState is uint durableState &&
+                            Enum.IsDefined(typeof(MissionState), (int)durableState)
+                                ? (MissionState?)durableState
+                                : null,
+                            allowFailedMission))
                         throw new GameplayRejectionException("Durable mission is not active.");
 
                     var state = ParseState(
@@ -254,6 +277,12 @@ namespace Rasa.Managers
             plan.ApplyRuntime(client, _manifestationManager, manager);
             return true;
         }
+
+        private static bool IsMissionStateEligible(
+            MissionState? missionState,
+            bool allowFailedMission) =>
+            missionState == MissionState.Active ||
+            (allowFailedMission && missionState == MissionState.Failed);
 
         private static void ApplyDurableState(
             uint characterId,
