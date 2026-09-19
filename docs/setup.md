@@ -157,6 +157,18 @@ First restore the solution and the repository-local EF tool from the repository 
 
 Before upgrading an existing database, back it up and test these commands on a disposable copy. Keep `__EFMigrationsHistory`; do not use `EnsureCreated`, delete the database, or suppress pending-model errors to bypass an upgrade failure. SQLite applies migrations automatically on server startup; MySQL requires the commands below before starting the servers.
 
+Before declaring content or gameplay work ready, also check for provider/model
+drift from the repository root:
+
+- `dotnet ef migrations has-pending-model-changes --project src\Rasa.DBL --startup-project src\Rasa.Game --context SqliteWorldContext`
+- `dotnet ef migrations has-pending-model-changes --project src\Rasa.DBL --startup-project src\Rasa.Game --context MySqlWorldContext`
+- `dotnet ef migrations has-pending-model-changes --project src\Rasa.DBL --startup-project src\Rasa.Game --context SqliteCharContext`
+- `dotnet ef migrations has-pending-model-changes --project src\Rasa.DBL --startup-project src\Rasa.Game --context MySqlCharContext`
+
+If required mission content is broken, `Rasa.Game` now logs each actionable
+mission diagnostic and refuses to print `Server ready!` until the content is
+fixed.
+
 The .NET 10 platform update does not add or regenerate database migrations or model snapshots. Apply the repository's existing migrations in their recorded order.
 
 Now navigate to the folder of the Rasa.DBL project:

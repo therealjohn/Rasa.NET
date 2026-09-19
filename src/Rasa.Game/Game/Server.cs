@@ -330,15 +330,8 @@ namespace Rasa.Game
             // Load items from db
             EntityClassManager.Instance.LoadEntityClasses();
             var missionValidation = MissionManager.Instance.LoadMissions();
-            foreach (var diagnostic in missionValidation.Diagnostics)
-                Logger.WriteLog(LogType.Error, diagnostic.ToOperatorMessage());
-            if (missionValidation.BlocksReadiness)
-            {
-                Logger.WriteLog(
-                    LogType.Error,
-                    "Mission content validation failed for required content; the Game server will not report ready.");
+            if (!LogMissionValidationAndCheckReadiness(missionValidation))
                 return false;
-            }
             CreatureManager.Instance.CreatureInit();
             SpawnPoolManager.Instance.SpawnPoolInit();
             ChatCommandsManager.Instance.RegisterChatCommands();
@@ -364,6 +357,23 @@ namespace Rasa.Game
             Logger.WriteLog(LogType.Initialize, "Server ready!");
 
             return true;
+        }
+
+        internal static bool LogMissionValidationAndCheckReadiness(
+            Structures.Missions.MissionValidationReport missionValidation)
+        {
+            if (missionValidation == null)
+                throw new ArgumentNullException(nameof(missionValidation));
+
+            foreach (var diagnostic in missionValidation.Diagnostics)
+                Logger.WriteLog(LogType.Error, diagnostic.ToOperatorMessage());
+            if (!missionValidation.BlocksReadiness)
+                return true;
+
+            Logger.WriteLog(
+                LogType.Error,
+                "Mission content validation failed for required content; the Game server will not report ready.");
+            return false;
         }
 
         private void OnLogin(LoginClient client)

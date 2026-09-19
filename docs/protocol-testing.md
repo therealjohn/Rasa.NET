@@ -16,6 +16,29 @@ The socket tests bind only to loopback using ephemeral ports. The crypto fixture
 use synthetic credentials and keys. The command does not start the game client
 or connect to MySQL.
 
+## Bootcamp mission and departure packet order
+
+Bootcamp mission order is covered by `BootcampProtocolTests` and the broader
+mission suites. They lock down the client-visible sequence used by the
+Deployment 11 starting experience:
+
+- reconnect/login snapshot: `MissionStatusInfoPacket`
+- mission accept: `MissionGainedPacket`
+- counter progress: `UpdateObjectiveCounterPacket` before completion packets
+- objective progression: `ObjectiveCompletedPacket -> ObjectiveRevealedPacket -> ObjectiveActivatedPacket`
+- deadline expiry failure: `ObjectiveFailedPacket -> MissionFailedPacket`
+- mission success turn-in: `MissionCompleteablePacket(false) -> MissionCompletedPacket`
+- reward publication: reward deltas before `MissionRewardedPacket`
+- tutorials: `DisplayPlayerTutorialNotificationPacket -> PlayTutorialAudioPacket`
+- NPC interaction: `ConversePacket` on `RequestNPCConverse`
+- map transfer: `PreWonkavatePacket -> WonkavatePacket`
+
+Run the focused suite with:
+
+```powershell
+dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~BootcampProtocolTests|FullyQualifiedName~MissionProtocolTests|FullyQualifiedName~MissionProgressTests|FullyQualifiedName~MissionRewardTests|FullyQualifiedName~BootcampDepartureTests"
+```
+
 ## Coverage inventory
 
 | Boundary | Automated coverage |
@@ -93,3 +116,6 @@ the server error and relevant frame boundaries if it fails. Redact account
 identifiers, one-time login keys, credentials and private chat from any shared
 trace. Record native-client results separately from server startup, synthetic
 socket checks and unit-test results.
+
+For Bootcamp-specific client validation, pair this guide with the manual
+acceptance checklist in [world-testing.md](world-testing.md).

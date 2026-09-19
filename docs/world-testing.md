@@ -17,6 +17,33 @@ The fixtures use isolated in-memory worlds, actual outgoing packet queues,
 deterministic clocks/random sources and disposable SQLite files. They do not
 connect to a developer database or require the game client.
 
+## Bootcamp starting-experience regression suites
+
+Deployment 11 Bootcamp coverage is split between focused mission tests and
+starting-experience gameplay tests. The maintained suites now cover:
+
+- the authored mission chain `1990 -> 1992 -> 1994 -> 1995`
+- reconnect at mission and objective boundaries
+- combat/timed failure, timeout, retry, and respawn paths
+- account-wide skip entitlement and second-character skip parity
+- two simultaneous Bootcamp characters in distinct private `1985` instances
+- startup validation logging for required-content defects
+
+Run the focused coverage with:
+
+```powershell
+dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~Bootcamp"
+dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~Rasa.Test.Missions"
+```
+
+`BootcampEndToEndTests` covers the normal chain, the `1995 -> 2005` retry
+path, entitlement unlock, and simultaneous-character isolation. The mission
+files `BootcampInitiationTests`, `BootcampGearingUpTests`,
+`BootcampCaptureTheFlagTests`, `BootcampCallingForReinforcementsTests`, and
+`BootcampBombRetryTests` keep the reconnect, boundary, and failure cases
+focused. `BootcampCharacterEntryTests`, `BootcampDepartureTests`, and
+`BootcampSkipTests` cover first entry, exit-pad departure, and skip parity.
+
 ## Mission protocol boundary
 
 The mission request boundary matches the local 1.16.5.0 client scripts:
@@ -256,6 +283,57 @@ dependencies.
 Loss of a database commit
 acknowledgement is still ambiguous; there is no durable distributed exactly-once
 claim ledger. Subsequent stale inventory/credit snapshots fail closed.
+
+## Native-client Bootcamp acceptance checklist
+
+The repository does not contain a native-client automation harness. Use this
+manual script when validating Bootcamp in the retail `1.16.5.0` client.
+
+### SQLite pass
+
+1. Start from a clean SQLite character/world database.
+2. Launch `Rasa.Auth` and `Rasa.Game`.
+3. Confirm the Game log reaches `Server ready!`.
+4. Create a fresh account and a fresh character.
+5. In a cold client session, validate these ten scenarios and capture the
+   matching server log window for each:
+   - complete `1990 -> 1992 -> 1994 -> 1995 -> Alia Das`
+   - reconnect at every mission boundary
+   - reconnect at every objective boundary
+   - die and respawn during each combat or timed mission
+   - let `1995` time out, confirm the reset, then finish `2005`
+   - disconnect during planting and confirm the original deadline survives
+   - finish planting with five seconds remaining
+   - complete Bootcamp once, then create a second character and skip
+   - run two Bootcamp characters at once and confirm they never share actors,
+     rewards, or mission state
+   - confirm no unsupported packet, stale objective, duplicate actor,
+     duplicate reward, or stranded character appears
+
+### MySQL pass
+
+Repeat the same ten scenarios against a clean MySQL character/world database.
+If your local setup includes opt-in live MySQL verification, use it. Otherwise,
+the automated suites still cover offline MySQL migrations and model parity.
+
+### Startup-gate negative check
+
+Before signing off startup validation, intentionally break one required
+Bootcamp reference in a disposable database copy. Two safe examples are:
+
+- remove NPC package `2584` (the wounded survivor package), or
+- set `mission_objective_definition.client_body_text_id = 0` for mission `1995`
+  objective `10`
+
+Restart `Rasa.Game` and confirm:
+
+- the log prints the exact diagnostic naming the broken mission/objective or
+  missing package
+- the log also prints `Mission content validation failed for required content;
+  the Game server will not report ready.`
+- `Server ready!` never appears
+
+Restore the clean database before any other client run.
 
 ## Abilities, learned state and tray
 
