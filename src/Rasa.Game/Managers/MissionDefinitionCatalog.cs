@@ -1,14 +1,80 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
 
 namespace Rasa.Managers
 {
     using Data;
     using Structures;
+    using Structures.Missions;
 
     public static class MissionDefinitionCatalog
     {
+        internal static IReadOnlyDictionary<uint, Mission> CreateDefinitions(
+            MissionContentSnapshot snapshot,
+            MissionValidationReport report)
+        {
+            var definitions = new Dictionary<uint, Mission>();
+            foreach (var content in snapshot.Definitions.Values.OrderBy(definition => definition.MissionId))
+            {
+                var mission = content.Mission;
+                if (report.HasErrorsForMission(content.MissionId))
+                {
+                    var summary = string.Join(
+                        "; ",
+                        report.Diagnostics
+                            .Where(diagnostic => diagnostic.MissionId == content.MissionId)
+                            .Select(diagnostic => diagnostic.Message)
+                            .Distinct());
+                    mission = mission.DisableOperational(summary);
+                }
+
+                definitions[content.MissionId] = mission;
+            }
+
+            foreach (var recovered in CreateRecoveredInactiveDefinitions())
+            {
+                if (!definitions.ContainsKey(recovered.Key))
+                    definitions.Add(recovered.Key, recovered.Value);
+            }
+
+            return new ReadOnlyDictionary<uint, Mission>(definitions);
+        }
+
+        internal static IReadOnlyDictionary<uint, MissionRewardDefinition> CreateRewardDefinitions(
+            MissionContentSnapshot snapshot,
+            MissionValidationReport report)
+        {
+            var rewards = new Dictionary<uint, MissionRewardDefinition>();
+            foreach (var content in snapshot.Definitions.Values.OrderBy(definition => definition.MissionId))
+            {
+                if (report.HasErrorsForMission(content.MissionId))
+                    continue;
+                if (content.Rewards.Count == 0)
+                    continue;
+
+                var authoredReward = content.Rewards.Values
+                    .OrderBy(reward => reward.RewardId)
+                    .First();
+                rewards[content.MissionId] = new MissionRewardDefinition(
+                    authoredReward.Experience,
+                    new Dictionary<CurencyType, int>
+                    {
+                        [CurencyType.Credits] = checked((int)authoredReward.Credits),
+                        [CurencyType.Prestige] = checked((int)authoredReward.Prestige)
+                    },
+                    authoredReward.FixedItems
+                        .Select(item => new MissionRewardItem(item.ItemTemplateId, item.Quantity))
+                        .ToArray(),
+                    authoredReward.SelectableItems
+                        .Select(item => new MissionRewardItem(item.ItemTemplateId, item.Quantity))
+                        .ToArray());
+            }
+
+            return new ReadOnlyDictionary<uint, MissionRewardDefinition>(rewards);
+        }
+
         public static IReadOnlyDictionary<uint, Mission> CreateRecoveredInactiveDefinitions()
         {
             var definitions = new Dictionary<uint, Mission>

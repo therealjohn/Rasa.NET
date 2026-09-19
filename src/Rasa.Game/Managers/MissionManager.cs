@@ -17,6 +17,7 @@ namespace Rasa.Managers
     using Repositories.UnitOfWork;
     using Structures;
     using Structures.Char;
+    using Structures.Missions;
 
     internal readonly struct MissionRewardItem
     {
@@ -276,6 +277,10 @@ namespace Rasa.Managers
         private readonly Action<PythonPacket> _beforeMissionPacketPublication;
 
         public IReadOnlyDictionary<uint, Mission> LoadedMissions => _loadedMissionsView;
+        internal MissionValidationReport LatestValidationReport { get; private set; } =
+            new MissionValidationReport(
+                Array.Empty<MissionValidationDiagnostic>(),
+                Array.Empty<uint>());
 
         public static MissionManager Instance
         {
@@ -328,9 +333,24 @@ namespace Rasa.Managers
             _beforeMissionPacketPublication = beforeMissionPacketPublication;
         }
 
-        public void LoadMissions()
+        internal MissionValidationReport LoadMissions()
         {
             using var unitOfWork = _gameUnitOfWorkFactory.CreateWorld();
+            _loadedMissions.Clear();
+            _rewardDefinitions.Clear();
+
+            if (unitOfWork.MissionContent != null)
+            {
+                var snapshot = new MissionContentLoader().Load(unitOfWork.MissionContent);
+                var report = new MissionContentValidator().Validate(snapshot, unitOfWork);
+                foreach (var definition in MissionDefinitionCatalog.CreateDefinitions(snapshot, report))
+                    _loadedMissions[definition.Key] = definition.Value;
+                foreach (var reward in MissionDefinitionCatalog.CreateRewardDefinitions(snapshot, report))
+                    _rewardDefinitions[reward.Key] = reward.Value;
+                LatestValidationReport = report;
+                return report;
+            }
+
             foreach (var mission in unitOfWork.NpcMissions.Get())
             {
                 var rewardRows = unitOfWork.NpcMissionRewards.Get(mission.Id);
@@ -352,6 +372,10 @@ namespace Rasa.Managers
                 Logger.WriteLog(
                     LogType.Error,
                     $"Mission {definition.MissionId} is inactive: {definition.OperationalDiagnostic}.");
+            LatestValidationReport = new MissionValidationReport(
+                Array.Empty<MissionValidationDiagnostic>(),
+                Array.Empty<uint>());
+            return LatestValidationReport;
         }
 
         internal void Hydrate(
