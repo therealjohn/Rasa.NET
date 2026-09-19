@@ -228,9 +228,17 @@ namespace Rasa.Test.Missions
                 .Select(entry => entry.WaypointId)
                 .OrderBy(id => id)
                 .ToArray();
+            var normalRuntimeWaypoints = normal.Client.Player.GainedWaypoints
+                .Where(entry =>
+                    entry.WaypointId == BootcampSelectionTestContext.AliaDasWaypointId ||
+                    entry.WaypointId == BootcampSelectionTestContext.AliaDasHospitalId)
+                .Select(entry => entry.WaypointId)
+                .OrderBy(id => id)
+                .ToArray();
 
             CollectionAssert.AreEqual(skippedTemplates, normalTemplates);
             CollectionAssert.AreEqual(skippedWaypoints, normalWaypoints);
+            CollectionAssert.AreEqual(skippedWaypoints, normalRuntimeWaypoints);
             CollectionAssert.AreEqual(
                 new[]
                 {
@@ -238,6 +246,13 @@ namespace Rasa.Test.Missions
                     BootcampSelectionTestContext.AliaDasHospitalId
                 },
                 skippedWaypoints);
+            CollectionAssert.Contains(
+                DynamicObjectManager.Instance.CreateListOfWaypoints(normal.Client, WaypointType.Waypoint)
+                    [BootcampSelectionTestContext.WildernessMapContextId]
+                    .Waypoints
+                    .Select(waypoint => waypoint.WaypointId)
+                    .ToArray(),
+                BootcampSelectionTestContext.AliaDasWaypointId);
             Assert.AreEqual(BootcampSelectionTestContext.WildernessMapContextId, normal.Client.Player.MapContextId);
             Assert.AreEqual(BootcampSelectionTestContext.WildernessMapContextId, skippedClient.Player.MapContextId);
         }

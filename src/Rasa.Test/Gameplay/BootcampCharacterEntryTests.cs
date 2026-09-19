@@ -761,7 +761,7 @@ namespace Rasa.Test.Gameplay
                 MapLinks = null;
                 Kraftwerks = null;
                 MapRegions = null;
-                MapMarkers = null;
+                MapMarkers = new MapMarkerRepository(context);
                 Recipes = null;
                 NpcMissions = null;
                 NpcMissionRewards = null;

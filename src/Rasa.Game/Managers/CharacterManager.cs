@@ -983,6 +983,18 @@ namespace Rasa.Managers
             client.Player.Experience = ResolveBootcampParityExperience();
             client.Player.Level = BootcampParityLevel;
             client.AccountEntry.CanSkipBootcamp = true;
+            DynamicObjectManager.ConvergeWaypointGrant(
+                client,
+                new CharacterTeleporterEntry(
+                    client.Player.Id,
+                    BootcampAliaWaypointId,
+                    (byte)WaypointType.Waypoint));
+            DynamicObjectManager.ConvergeWaypointGrant(
+                client,
+                new CharacterTeleporterEntry(
+                    client.Player.Id,
+                    BootcampAliaHospitalId,
+                    (byte)WaypointType.Hospital));
 
             return MapChannelManager.Instance.ChangeMap(
                 client,

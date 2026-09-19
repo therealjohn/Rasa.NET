@@ -864,17 +864,54 @@ namespace Rasa.Managers
                     objectData.WaypointId,
                     (byte)objectData.WaypointType);
                 _updateCharacter(client, CharacterUpdate.Teleporter, newWaypoint);
-                client.Player.GainedWaypoints.Add(newWaypoint);
-                client.CallMethod(
-                    client.Player.EntityId,
-                    new WaypointGainedPacket(
-                        objectData.WaypointId,
-                        objectData.WaypointType));
-                MapMarkerManager.Instance.WaypointDiscovered(
-                    client, objectData.WaypointId);
-                (_missionManager ?? MissionManager.Instance).RecordProgress(
+                ConvergeWaypointGrant(
                     client,
-                    MissionProgressEvent.Waypoint(objectData.WaypointId));
+                    newWaypoint,
+                    recordProgress: true,
+                    missionManager: _missionManager);
+            }
+        }
+
+        internal static bool ConvergeWaypointGrant(
+            Client client,
+            CharacterTeleporterEntry waypoint,
+            bool recordProgress = false,
+            MissionManager missionManager = null)
+        {
+            if (client?.Player == null || waypoint == null)
+                return false;
+
+            lock (client.SyncRoot)
+            {
+                if (client.Player.GainedWaypoints.Any(known => known.WaypointId == waypoint.WaypointId))
+                    return false;
+
+                client.Player.GainedWaypoints.Add(waypoint);
+                PublishWaypointGrant(client, waypoint, recordProgress, missionManager);
+                return true;
+            }
+        }
+
+        private static void PublishWaypointGrant(
+            Client client,
+            CharacterTeleporterEntry waypoint,
+            bool recordProgress,
+            MissionManager missionManager)
+        {
+            var waypointType = (WaypointType)waypoint.WaypointType;
+            client.CallMethod(
+                client.Player.EntityId,
+                new WaypointGainedPacket(
+                    waypoint.WaypointId,
+                    waypointType));
+            MapMarkerManager.Instance.WaypointDiscovered(
+                client,
+                waypoint.WaypointId);
+            if (recordProgress)
+            {
+                (missionManager ?? MissionManager.Instance).RecordProgress(
+                    client,
+                    MissionProgressEvent.Waypoint(waypoint.WaypointId));
             }
         }
 

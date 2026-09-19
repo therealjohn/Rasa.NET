@@ -13,6 +13,7 @@ namespace Rasa.Test.Gameplay
     using Managers;
     using Missions;
     using Packets.MapChannel.Client;
+    using Packets.MapChannel.Server;
     using Repositories.Char.Character;
     using Repositories.Char.CharacterAbilityDrawer;
     using Repositories.Char.CharacterMission;
@@ -177,6 +178,125 @@ namespace Rasa.Test.Gameplay
         }
 
         [TestMethod]
+        public void ExitPadDeparturePublishesWaypointUnlocksAndDestinationMarkersWithoutReconnect()
+        {
+            using var context = new BootcampSelectionTestContext();
+            context.SeedAccount(613);
+            var characterId = context.SeedCharacter(
+                613,
+                1,
+                "WaypointUnlocks",
+                mapContextId: BootcampSelectionTestContext.BootcampMapContextId,
+                x: -255.3125,
+                y: 101.05078,
+                z: -70.4375,
+                experience: 49250,
+                level: 5);
+            context.SeedStartingExperience(characterId, CharacterStartingExperienceState.Bootcamp);
+            context.SeedMission(characterId, BootcampSelectionTestContext.MissionFinale, MissionState.Active, completeable: true);
+            context.SeedWaypoint(characterId, BootcampSelectionTestContext.ExitPadWaypointId, WaypointType.Dropship);
+            context.SeedLightningGrant(characterId);
+            context.SeedPersonalInventory(613, characterId, 13066, 13096, 13156, 13186, 13713, 28);
+            Server.GameUnitOfWorkFactory = context;
+            MapMarkerManager.Instance.MapMarkerInit();
+
+            var client = context.CreateSelectionClient(613);
+            context.Characters.RequestSwitchToCharacterInSlot(
+                client,
+                new Packets.Game.Client.RequestSwitchToCharacterInSlotPacket { SlotNum = 1 });
+            context.MaterializeLoadedClient(client);
+            MissionTestContext.Drain(client);
+
+            var privateMap = context.Maps.FindOwnedPrivateInstance(
+                BootcampSelectionTestContext.BootcampMapContextId,
+                characterId);
+            Assert.IsNotNull(privateMap);
+
+            context.Objects.SelectWaypoint(
+                client,
+                new SelectWaypointPacket
+                {
+                    WaypointId = BootcampSelectionTestContext.ExitPadWaypointId,
+                    MapInstanceId = privateMap.InstanceId
+                });
+
+            CollectionAssert.IsSubsetOf(
+                new[] { BootcampSelectionTestContext.AliaDasWaypointId, BootcampSelectionTestContext.AliaDasHospitalId },
+                client.Player.GainedWaypoints.Select(entry => entry.WaypointId).ToArray());
+
+            var departurePackets = MissionTestContext.Drain(client);
+            CollectionAssert.AreEquivalent(
+                new[] { BootcampSelectionTestContext.AliaDasWaypointId, BootcampSelectionTestContext.AliaDasHospitalId },
+                departurePackets.OfType<WaypointGainedPacket>()
+                    .Select(packet => packet.WaypointId)
+                    .ToArray());
+            Assert.AreEqual(
+                1,
+                departurePackets.OfType<WaypointGainedPacket>()
+                    .Count(packet => packet.WaypointId == BootcampSelectionTestContext.AliaDasWaypointId));
+            Assert.AreEqual(
+                1,
+                departurePackets.OfType<WaypointGainedPacket>()
+                    .Count(packet => packet.WaypointId == BootcampSelectionTestContext.AliaDasHospitalId));
+            Assert.AreEqual(0, departurePackets.OfType<UpdateMapMarkerPacket>().Count());
+
+            context.CompletePendingMapLinkTransfer(client);
+            MissionTestContext.Drain(client);
+            MapMarkerManager.Instance.PlayerEnteredMap(client);
+
+            using (var verify = context.OpenChar())
+            {
+                CollectionAssert.AreEquivalent(
+                    new[] { BootcampSelectionTestContext.AliaDasWaypointId, BootcampSelectionTestContext.AliaDasHospitalId },
+                    new CharacterTeleporterRepository(verify).Get(characterId)
+                        .Where(entry =>
+                            entry.WaypointId == BootcampSelectionTestContext.AliaDasWaypointId ||
+                            entry.WaypointId == BootcampSelectionTestContext.AliaDasHospitalId)
+                        .Select(entry => entry.WaypointId)
+                        .ToArray());
+            }
+
+            var arrivalPackets = MissionTestContext.Drain(client);
+            var markerInfo = arrivalPackets.OfType<MapMarkerInfoPacket>().Single();
+            using (var world = context.CreateWorld())
+            {
+                var markers = world.MapMarkers.GetMapMarkers()
+                    .Where(entry =>
+                        entry.MapContextId == BootcampSelectionTestContext.WildernessMapContextId &&
+                        (entry.ObjectId == BootcampSelectionTestContext.AliaDasWaypointId ||
+                         entry.ObjectId == BootcampSelectionTestContext.AliaDasHospitalId))
+                    .ToArray();
+                Assert.IsTrue(markers.Length > 0);
+                foreach (var marker in markers)
+                {
+                    Assert.IsTrue(markerInfo.Markers.ContainsKey(marker.MarkerEntityId));
+                    Assert.IsTrue(markerInfo.Markers[marker.MarkerEntityId].IsKnown);
+                }
+            }
+
+            var waypointMenu = context.Objects.CreateListOfWaypoints(client, WaypointType.Waypoint)
+                [BootcampSelectionTestContext.WildernessMapContextId];
+            CollectionAssert.Contains(
+                waypointMenu.Waypoints.Select(waypoint => waypoint.WaypointId).ToArray(),
+                BootcampSelectionTestContext.AliaDasWaypointId);
+
+            var aliaWaypoint = client.Player.MapChannel.Teleporters.Values.Single(teleporter =>
+                teleporter.ObjectData is WaypointInfo waypoint &&
+                waypoint.WaypointId == BootcampSelectionTestContext.AliaDasWaypointId);
+            client.Player.Position = aliaWaypoint.Position;
+            context.Objects.SelectWaypoint(
+                client,
+                new SelectWaypointPacket
+                {
+                    WaypointId = BootcampSelectionTestContext.AliaDasWaypointId,
+                    MapInstanceId = client.Player.MapChannel.InstanceId
+                });
+
+            Assert.AreEqual(RasaGame::Rasa.Data.ClientState.Teleporting, client.State);
+            Assert.IsNotNull(client.PendingTransfer);
+        }
+
+        [TestMethod]
         public void ExitPadDepartureMatchesSkipParityAtLevelFourUsingTheAuthoritativeThreshold()
         {
             using var context = new BootcampSelectionTestContext();
@@ -290,6 +410,16 @@ namespace Rasa.Test.Gameplay
             Assert.AreEqual(9, manifestation.GetAvailableAttributePoints(skippedClient.Player));
             Assert.AreEqual(10, manifestation.GetSkillPointsAvailable(departedClient.Player));
             Assert.AreEqual(10, manifestation.GetSkillPointsAvailable(skippedClient.Player));
+
+            CollectionAssert.AreEqual(
+                skippedClient.Player.GainedWaypoints.Select(entry => entry.WaypointId).OrderBy(id => id).ToArray(),
+                departedClient.Player.GainedWaypoints
+                    .Where(entry =>
+                        entry.WaypointId == BootcampSelectionTestContext.AliaDasWaypointId ||
+                        entry.WaypointId == BootcampSelectionTestContext.AliaDasHospitalId)
+                    .Select(entry => entry.WaypointId)
+                    .OrderBy(id => id)
+                    .ToArray());
         }
 
         [TestMethod]
@@ -373,9 +503,23 @@ namespace Rasa.Test.Gameplay
             context.Objects.SelectWaypoint(client, request);
             var pendingTransfer = client.PendingTransfer;
             context.Objects.SelectWaypoint(client, request);
+            var departurePackets = MissionTestContext.Drain(client);
 
             Assert.AreSame(pendingTransfer, client.PendingTransfer);
             Assert.AreEqual(RasaGame::Rasa.Data.ClientState.Teleporting, client.State);
+            CollectionAssert.AreEquivalent(
+                new[] { BootcampSelectionTestContext.AliaDasWaypointId, BootcampSelectionTestContext.AliaDasHospitalId },
+                departurePackets.OfType<WaypointGainedPacket>()
+                    .Select(packet => packet.WaypointId)
+                    .ToArray());
+            Assert.AreEqual(
+                1,
+                departurePackets.OfType<WaypointGainedPacket>()
+                    .Count(packet => packet.WaypointId == BootcampSelectionTestContext.AliaDasWaypointId));
+            Assert.AreEqual(
+                1,
+                departurePackets.OfType<WaypointGainedPacket>()
+                    .Count(packet => packet.WaypointId == BootcampSelectionTestContext.AliaDasHospitalId));
             using (var verify = context.OpenChar())
             {
                 Assert.AreEqual(
@@ -392,6 +536,14 @@ namespace Rasa.Test.Gameplay
                     24000U,
                     new CharacterRepository(verify).Get(characterId).Experience);
                 Assert.IsTrue(new GameAccountRepository(verify).Get(631).CanSkipBootcamp);
+                Assert.AreEqual(
+                    1,
+                    new CharacterTeleporterRepository(verify).Get(characterId)
+                        .Count(entry => entry.WaypointId == BootcampSelectionTestContext.AliaDasWaypointId));
+                Assert.AreEqual(
+                    1,
+                    new CharacterTeleporterRepository(verify).Get(characterId)
+                        .Count(entry => entry.WaypointId == BootcampSelectionTestContext.AliaDasHospitalId));
                 CollectionAssert.AreEqual(
                     new uint[] { 13066, 13096, 13156, 13186, 13713, 28 },
                     context.ReadInventoryTemplates(631, characterId));
@@ -557,8 +709,6 @@ namespace Rasa.Test.Gameplay
             uint characterId)
         {
             context.SeedLightningGrant(characterId);
-            context.SeedWaypoint(characterId, BootcampSelectionTestContext.AliaDasWaypointId, WaypointType.Waypoint);
-            context.SeedWaypoint(characterId, BootcampSelectionTestContext.AliaDasHospitalId, WaypointType.Hospital);
             context.SeedPersonalInventory(accountId, characterId, 13066, 13096, 13156, 13186, 13713, 28);
         }
     }
