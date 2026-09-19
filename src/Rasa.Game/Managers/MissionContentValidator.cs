@@ -11,6 +11,22 @@ namespace Rasa.Managers
 
     internal sealed class MissionContentValidator
     {
+        private static readonly HashSet<MissionTriggerKind> SupportedTriggerKinds =
+            new()
+            {
+                MissionTriggerKind.Conversation,
+                MissionTriggerKind.ProgressEvent
+            };
+
+        private static readonly HashSet<MissionActionKind> SupportedActionKinds =
+            new()
+            {
+                MissionActionKind.RevealObjective,
+                MissionActionKind.ActivateObjective,
+                MissionActionKind.CompleteObjective,
+                MissionActionKind.GrantReward
+            };
+
         internal MissionValidationReport Validate(
             MissionContentSnapshot snapshot,
             IWorldUnitOfWork unitOfWork)
@@ -134,6 +150,8 @@ namespace Rasa.Managers
 
             ValidateTransitions(definition, references, diagnostics);
             ValidateReferences(snapshot, definition, references, diagnostics);
+            ValidateCounterTextBindings(definition, diagnostics);
+            ValidateRewardReferences(definition, diagnostics);
             ValidateObjectiveGraph(definition, diagnostics);
             ValidateRewards(definition, references, diagnostics);
             ValidateAreas(definition, references, diagnostics);
@@ -146,7 +164,9 @@ namespace Rasa.Managers
             MissionContentReferenceSet references,
             ICollection<MissionValidationDiagnostic> diagnostics)
         {
-            foreach (var transition in definition.Transitions.Values.OrderBy(transition => transition.TransitionId))
+            foreach (var transition in definition.Transitions.Values
+                .OrderBy(transition => transition.ObjectiveId)
+                .ThenBy(transition => transition.TransitionId))
             {
                 foreach (var trigger in transition.Triggers)
                 {
@@ -161,6 +181,18 @@ namespace Rasa.Managers
                             transition.TransitionId,
                             trigger.TriggerId));
                         continue;
+                    }
+
+                    if (!SupportedTriggerKinds.Contains(trigger.Kind))
+                    {
+                        diagnostics.Add(new MissionValidationDiagnostic(
+                            "unsupported-trigger",
+                            $"trigger kind {trigger.Kind} is not executable in the current runtime.",
+                            definition.MissionId,
+                            definition.ContentRevision,
+                            transition.ObjectiveId,
+                            transition.TransitionId,
+                            trigger.TriggerId));
                     }
 
                     if (trigger.Kind == MissionTriggerKind.Conversation &&
@@ -205,6 +237,26 @@ namespace Rasa.Managers
                     }
                 }
 
+                var progressTriggers = transition.Triggers
+                    .Where(trigger => trigger.Kind == MissionTriggerKind.ProgressEvent)
+                    .ToArray();
+                if (progressTriggers.Length > 0 &&
+                    !MissionProgressRuleAuthoring.TryBuild(
+                        progressTriggers,
+                        out _,
+                        out _,
+                        out _,
+                        out var progressDiagnostic))
+                {
+                    diagnostics.Add(new MissionValidationDiagnostic(
+                        "invalid-progress-event",
+                        progressDiagnostic,
+                        definition.MissionId,
+                        definition.ContentRevision,
+                        transition.ObjectiveId,
+                        transition.TransitionId));
+                }
+
                 foreach (var action in transition.Actions)
                 {
                     if (!action.HasDefinedKind())
@@ -218,6 +270,18 @@ namespace Rasa.Managers
                             transition.TransitionId,
                             actionId: action.ActionId));
                         continue;
+                    }
+
+                    if (!SupportedActionKinds.Contains(action.Kind))
+                    {
+                        diagnostics.Add(new MissionValidationDiagnostic(
+                            "unsupported-action",
+                            $"action kind {action.Kind} is not executable in the current runtime.",
+                            definition.MissionId,
+                            definition.ContentRevision,
+                            transition.ObjectiveId,
+                            transition.TransitionId,
+                            actionId: action.ActionId));
                     }
 
                     if (action.Kind is MissionActionKind.RevealObjective or MissionActionKind.ActivateObjective or MissionActionKind.CompleteObjective)
@@ -275,6 +339,73 @@ namespace Rasa.Managers
                             actionId: action.ActionId));
                     }
                 }
+            }
+        }
+
+        private static void ValidateCounterTextBindings(
+            MissionContentDefinition definition,
+            ICollection<MissionValidationDiagnostic> diagnostics)
+        {
+            foreach (var objective in definition.Objectives.Values.OrderBy(objective => objective.ObjectiveId))
+            {
+                foreach (var counter in objective.Counters.Values.OrderBy(counter => counter.CounterId))
+                {
+                    if (counter.CounterId >= (uint)objective.ClientCounterTextIds.Count)
+                    {
+                        diagnostics.Add(new MissionValidationDiagnostic(
+                            "invalid-counter-text-binding",
+                            $"counter {counter.CounterId} has no authored client counter text slot.",
+                            definition.MissionId,
+                            definition.ContentRevision,
+                            objective.ObjectiveId));
+                        continue;
+                    }
+
+                    if (!objective.ClientCounterTextIds[(int)counter.CounterId].HasValue)
+                    {
+                        diagnostics.Add(new MissionValidationDiagnostic(
+                            "invalid-counter-text-binding",
+                            $"counter {counter.CounterId} is missing its authored client counter text binding.",
+                            definition.MissionId,
+                            definition.ContentRevision,
+                            objective.ObjectiveId));
+                    }
+                }
+            }
+        }
+
+        private static void ValidateRewardReferences(
+            MissionContentDefinition definition,
+            ICollection<MissionValidationDiagnostic> diagnostics)
+        {
+            if (definition.Rewards.Count == 0)
+                return;
+
+            var referencedRewardIds = definition.Transitions.Values
+                .SelectMany(transition => transition.Actions)
+                .Where(action => action.Kind == MissionActionKind.GrantReward && action.RewardId.HasValue)
+                .Select(action => action.RewardId.Value)
+                .Distinct()
+                .OrderBy(value => value)
+                .ToArray();
+
+            if (referencedRewardIds.Length == 0)
+            {
+                diagnostics.Add(new MissionValidationDiagnostic(
+                    "missing-reward-reference",
+                    "mission authors rewards but no GrantReward action references a reward_id.",
+                    definition.MissionId,
+                    definition.ContentRevision));
+                return;
+            }
+
+            if (referencedRewardIds.Length > 1)
+            {
+                diagnostics.Add(new MissionValidationDiagnostic(
+                    "ambiguous-reward-reference",
+                    $"mission references multiple GrantReward reward_ids ({string.Join(", ", referencedRewardIds)}); the current runtime supports exactly one turn-in reward.",
+                    definition.MissionId,
+                    definition.ContentRevision));
             }
         }
 

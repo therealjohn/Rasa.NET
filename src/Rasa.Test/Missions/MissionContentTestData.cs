@@ -87,6 +87,9 @@ namespace Rasa.Test.Missions
                     Requirement = MissionContentRequirement.Required,
                     ClientNameTextId = 2101,
                     ClientBodyTextId = 2102,
+                    ClientCounter0TextId = null,
+                    ClientCounter1TextId = null,
+                    ClientCounter2TextId = null,
                     Ordinal = 1,
                     InitialState = (byte)MissionObjectiveState.Incomplete,
                     IsRequired = true,
@@ -100,6 +103,9 @@ namespace Rasa.Test.Missions
                     Requirement = MissionContentRequirement.Required,
                     ClientNameTextId = 2201,
                     ClientBodyTextId = 2202,
+                    ClientCounter0TextId = null,
+                    ClientCounter1TextId = null,
+                    ClientCounter2TextId = null,
                     Ordinal = 2,
                     InitialState = (byte)MissionObjectiveState.Inactive,
                     IsRequired = true,
@@ -175,6 +181,19 @@ namespace Rasa.Test.Missions
                     TargetObjectiveId = 11,
                     ObjectiveState = (byte)MissionObjectiveState.Incomplete,
                     Comment = "Activate the second objective"
+                },
+                new MissionActionEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ObjectiveId = 10,
+                    TransitionId = 20,
+                    ActionId = 4,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionActionKind.GrantReward,
+                    Sequence = 4,
+                    RewardId = 40,
+                    Comment = "Grant the authored reward"
                 });
 
             fixture.Rewards.Add(new MissionRewardDefinitionEntry
@@ -585,6 +604,9 @@ namespace Rasa.Test.Missions
                 Requirement = entry.Requirement,
                 ClientNameTextId = entry.ClientNameTextId,
                 ClientBodyTextId = entry.ClientBodyTextId,
+                ClientCounter0TextId = entry.ClientCounter0TextId,
+                ClientCounter1TextId = entry.ClientCounter1TextId,
+                ClientCounter2TextId = entry.ClientCounter2TextId,
                 Ordinal = entry.Ordinal,
                 InitialState = entry.InitialState,
                 IsRequired = entry.IsRequired,

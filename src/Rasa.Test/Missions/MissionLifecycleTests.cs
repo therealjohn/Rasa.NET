@@ -19,8 +19,12 @@ namespace Rasa.Test.Missions
     using Rasa.Packets.MapChannel.Server;
     using Rasa.Packets.Mission.Server;
     using Rasa.Repositories;
+    using Rasa.Repositories.Char;
+    using Rasa.Repositories.UnitOfWork;
+    using Rasa.Repositories.World;
     using Rasa.Structures;
     using Rasa.Structures.Char;
+    using Rasa.Structures.World;
 
     [TestClass]
     [DoNotParallelize]
@@ -902,6 +906,178 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(77U, definition.MissionGiver);
         }
 
+        [TestMethod]
+        [DynamicData(nameof(GetPrerequisiteKinds))]
+        public void NpcConversationAdvertisingHonorsMissionPrerequisites(
+            MissionPrerequisiteKind kind)
+        {
+            var fixture = CreateSinglePrerequisiteFixture(kind);
+            using var context = MissionTestContext.WithCustomDefinitions(
+                new Dictionary<uint, Mission>());
+            var manager = CreateMissionContentManager(context, fixture);
+            var giver = context.AddNpc(101);
+
+            var blocked = manager.ClassifyNpcConversation(context.Client.Player, giver);
+            Assert.IsFalse(blocked.TryGetStatus(out var blockedStatus, out var blockedIds));
+            Assert.AreEqual(ConversationStatus.None, blockedStatus);
+            CollectionAssert.AreEqual(Array.Empty<uint>(), blockedIds);
+
+            SatisfyPrerequisite(context, kind);
+
+            var allowed = manager.ClassifyNpcConversation(context.Client.Player, giver);
+            Assert.IsTrue(allowed.TryGetStatus(out var allowedStatus, out var allowedIds));
+            Assert.AreEqual(ConversationStatus.Available, allowedStatus);
+            CollectionAssert.AreEqual(new uint[] { 321 }, allowedIds);
+        }
+
+        [TestMethod]
+        [DynamicData(nameof(GetPrerequisiteKinds))]
+        public void MissionAcceptanceHonorsMissionPrerequisites(
+            MissionPrerequisiteKind kind)
+        {
+            var fixture = CreateSinglePrerequisiteFixture(kind);
+            using var blockedContext = MissionTestContext.WithCustomDefinitions(
+                new Dictionary<uint, Mission>());
+            var blockedManager = CreateMissionContentManager(blockedContext, fixture);
+            var blockedGiver = blockedContext.AddNpc(101);
+
+            Assert.IsFalse(blockedManager.TryAcceptNpcMission(
+                blockedContext.Client,
+                blockedGiver.EntityId,
+                321));
+            Assert.IsFalse(blockedContext.Client.Player.Missions.ContainsKey(321));
+
+            using var allowedContext = MissionTestContext.WithCustomDefinitions(
+                new Dictionary<uint, Mission>());
+            var allowedManager = CreateMissionContentManager(allowedContext, fixture);
+            var allowedGiver = allowedContext.AddNpc(101);
+            SatisfyPrerequisite(allowedContext, kind);
+
+            Assert.IsTrue(allowedManager.TryAcceptNpcMission(
+                allowedContext.Client,
+                allowedGiver.EntityId,
+                321));
+            Assert.IsTrue(allowedContext.Client.Player.Missions.ContainsKey(321));
+        }
+
+        [TestMethod]
+        public void MissionAcceptanceRechecksDurablePrerequisitesBeforePersisting()
+        {
+            var fixture = CreateSinglePrerequisiteFixture(MissionPrerequisiteKind.MissionCompleted);
+            using var context = MissionTestContext.WithCustomDefinitions(
+                new Dictionary<uint, Mission>());
+            var manager = CreateMissionContentManager(context, fixture);
+            var giver = context.AddNpc(101);
+            context.Client.Player.Missions[322] = new MissionLog(
+                322,
+                MissionState.Completed,
+                false);
+
+            Assert.IsTrue(manager.ClassifyNpcConversation(context.Client.Player, giver)
+                .CreateConversationData()
+                .ContainsKey(ConversationType.MissionDispense));
+            Assert.IsFalse(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            Assert.IsFalse(context.Client.Player.Missions.ContainsKey(321));
+        }
+
+        public static IEnumerable<object[]> GetPrerequisiteKinds()
+        {
+            yield return new object[] { MissionPrerequisiteKind.MissionCompleted };
+            yield return new object[] { MissionPrerequisiteKind.MissionAccepted };
+            yield return new object[] { MissionPrerequisiteKind.PlayerLevelAtLeast };
+            yield return new object[] { MissionPrerequisiteKind.PlayerFlagValue };
+        }
+
+        private static MissionContentFixture CreateSinglePrerequisiteFixture(
+            MissionPrerequisiteKind kind)
+        {
+            var fixture = MissionContentFixture.CreateValid();
+            var prerequisite = new MissionPrerequisiteEntry
+            {
+                MissionId = 321,
+                ContentRevision = "deployment_11",
+                PrerequisiteId = 1,
+                Requirement = MissionContentRequirement.Required,
+                Kind = kind,
+                Comment = $"Prerequisite {kind}"
+            };
+
+            switch (kind)
+            {
+                case MissionPrerequisiteKind.MissionCompleted:
+                    prerequisite.RequiredMissionId = 322;
+                    prerequisite.RequiredMissionState = (byte)MissionState.Completed;
+                    break;
+                case MissionPrerequisiteKind.MissionAccepted:
+                    prerequisite.RequiredMissionId = 322;
+                    break;
+                case MissionPrerequisiteKind.PlayerLevelAtLeast:
+                    prerequisite.RequiredLevel = 2;
+                    break;
+                case MissionPrerequisiteKind.PlayerFlagValue:
+                    prerequisite.PlayerFlagId = 9;
+                    prerequisite.PlayerFlagValue = 3;
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(kind));
+            }
+
+            fixture.Prerequisites.Add(prerequisite);
+            return fixture;
+        }
+
+        private static void SatisfyPrerequisite(
+            MissionTestContext context,
+            MissionPrerequisiteKind kind)
+        {
+            switch (kind)
+            {
+                case MissionPrerequisiteKind.MissionCompleted:
+                    context.SeedMission(
+                        context.Client.Player.Id,
+                        322,
+                        (uint)MissionState.Completed,
+                        false);
+                    context.Client.Player.Missions[322] = new MissionLog(
+                        322,
+                        MissionState.Completed,
+                        false);
+                    break;
+                case MissionPrerequisiteKind.MissionAccepted:
+                    context.SeedMission(
+                        context.Client.Player.Id,
+                        322,
+                        (uint)MissionState.Active,
+                        false);
+                    context.Client.Player.Missions[322] = new MissionLog(
+                        322,
+                        MissionState.Active,
+                        false);
+                    break;
+                case MissionPrerequisiteKind.PlayerLevelAtLeast:
+                    using (var unit = context.CreateChar())
+                        unit.Characters.UpdateCharacterLevel(context.Client.Player.Id, 2);
+                    context.Client.Player.Level = 2;
+                    break;
+                case MissionPrerequisiteKind.PlayerFlagValue:
+                    context.Client.Player.PlayerFlags[9] = 3;
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(kind));
+            }
+        }
+
+        private static MissionManager CreateMissionContentManager(
+            MissionTestContext context,
+            MissionContentFixture fixture)
+        {
+            var manager = new MissionManager(
+                new MissionContentLoadingFactory(context, fixture.CreateWorldUnitOfWork()),
+                new Dictionary<uint, Mission>());
+            manager.LoadMissions();
+            return manager;
+        }
+
         private static NpcManager CreateNpcManager(
             MissionTestContext context,
             out FieldInfo singleton,
@@ -917,6 +1093,23 @@ namespace Rasa.Test.Missions
                 binder: null,
                 args: new object[] { context },
                 culture: null)!;
+        }
+
+        private sealed class MissionContentLoadingFactory : IGameUnitOfWorkFactory
+        {
+            private readonly MissionTestContext _charFactory;
+            private readonly IWorldUnitOfWork _worldUnit;
+
+            internal MissionContentLoadingFactory(
+                MissionTestContext charFactory,
+                IWorldUnitOfWork worldUnit)
+            {
+                _charFactory = charFactory;
+                _worldUnit = worldUnit;
+            }
+
+            public ICharUnitOfWork CreateChar() => _charFactory.CreateChar();
+            public IWorldUnitOfWork CreateWorld() => _worldUnit;
         }
     }
 }

@@ -8,6 +8,7 @@ namespace Rasa.Managers
     using Data;
     using Structures;
     using Structures.Missions;
+    using Structures.World;
 
     public static class MissionDefinitionCatalog
     {
@@ -54,9 +55,16 @@ namespace Rasa.Managers
                 if (content.Rewards.Count == 0)
                     continue;
 
-                var authoredReward = content.Rewards.Values
-                    .OrderBy(reward => reward.RewardId)
-                    .First();
+                var referencedRewardIds = content.Transitions.Values
+                    .SelectMany(transition => transition.Actions)
+                    .Where(action => action.Kind == MissionActionKind.GrantReward && action.RewardId.HasValue)
+                    .Select(action => action.RewardId.Value)
+                    .Distinct()
+                    .OrderBy(value => value)
+                    .ToArray();
+                if (referencedRewardIds.Length != 1 ||
+                    !content.Rewards.TryGetValue(referencedRewardIds[0], out var authoredReward))
+                    continue;
                 rewards[content.MissionId] = new MissionRewardDefinition(
                     authoredReward.Experience,
                     new Dictionary<CurencyType, int>

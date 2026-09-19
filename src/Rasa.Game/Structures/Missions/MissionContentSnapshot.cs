@@ -37,7 +37,7 @@ namespace Rasa.Structures.Missions
         public IReadOnlyDictionary<uint, MissionObjectiveDefinition> Objectives => Mission.Objectives;
         public IReadOnlyList<uint> DuplicateObjectiveIds { get; }
         public IReadOnlyList<MissionPrerequisiteDefinition> Prerequisites { get; }
-        public IReadOnlyDictionary<uint, MissionObjectiveTransitionDefinition> Transitions { get; }
+        public IReadOnlyDictionary<(uint ObjectiveId, uint TransitionId), MissionObjectiveTransitionDefinition> Transitions { get; }
         public IReadOnlyDictionary<uint, MissionAuthoringRewardDefinition> Rewards { get; }
         public IReadOnlyDictionary<uint, MissionAreaDefinition> Areas { get; }
         public IReadOnlyDictionary<uint, MissionSpawnGroupDefinition> SpawnGroups { get; }
@@ -50,7 +50,7 @@ namespace Rasa.Structures.Missions
             Mission mission,
             IEnumerable<uint> duplicateObjectiveIds,
             IEnumerable<MissionPrerequisiteDefinition> prerequisites,
-            IReadOnlyDictionary<uint, MissionObjectiveTransitionDefinition> transitions,
+            IReadOnlyDictionary<(uint ObjectiveId, uint TransitionId), MissionObjectiveTransitionDefinition> transitions,
             IReadOnlyDictionary<uint, MissionAuthoringRewardDefinition> rewards,
             IReadOnlyDictionary<uint, MissionAreaDefinition> areas,
             IReadOnlyDictionary<uint, MissionSpawnGroupDefinition> spawnGroups,
@@ -69,9 +69,9 @@ namespace Rasa.Structures.Missions
                 (prerequisites ?? Array.Empty<MissionPrerequisiteDefinition>())
                 .OrderBy(prerequisite => prerequisite.PrerequisiteId)
                 .ToArray());
-            Transitions = new ReadOnlyDictionary<uint, MissionObjectiveTransitionDefinition>(
-                new Dictionary<uint, MissionObjectiveTransitionDefinition>(
-                    transitions ?? new Dictionary<uint, MissionObjectiveTransitionDefinition>()));
+            Transitions = new ReadOnlyDictionary<(uint ObjectiveId, uint TransitionId), MissionObjectiveTransitionDefinition>(
+                new Dictionary<(uint ObjectiveId, uint TransitionId), MissionObjectiveTransitionDefinition>(
+                    transitions ?? new Dictionary<(uint ObjectiveId, uint TransitionId), MissionObjectiveTransitionDefinition>()));
             Rewards = new ReadOnlyDictionary<uint, MissionAuthoringRewardDefinition>(
                 new Dictionary<uint, MissionAuthoringRewardDefinition>(
                     rewards ?? new Dictionary<uint, MissionAuthoringRewardDefinition>()));

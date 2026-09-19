@@ -34,6 +34,15 @@ namespace Rasa.Structures.World
         [Required]
         public uint ClientBodyTextId { get; set; }
 
+        [Column("client_counter_0_text_id")]
+        public uint? ClientCounter0TextId { get; set; }
+
+        [Column("client_counter_1_text_id")]
+        public uint? ClientCounter1TextId { get; set; }
+
+        [Column("client_counter_2_text_id")]
+        public uint? ClientCounter2TextId { get; set; }
+
         [Column("ordinal")]
         [Required]
         public uint Ordinal { get; set; }

@@ -180,8 +180,6 @@ namespace Rasa.Context.World
                 "AND area_id IS NULL AND duration_seconds IS NULL " +
                 "AND source_spawn_resolved IS NULL)) " +
                 "AND (kind <> 2 OR (event_kind IS NOT NULL AND subject_id IS NOT NULL " +
-                "AND counter_id IS NOT NULL AND initial_value IS NOT NULL " +
-                "AND target_value IS NOT NULL AND source_spawn_resolved IS NOT NULL " +
                 "AND related_objective_id IS NULL AND related_state IS NULL " +
                 "AND area_id IS NULL AND duration_seconds IS NULL " +
                 "AND npc_package_id IS NULL AND player_flag_id IS NULL)) " +
@@ -315,6 +313,15 @@ namespace Rasa.Context.World
                 .AsUnsignedInt(_dbContextPropertyModifier, 11);
             modelBuilder.Entity<MissionObjectiveDefinitionEntry>()
                 .Property(entry => entry.ClientBodyTextId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionObjectiveDefinitionEntry>()
+                .Property(entry => entry.ClientCounter0TextId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionObjectiveDefinitionEntry>()
+                .Property(entry => entry.ClientCounter1TextId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionObjectiveDefinitionEntry>()
+                .Property(entry => entry.ClientCounter2TextId)
                 .AsUnsignedInt(_dbContextPropertyModifier, 11);
             modelBuilder.Entity<MissionObjectiveDefinitionEntry>()
                 .Property(entry => entry.Ordinal)

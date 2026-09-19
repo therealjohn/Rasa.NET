@@ -40,7 +40,7 @@ namespace Rasa.Test.Missions
 
             var transition = content.Transitions.Values.Single();
             Assert.AreEqual(1, transition.Triggers.Count);
-            Assert.AreEqual(3, transition.Actions.Count);
+            Assert.AreEqual(4, transition.Actions.Count);
         }
 
         [TestMethod]
@@ -84,6 +84,112 @@ namespace Rasa.Test.Missions
             Assert.IsNotNull(rule);
             Assert.AreEqual(Rasa.Data.MissionProgressEventKind.CreatureKilled, rule.Kind);
             CollectionAssert.AreEqual(new uint[] { 501 }, rule.Subjects.ToArray());
+        }
+
+        [TestMethod]
+        public void LoaderScopesTransitionDefinitionsByObjectiveAndTransitionId()
+        {
+            var fixture = MissionContentFixture.CreateValid();
+            fixture.Transitions[0].TransitionId = 1;
+            fixture.Triggers[0].TransitionId = 1;
+            fixture.Actions.ForEach(action => action.TransitionId = 1);
+            fixture.Transitions.Add(new Rasa.Structures.World.MissionObjectiveTransitionEntry
+            {
+                MissionId = 321,
+                ContentRevision = "deployment_11",
+                ObjectiveId = 11,
+                TransitionId = 1,
+                Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
+                Sequence = 2,
+                FromState = (byte)Rasa.Data.MissionObjectiveState.Incomplete,
+                ToState = (byte)Rasa.Data.MissionObjectiveState.Completed,
+                Comment = "Objective-local transition id"
+            });
+            fixture.Triggers.Add(new Rasa.Structures.World.MissionTriggerEntry
+            {
+                MissionId = 321,
+                ContentRevision = "deployment_11",
+                ObjectiveId = 11,
+                TransitionId = 1,
+                TriggerId = 2,
+                Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
+                Kind = Rasa.Structures.World.MissionTriggerKind.ProgressEvent,
+                Sequence = 1,
+                EventKind = (byte)Rasa.Data.MissionProgressEventKind.CreatureKilled,
+                SubjectId = 501,
+                Comment = "Kill creature 501"
+            });
+            fixture.Actions.Add(new Rasa.Structures.World.MissionActionEntry
+            {
+                MissionId = 321,
+                ContentRevision = "deployment_11",
+                ObjectiveId = 11,
+                TransitionId = 1,
+                ActionId = 90,
+                Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
+                Kind = Rasa.Structures.World.MissionActionKind.CompleteObjective,
+                Sequence = 1,
+                TargetObjectiveId = 11,
+                ObjectiveState = (byte)Rasa.Data.MissionObjectiveState.Completed,
+                Comment = "Complete objective 11"
+            });
+
+            var snapshot = new MissionContentLoader().Load(fixture.CreateRepository());
+            var content = snapshot.Definitions[321];
+            var objectiveTenTransition = content.Transitions[(10U, 1U)];
+            var objectiveElevenTransition = content.Transitions[(11U, 1U)];
+
+            Assert.AreEqual(2, content.Transitions.Count);
+            Assert.AreEqual(Rasa.Structures.World.MissionTriggerKind.Conversation,
+                objectiveTenTransition.Triggers.Single().Kind);
+            Assert.AreEqual(4, objectiveTenTransition.Actions.Count);
+            Assert.AreEqual(Rasa.Structures.World.MissionTriggerKind.ProgressEvent,
+                objectiveElevenTransition.Triggers.Single().Kind);
+            Assert.AreEqual(1, objectiveElevenTransition.Actions.Count);
+            Assert.IsNotNull(content.Mission.Objectives[11].ProgressRule);
+            Assert.AreEqual(Rasa.Data.MissionProgressEventKind.CreatureKilled,
+                content.Mission.Objectives[11].ProgressRule.Kind);
+        }
+
+        [TestMethod]
+        public void MissionManagerUsesReferencedGrantRewardInsteadOfLowestRewardId()
+        {
+            var fixture = MissionContentFixture.CreateValid();
+            fixture.Rewards.Add(new Rasa.Structures.World.MissionRewardDefinitionEntry
+            {
+                MissionId = 321,
+                ContentRevision = "deployment_11",
+                RewardId = 39,
+                Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
+                Experience = 1,
+                Credits = 5,
+                Prestige = 0,
+                SelectionCount = 0,
+                Comment = "Lower id reward"
+            });
+            fixture.RewardItems.Add(new Rasa.Structures.World.MissionRewardItemEntry
+            {
+                MissionId = 321,
+                ContentRevision = "deployment_11",
+                RewardId = 39,
+                ItemId = 1,
+                Kind = Rasa.Structures.World.MissionRewardItemKind.Fixed,
+                ItemTemplateId = 28,
+                Quantity = 1
+            });
+            using var context = MissionTestContext.WithCustomDefinitions(
+                new System.Collections.Generic.Dictionary<uint, Mission>());
+            var manager = new MissionManager(
+                new MissionContentLoadingFactory(context, fixture.CreateWorldUnitOfWork()),
+                new System.Collections.Generic.Dictionary<uint, Mission>());
+
+            var report = manager.LoadMissions();
+
+            Assert.IsFalse(report.BlocksReadiness);
+            Assert.IsTrue(manager.TryGetRewardInfo(321, out var rewardInfo));
+            Assert.AreEqual(75U, rewardInfo.FixedReward.Credits[Rasa.Data.CurencyType.Credits]);
+            Assert.AreEqual(10U, rewardInfo.FixedReward.Credits[Rasa.Data.CurencyType.Prestige]);
+            Assert.AreEqual(1, rewardInfo.SelectableReward.Count);
         }
 
         [TestMethod]

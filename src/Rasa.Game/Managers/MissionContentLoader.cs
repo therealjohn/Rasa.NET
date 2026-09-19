@@ -164,7 +164,7 @@ namespace Rasa.Managers
             return revisions[0];
         }
 
-        private static IReadOnlyDictionary<uint, MissionObjectiveTransitionDefinition> BuildTransitions(
+        private static IReadOnlyDictionary<(uint ObjectiveId, uint TransitionId), MissionObjectiveTransitionDefinition> BuildTransitions(
             uint missionId,
             string contentRevision,
             IEnumerable<MissionObjectiveTransitionEntry> transitions,
@@ -175,18 +175,18 @@ namespace Rasa.Managers
                 .Where(entry =>
                     entry.MissionId == missionId &&
                     string.Equals(entry.ContentRevision, contentRevision, StringComparison.Ordinal))
-                .ToLookup(entry => entry.TransitionId);
+                .ToLookup(entry => (entry.ObjectiveId, entry.TransitionId));
             var missionActions = actions
                 .Where(entry =>
                     entry.MissionId == missionId &&
                     string.Equals(entry.ContentRevision, contentRevision, StringComparison.Ordinal))
-                .ToLookup(entry => entry.TransitionId);
+                .ToLookup(entry => (entry.ObjectiveId, entry.TransitionId));
 
             return transitions
                 .Where(entry =>
                     entry.MissionId == missionId &&
                     string.Equals(entry.ContentRevision, contentRevision, StringComparison.Ordinal))
-                .GroupBy(entry => entry.TransitionId)
+                .GroupBy(entry => (entry.ObjectiveId, entry.TransitionId))
                 .ToDictionary(
                     group => group.Key,
                     group => new MissionObjectiveTransitionDefinition(
@@ -198,7 +198,7 @@ namespace Rasa.Managers
         private static IReadOnlyDictionary<uint, MissionObjectiveDefinition> BuildObjectives(
             IReadOnlyDictionary<uint, MissionObjectiveDefinitionEntry> objectives,
             IReadOnlyDictionary<uint, MissionIndicator[]> indicators,
-            IReadOnlyDictionary<uint, MissionObjectiveTransitionDefinition> transitions)
+            IReadOnlyDictionary<(uint ObjectiveId, uint TransitionId), MissionObjectiveTransitionDefinition> transitions)
         {
             var objectiveDefinitions = new Dictionary<uint, MissionObjectiveDefinition>();
             var transitionsByObjective = transitions.Values.ToLookup(transition => transition.ObjectiveId);
@@ -237,11 +237,14 @@ namespace Rasa.Managers
                     }
 
                     if (progressRule == null &&
-                        TryBuildProgressRule(
-                            transition,
+                        MissionProgressRuleAuthoring.TryBuild(
+                            transition.Triggers
+                                .Where(trigger => trigger.Kind == MissionTriggerKind.ProgressEvent)
+                                .ToArray(),
                             out var candidate,
                             out var derivedCounters,
-                            out var derivedItemCounters))
+                            out var derivedItemCounters,
+                            out _))
                     {
                         progressRule = candidate;
                         foreach (var counter in derivedCounters)
@@ -251,23 +254,18 @@ namespace Rasa.Managers
                     }
                 }
 
-                var counterTextIds = counters.Count == 0
-                    ? new uint?[] { null, null, null }
-                    : Enumerable.Range(
-                            0,
-                            Math.Max(
-                                counters.Keys.Select(value => (int)value).DefaultIfEmpty(-1).Max() + 1,
-                                3))
-                        .Select(_ => (uint?)null)
-                        .ToArray();
-
                 objectiveDefinitions.Add(
                     objectiveEntry.ObjectiveId,
                     new MissionObjectiveDefinition(
                         objectiveEntry.ObjectiveId,
                         NormalizeTextId(objectiveEntry.ClientNameTextId),
                         NormalizeTextId(objectiveEntry.ClientBodyTextId),
-                        counterTextIds,
+                        new uint?[]
+                        {
+                            NormalizeTextId(objectiveEntry.ClientCounter0TextId ?? 0),
+                            NormalizeTextId(objectiveEntry.ClientCounter1TextId ?? 0),
+                            NormalizeTextId(objectiveEntry.ClientCounter2TextId ?? 0)
+                        },
                         objectiveEntry.Ordinal,
                         ParseObjectiveState(objectiveEntry.InitialState),
                         objectiveEntry.IsRequired,
@@ -283,106 +281,6 @@ namespace Rasa.Managers
             }
 
             return objectiveDefinitions;
-        }
-
-        private static bool TryBuildProgressRule(
-            MissionObjectiveTransitionDefinition transition,
-            out MissionProgressRule rule,
-            out IReadOnlyDictionary<uint, MissionObjectiveCounterDefinition> counters,
-            out IReadOnlyDictionary<uint, MissionObjectiveItemCounterDefinition> itemCounters)
-        {
-            counters = new Dictionary<uint, MissionObjectiveCounterDefinition>();
-            itemCounters = new Dictionary<uint, MissionObjectiveItemCounterDefinition>();
-            rule = null;
-
-            var progressTriggers = transition.Triggers
-                .Where(trigger => trigger.Kind == MissionTriggerKind.ProgressEvent)
-                .ToArray();
-            if (progressTriggers.Length == 0)
-                return false;
-            if (progressTriggers.Any(trigger => !trigger.TryGetEventKind(out _)))
-                return false;
-            if (progressTriggers.Length == 1)
-            {
-                var trigger = progressTriggers[0];
-                trigger.TryGetEventKind(out var kind);
-                if (!trigger.SubjectId.HasValue || trigger.SubjectId.Value == 0)
-                    return false;
-                if (kind == MissionProgressEventKind.ItemAcquired ||
-                    kind == MissionProgressEventKind.ItemConsumed)
-                {
-                    if (!trigger.InitialValue.HasValue || !trigger.TargetValue.HasValue)
-                        return false;
-                    itemCounters = new Dictionary<uint, MissionObjectiveItemCounterDefinition>
-                    {
-                        [trigger.SubjectId.Value] = new(
-                            trigger.SubjectId.Value,
-                            trigger.InitialValue.Value,
-                            trigger.TargetValue.Value)
-                    };
-                    rule = MissionProgressRule.IncrementItemCounterOnExactSubject(
-                        kind,
-                        trigger.SubjectId.Value,
-                        trigger.InitialValue.Value,
-                        trigger.TargetValue.Value);
-                    return true;
-                }
-
-                if (trigger.CounterId.HasValue &&
-                    trigger.InitialValue.HasValue &&
-                    trigger.TargetValue.HasValue)
-                {
-                    counters = new Dictionary<uint, MissionObjectiveCounterDefinition>
-                    {
-                        [trigger.CounterId.Value] = new(
-                            trigger.CounterId.Value,
-                            trigger.InitialValue.Value,
-                            trigger.TargetValue.Value)
-                    };
-                    rule = MissionProgressRule.IncrementCounterOnExactSubject(
-                        kind,
-                        trigger.SubjectId.Value,
-                        trigger.CounterId.Value,
-                        trigger.InitialValue.Value,
-                        trigger.TargetValue.Value);
-                    return true;
-                }
-
-                if (kind == MissionProgressEventKind.WaypointAcquired ||
-                    kind == MissionProgressEventKind.LogosAcquired)
-                {
-                    rule = MissionProgressRule.CompleteWhenAllDistinctSubjectsObserved(
-                        kind,
-                        new HashSet<uint> { trigger.SubjectId.Value });
-                    return true;
-                }
-
-                rule = MissionProgressRule.CompleteOnExactSubject(
-                    kind,
-                    trigger.SubjectId.Value);
-                return true;
-            }
-
-            if (!progressTriggers.All(trigger =>
-                    trigger.SubjectId.HasValue &&
-                    trigger.SubjectId.Value != 0 &&
-                    !trigger.CounterId.HasValue &&
-                    !trigger.InitialValue.HasValue &&
-                    !trigger.TargetValue.HasValue))
-                return false;
-            progressTriggers[0].TryGetEventKind(out var aggregateKind);
-            if (aggregateKind != MissionProgressEventKind.WaypointAcquired &&
-                aggregateKind != MissionProgressEventKind.LogosAcquired)
-                return false;
-            if (!progressTriggers.All(trigger =>
-                    trigger.TryGetEventKind(out var kind) &&
-                    kind == aggregateKind))
-                return false;
-
-            rule = MissionProgressRule.CompleteWhenAllDistinctSubjectsObserved(
-                aggregateKind,
-                new HashSet<uint>(progressTriggers.Select(trigger => trigger.SubjectId.Value)));
-            return true;
         }
 
         private static IReadOnlyDictionary<uint, MissionAuthoringRewardDefinition> BuildRewards(

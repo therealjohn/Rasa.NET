@@ -18,6 +18,7 @@ namespace Rasa.Managers
     using Structures;
     using Structures.Char;
     using Structures.Missions;
+    using Structures.World;
 
     internal readonly struct MissionRewardItem
     {
@@ -272,6 +273,7 @@ namespace Rasa.Managers
         private readonly Dictionary<uint, Mission> _loadedMissions;
         private readonly IReadOnlyDictionary<uint, Mission> _loadedMissionsView;
         private readonly Dictionary<uint, MissionRewardDefinition> _rewardDefinitions;
+        private readonly Dictionary<uint, IReadOnlyList<MissionPrerequisiteDefinition>> _prerequisitesByMission;
         private readonly ManifestationManager _manifestationManager;
         private readonly Action<Item> _beforeRewardItemPublication;
         private readonly Action<PythonPacket> _beforeMissionPacketPublication;
@@ -328,6 +330,7 @@ namespace Rasa.Managers
             _loadedMissionsView = new ReadOnlyDictionary<uint, Mission>(_loadedMissions);
             _rewardDefinitions = new Dictionary<uint, MissionRewardDefinition>(
                 rewardDefinitions ?? new Dictionary<uint, MissionRewardDefinition>());
+            _prerequisitesByMission = new Dictionary<uint, IReadOnlyList<MissionPrerequisiteDefinition>>();
             _manifestationManager = manifestationManager;
             _beforeRewardItemPublication = beforeRewardItemPublication;
             _beforeMissionPacketPublication = beforeMissionPacketPublication;
@@ -338,6 +341,7 @@ namespace Rasa.Managers
             using var unitOfWork = _gameUnitOfWorkFactory.CreateWorld();
             _loadedMissions.Clear();
             _rewardDefinitions.Clear();
+            _prerequisitesByMission.Clear();
 
             if (unitOfWork.MissionContent != null)
             {
@@ -347,6 +351,8 @@ namespace Rasa.Managers
                     _loadedMissions[definition.Key] = definition.Value;
                 foreach (var reward in MissionDefinitionCatalog.CreateRewardDefinitions(snapshot, report))
                     _rewardDefinitions[reward.Key] = reward.Value;
+                foreach (var definition in snapshot.Definitions.Values)
+                    _prerequisitesByMission[definition.MissionId] = definition.Prerequisites;
                 LatestValidationReport = report;
                 return report;
             }
@@ -519,6 +525,8 @@ namespace Rasa.Managers
                     return Reject($"Rejected mission {missionId}: NPC entity {npcEntityId} is not in the current map instance.");
                 if (npc.Npc == null || npc.DbId != definition.MissionGiver)
                     return Reject($"Rejected mission {missionId}: NPC {npc.DbId} is not its authoritative giver.");
+                if (!ArePrerequisitesSatisfied(client.Player, missionId, out var prerequisiteFailure))
+                    return Reject($"Rejected mission {missionId}: {prerequisiteFailure}");
                 if (client.Player.Missions.ContainsKey(missionId))
                     return Reject($"Rejected mission {missionId}: character {client.Player.Id} already has it.");
 
@@ -544,6 +552,12 @@ namespace Rasa.Managers
                             durableLogFull = true;
                             return;
                         }
+                        if (!ArePrerequisitesSatisfied(
+                                client.Player,
+                                missionId,
+                                unitOfWork,
+                                out prerequisiteFailure))
+                            return;
                         if (unitOfWork.CharacterMissions.GetByCharacterAndMission(
                                 client.Player.Id, missionId) != null)
                             return;
@@ -595,7 +609,9 @@ namespace Rasa.Managers
                     return false;
                 }
                 if (!accepted)
-                    return Reject($"Rejected mission {missionId}: character {client.Player.Id} already has it.");
+                    return Reject(string.IsNullOrWhiteSpace(prerequisiteFailure)
+                        ? $"Rejected mission {missionId}: character {client.Player.Id} already has it."
+                        : $"Rejected mission {missionId}: {prerequisiteFailure}");
 
                 client.Player.Missions.Add(missionId, log);
                 client.CallMethod(
@@ -1655,6 +1671,169 @@ namespace Rasa.Managers
             return false;
         }
 
+        private bool ArePrerequisitesSatisfied(
+            Manifestation player,
+            uint missionId,
+            out string failure)
+        {
+            failure = null;
+            if (!_prerequisitesByMission.TryGetValue(missionId, out var prerequisites) ||
+                prerequisites.Count == 0)
+                return true;
+
+            foreach (var prerequisite in prerequisites)
+            {
+                if (IsPrerequisiteSatisfied(player, prerequisite))
+                    continue;
+
+                failure = DescribePrerequisiteFailure(prerequisite);
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool ArePrerequisitesSatisfied(
+            Manifestation player,
+            uint missionId,
+            ICharUnitOfWork unitOfWork,
+            out string failure)
+        {
+            failure = null;
+            if (!ArePrerequisitesSatisfied(player, missionId, out failure))
+                return false;
+            if (!_prerequisitesByMission.TryGetValue(missionId, out var prerequisites) ||
+                prerequisites.Count == 0)
+                return true;
+
+            var durableCharacter = unitOfWork.Characters.Get(player.Id);
+            foreach (var prerequisite in prerequisites)
+            {
+                if (IsPrerequisiteSatisfied(player, prerequisite, durableCharacter, unitOfWork))
+                    continue;
+
+                failure = DescribePrerequisiteFailure(prerequisite);
+                return false;
+            }
+
+            return true;
+        }
+
+        private static bool IsPrerequisiteSatisfied(
+            Manifestation player,
+            MissionPrerequisiteDefinition prerequisite) =>
+            prerequisite.Kind switch
+            {
+                MissionPrerequisiteKind.MissionCompleted =>
+                    TryGetMissionLogState(player.Missions, prerequisite.RequiredMissionId, out var completedState) &&
+                    IsMissionStateSatisfied(completedState, prerequisite.RequiredMissionStateValue),
+                MissionPrerequisiteKind.MissionAccepted =>
+                    TryGetMissionLogState(player.Missions, prerequisite.RequiredMissionId, out var acceptedState) &&
+                    IsMissionStateSatisfied(acceptedState, prerequisite.RequiredMissionStateValue, requirePresenceOnly: true),
+                MissionPrerequisiteKind.PlayerLevelAtLeast =>
+                    prerequisite.RequiredLevel.HasValue &&
+                    player.Level >= prerequisite.RequiredLevel.Value,
+                MissionPrerequisiteKind.PlayerFlagValue =>
+                    prerequisite.PlayerFlagId.HasValue &&
+                    prerequisite.PlayerFlagValue.HasValue &&
+                    player.PlayerFlags.TryGetValue(prerequisite.PlayerFlagId.Value, out var value) &&
+                    value == prerequisite.PlayerFlagValue.Value,
+                _ => false
+            };
+
+        private static bool IsPrerequisiteSatisfied(
+            Manifestation player,
+            MissionPrerequisiteDefinition prerequisite,
+            CharacterEntry durableCharacter,
+            ICharUnitOfWork unitOfWork) =>
+            prerequisite.Kind switch
+            {
+                MissionPrerequisiteKind.MissionCompleted =>
+                    TryGetDurableMissionState(unitOfWork, player.Id, prerequisite.RequiredMissionId, out var completedState) &&
+                    IsMissionStateSatisfied(completedState, prerequisite.RequiredMissionStateValue),
+                MissionPrerequisiteKind.MissionAccepted =>
+                    TryGetDurableMissionState(unitOfWork, player.Id, prerequisite.RequiredMissionId, out var acceptedState) &&
+                    IsMissionStateSatisfied(acceptedState, prerequisite.RequiredMissionStateValue, requirePresenceOnly: true),
+                MissionPrerequisiteKind.PlayerLevelAtLeast =>
+                    prerequisite.RequiredLevel.HasValue &&
+                    durableCharacter != null &&
+                    durableCharacter.Level >= prerequisite.RequiredLevel.Value,
+                MissionPrerequisiteKind.PlayerFlagValue =>
+                    IsPrerequisiteSatisfied(player, prerequisite),
+                _ => false
+            };
+
+        private static bool TryGetMissionLogState(
+            IReadOnlyDictionary<uint, MissionLog> missions,
+            uint? missionId,
+            out MissionState state)
+        {
+            if (missionId.HasValue &&
+                missions.TryGetValue(missionId.Value, out var log))
+            {
+                state = log.State;
+                return true;
+            }
+
+            state = default;
+            return false;
+        }
+
+        private static bool TryGetDurableMissionState(
+            ICharUnitOfWork unitOfWork,
+            uint characterId,
+            uint? missionId,
+            out MissionState state)
+        {
+            if (missionId.HasValue)
+            {
+                var mission = unitOfWork.CharacterMissions.GetByCharacterAndMission(
+                    characterId,
+                    missionId.Value);
+                if (mission != null &&
+                    Enum.IsDefined(typeof(MissionState), (int)mission.MissionState))
+                {
+                    state = (MissionState)mission.MissionState;
+                    return true;
+                }
+            }
+
+            state = default;
+            return false;
+        }
+
+        private static bool IsMissionStateSatisfied(
+            MissionState state,
+            byte? requiredStateValue,
+            bool requirePresenceOnly = false)
+        {
+            if (requiredStateValue.HasValue)
+            {
+                if (!Enum.IsDefined(typeof(MissionState), (int)requiredStateValue.Value))
+                    return false;
+                return state == (MissionState)requiredStateValue.Value;
+            }
+
+            if (requirePresenceOnly)
+                return true;
+            return state is MissionState.Success or MissionState.Completed;
+        }
+
+        private static string DescribePrerequisiteFailure(
+            MissionPrerequisiteDefinition prerequisite) =>
+            prerequisite.Kind switch
+            {
+                MissionPrerequisiteKind.MissionCompleted =>
+                    $"required mission {prerequisite.RequiredMissionId?.ToString() ?? "null"} is not in the required completed state.",
+                MissionPrerequisiteKind.MissionAccepted =>
+                    $"required mission {prerequisite.RequiredMissionId?.ToString() ?? "null"} is not currently accepted.",
+                MissionPrerequisiteKind.PlayerLevelAtLeast =>
+                    $"required level {prerequisite.RequiredLevel?.ToString() ?? "null"} is not satisfied.",
+                MissionPrerequisiteKind.PlayerFlagValue =>
+                    $"required player flag {prerequisite.PlayerFlagId?.ToString() ?? "null"} value {prerequisite.PlayerFlagValue?.ToString() ?? "null"} is not satisfied.",
+                _ => $"unsupported prerequisite kind {(int)prerequisite.Kind}."
+            };
+
         internal MissionConversationState ClassifyNpcConversation(
             Manifestation player,
             Creature creature)
@@ -1670,7 +1849,8 @@ namespace Rasa.Managers
                     continue;
                 if (!player.Missions.TryGetValue(mission.MissionId, out var log))
                 {
-                    if (mission.MissionGiver == creature.DbId)
+                    if (mission.MissionGiver == creature.DbId &&
+                        ArePrerequisitesSatisfied(player, mission.MissionId, out _))
                         dispensable.Add(
                             mission.MissionId,
                             mission.CreateInfo(

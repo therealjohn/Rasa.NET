@@ -196,9 +196,58 @@ namespace Rasa.Test.Missions
                 fixture.Triggers[0].Kind = (MissionTriggerKind)99;
             }, "unsupported-trigger");
 
+            yield return Case("unsupported area trigger runtime", fixture =>
+            {
+                fixture.Triggers[0].Kind = MissionTriggerKind.AreaEntered;
+                fixture.Triggers[0].NpcPackageId = null;
+                fixture.Triggers[0].PlayerFlagId = null;
+                fixture.Triggers[0].AreaId = 30;
+            }, "unsupported-trigger");
+
+            yield return Case("unsupported timer trigger runtime", fixture =>
+            {
+                fixture.Triggers[0].Kind = MissionTriggerKind.TimerElapsed;
+                fixture.Triggers[0].NpcPackageId = null;
+                fixture.Triggers[0].PlayerFlagId = null;
+                fixture.Triggers[0].DurationSeconds = 5;
+            }, "unsupported-trigger");
+
             yield return Case("unsupported action", fixture =>
             {
                 fixture.Actions[0].Kind = (MissionActionKind)99;
+            }, "unsupported-action");
+
+            yield return Case("unsupported scenario action runtime", fixture =>
+            {
+                fixture.Actions[0].Kind = MissionActionKind.StartScenario;
+                fixture.Actions[0].TargetObjectiveId = null;
+                fixture.Actions[0].ObjectiveState = null;
+                fixture.Actions[0].ScenarioId = 60;
+            }, "unsupported-action");
+
+            yield return Case("unsupported spawn action runtime", fixture =>
+            {
+                fixture.Actions[0].Kind = MissionActionKind.ActivateSpawnGroup;
+                fixture.Actions[0].TargetObjectiveId = null;
+                fixture.Actions[0].ObjectiveState = null;
+                fixture.Actions[0].SpawnGroupId = 50;
+            }, "unsupported-action");
+
+            yield return Case("unsupported indicator action runtime", fixture =>
+            {
+                fixture.Actions[0].Kind = MissionActionKind.ShowIndicator;
+                fixture.Actions[0].TargetObjectiveId = null;
+                fixture.Actions[0].ObjectiveState = null;
+                fixture.Actions[0].IndicatorId = 70;
+            }, "unsupported-action");
+
+            yield return Case("unsupported player flag action runtime", fixture =>
+            {
+                fixture.Actions[0].Kind = MissionActionKind.SetPlayerFlag;
+                fixture.Actions[0].TargetObjectiveId = null;
+                fixture.Actions[0].ObjectiveState = null;
+                fixture.Actions[0].PlayerFlagId = 7;
+                fixture.Actions[0].PlayerFlagValue = 2;
             }, "unsupported-action");
 
             yield return Case("missing npc package", fixture =>
@@ -267,6 +316,37 @@ namespace Rasa.Test.Missions
             {
                 fixture.Rewards.Clear();
                 fixture.RewardItems.Clear();
+            }, "missing-reward");
+
+            yield return Case("missing reward reference", fixture =>
+            {
+                fixture.Actions.RemoveAll(action => action.Kind == MissionActionKind.GrantReward);
+            }, "missing-reward-reference");
+
+            yield return Case("ambiguous reward reference", fixture =>
+            {
+                fixture.Rewards.Add(new MissionRewardDefinitionEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    RewardId = 41,
+                    Requirement = MissionContentRequirement.Required,
+                    Experience = 10,
+                    Credits = 1,
+                    Prestige = 0,
+                    SelectionCount = 0,
+                    Comment = "Alternate reward"
+                });
+                fixture.RewardItems.Add(new MissionRewardItemEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    RewardId = 41,
+                    ItemId = 1,
+                    Kind = MissionRewardItemKind.Fixed,
+                    ItemTemplateId = 28,
+                    Quantity = 1
+                });
                 fixture.Actions.Add(new MissionActionEntry
                 {
                     MissionId = 321,
@@ -277,15 +357,44 @@ namespace Rasa.Test.Missions
                     Requirement = MissionContentRequirement.Required,
                     Kind = MissionActionKind.GrantReward,
                     Sequence = 97,
-                    RewardId = 40,
-                    Comment = "Missing reward"
+                    RewardId = 41,
+                    Comment = "Grant alternate reward"
                 });
-            }, "missing-reward");
+            }, "ambiguous-reward-reference");
 
             yield return Case("missing client text", fixture =>
             {
                 fixture.Objectives[0].ClientBodyTextId = 0;
             }, "missing-client-text");
+
+            yield return Case("missing counter text binding", fixture =>
+            {
+                fixture.Triggers[0].Kind = MissionTriggerKind.ProgressEvent;
+                fixture.Triggers[0].NpcPackageId = null;
+                fixture.Triggers[0].PlayerFlagId = null;
+                fixture.Triggers[0].EventKind = (byte)MissionProgressEventKind.CreatureKilled;
+                fixture.Triggers[0].SubjectId = 501;
+                fixture.Triggers[0].CounterId = 0;
+                fixture.Triggers[0].InitialValue = 0;
+                fixture.Triggers[0].TargetValue = 3;
+                fixture.Triggers[0].SourceSpawnResolved = null;
+            }, "invalid-counter-text-binding");
+
+            yield return Case("out of range counter text binding", fixture =>
+            {
+                fixture.Objectives[0].ClientCounter0TextId = 9100;
+                fixture.Objectives[0].ClientCounter1TextId = 9101;
+                fixture.Objectives[0].ClientCounter2TextId = 9102;
+                fixture.Triggers[0].Kind = MissionTriggerKind.ProgressEvent;
+                fixture.Triggers[0].NpcPackageId = null;
+                fixture.Triggers[0].PlayerFlagId = null;
+                fixture.Triggers[0].EventKind = (byte)MissionProgressEventKind.CreatureKilled;
+                fixture.Triggers[0].SubjectId = 501;
+                fixture.Triggers[0].CounterId = 3;
+                fixture.Triggers[0].InitialValue = 0;
+                fixture.Triggers[0].TargetValue = 3;
+                fixture.Triggers[0].SourceSpawnResolved = null;
+            }, "invalid-counter-text-binding");
 
             yield return Case("invalid radius", fixture =>
             {
@@ -310,6 +419,33 @@ namespace Rasa.Test.Missions
                 fixture.Rewards[0].SelectionCount = 1;
                 fixture.RewardItems.RemoveAll(item => item.Kind == MissionRewardItemKind.Selectable);
             }, "invalid-reward-selection");
+
+            yield return Case("invalid progress event", fixture =>
+            {
+                fixture.Triggers[0].Kind = MissionTriggerKind.ProgressEvent;
+                fixture.Triggers[0].NpcPackageId = null;
+                fixture.Triggers[0].PlayerFlagId = null;
+                fixture.Triggers[0].EventKind = (byte)MissionProgressEventKind.CreatureKilled;
+                fixture.Triggers[0].SubjectId = 501;
+                fixture.Triggers[0].CounterId = null;
+                fixture.Triggers[0].InitialValue = null;
+                fixture.Triggers[0].TargetValue = null;
+                fixture.Triggers[0].SourceSpawnResolved = null;
+                fixture.Triggers.Add(new MissionTriggerEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ObjectiveId = 10,
+                    TransitionId = 20,
+                    TriggerId = 2,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionTriggerKind.ProgressEvent,
+                    Sequence = 2,
+                    EventKind = (byte)MissionProgressEventKind.CreatureKilled,
+                    SubjectId = 502,
+                    Comment = "Invalid mixed multi-trigger exact rule"
+                });
+            }, "invalid-progress-event");
 
             yield return Case("cross revision reference", fixture =>
             {

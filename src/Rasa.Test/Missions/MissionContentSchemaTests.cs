@@ -145,6 +145,9 @@ namespace Rasa.Test.Missions
 
             Assert.AreEqual("content_revision", content.FindProperty("ContentRevision")?.GetColumnName());
             Assert.AreEqual("requirement", content.FindProperty("Requirement")?.GetColumnName());
+            Assert.AreEqual("client_counter_0_text_id", objective.FindProperty("ClientCounter0TextId")?.GetColumnName());
+            Assert.AreEqual("client_counter_1_text_id", objective.FindProperty("ClientCounter1TextId")?.GetColumnName());
+            Assert.AreEqual("client_counter_2_text_id", objective.FindProperty("ClientCounter2TextId")?.GetColumnName());
             Assert.IsNull(reward.FindProperty("Kind"), "Reward definitions should no longer encode fixed/selectable shape.");
             Assert.AreEqual("selection_count", reward.FindProperty("SelectionCount")?.GetColumnName());
             Assert.AreEqual("kind", rewardItem.FindProperty("Kind")?.GetColumnName());
@@ -208,6 +211,9 @@ namespace Rasa.Test.Missions
             StringAssert.Contains(sql, "selection_count in (0, 1)");
             StringAssert.Contains(sql, "kind in (1, 2)");
             StringAssert.Contains(sql, "source_uri is not null or local_client_path is not null");
+            StringAssert.Contains(sql, "client_counter_0_text_id");
+            StringAssert.Contains(sql, "client_counter_1_text_id");
+            StringAssert.Contains(sql, "client_counter_2_text_id");
             StringAssert.Contains(
                 sql,
                 "foreign key (mission_id, content_revision, related_objective_id) references mission_objective_definition (mission_id, content_revision, objective_id) on delete restrict");
@@ -610,6 +616,64 @@ namespace Rasa.Test.Missions
                     var indicator = failing.MissionIndicatorEntries.Single(entry => entry.IndicatorId == 70);
                     failing.MissionIndicatorEntries.Remove(indicator);
                 });
+            });
+        }
+
+        [TestMethod]
+        public void SqliteMissionContentMigrationAcceptsSupportedProgressEventShapesAndCounterTextColumns()
+        {
+            WithDisposableSqliteWorld((context, _) =>
+            {
+                context.Database.Migrate();
+                SeedAuthoredMissionGraph(context);
+
+                var objective = context.MissionObjectiveDefinitionEntries.Single(entry =>
+                    entry.MissionId == 321 &&
+                    entry.ContentRevision == "deployment_11" &&
+                    entry.ObjectiveId == 10);
+                objective.ClientCounter0TextId = 9100;
+                objective.ClientCounter1TextId = 9101;
+                objective.ClientCounter2TextId = 9102;
+                context.MissionTriggerEntries.Add(new MissionTriggerEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ObjectiveId = 10,
+                    TransitionId = 20,
+                    TriggerId = 10,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionTriggerKind.ProgressEvent,
+                    Sequence = 10,
+                    EventKind = (byte)Rasa.Data.MissionProgressEventKind.CreatureKilled,
+                    SubjectId = 501,
+                    Comment = "Exact progress event"
+                });
+                context.MissionTriggerEntries.Add(new MissionTriggerEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ObjectiveId = 10,
+                    TransitionId = 20,
+                    TriggerId = 11,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionTriggerKind.ProgressEvent,
+                    Sequence = 11,
+                    EventKind = (byte)Rasa.Data.MissionProgressEventKind.ItemAcquired,
+                    SubjectId = 3147,
+                    InitialValue = 0,
+                    TargetValue = 2,
+                    Comment = "Item counter progress event"
+                });
+
+                context.SaveChanges();
+
+                var reloaded = context.MissionObjectiveDefinitionEntries.Single(entry =>
+                    entry.MissionId == 321 &&
+                    entry.ContentRevision == "deployment_11" &&
+                    entry.ObjectiveId == 10);
+                Assert.AreEqual(9100U, reloaded.ClientCounter0TextId);
+                Assert.AreEqual(9101U, reloaded.ClientCounter1TextId);
+                Assert.AreEqual(9102U, reloaded.ClientCounter2TextId);
             });
         }
 
