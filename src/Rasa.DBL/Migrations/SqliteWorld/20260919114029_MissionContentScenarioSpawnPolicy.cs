@@ -26,6 +26,8 @@ namespace Rasa.Migrations.SqliteWorld
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.Sql(
+                "UPDATE mission_spawn_group SET respawn_seconds = 1 WHERE mission_id = 1994 AND spawn_group_id IN (1, 2, 3)");
             migrationBuilder.DropColumn(
                 name: "spawn_policy",
                 table: "mission_spawn_group");

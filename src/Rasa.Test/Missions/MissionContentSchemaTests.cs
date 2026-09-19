@@ -408,6 +408,83 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
+        [DataRow(typeof(SqliteWorldContext),
+            "update mission_spawn_group set respawn_seconds = 1 where mission_id = 1994 and spawn_group_id in (1, 2, 3)")]
+        [DataRow(typeof(MySqlWorldContext),
+            "update mission_spawn_group set respawn_seconds = 1 where mission_id = 1994 and spawn_group_id in (1, 2, 3)")]
+        public void MissionContentScenarioSpawnPolicyDownMigrationRestoresLegacyRespawnSecondsBeforeDroppingSpawnPolicy(
+            Type contextType,
+            string expectedRestoreSql)
+        {
+            using var context = CreateContext(contextType, "unused");
+            var migration = CreateMigration(context, "MissionContentScenarioSpawnPolicy");
+
+            var restoreRespawnSeconds = migration.DownOperations
+                .Select((operation, index) => (operation, index))
+                .Where(item => item.operation is SqlOperation)
+                .Select(item => (((SqlOperation)item.operation).Sql, item.index))
+                .Single(item => NormalizeSql(item.Sql).Contains(
+                    expectedRestoreSql,
+                    StringComparison.Ordinal));
+            var dropSpawnPolicy = migration.DownOperations
+                .Select((operation, index) => (operation, index))
+                .Single(item => item.operation is DropColumnOperation column &&
+                    column.Table == "mission_spawn_group" &&
+                    column.Name == "spawn_policy");
+
+            Assert.IsTrue(restoreRespawnSeconds.index < dropSpawnPolicy.index, contextType.Name);
+        }
+
+        [TestMethod]
+        public void SqliteMissionContentScenarioSpawnPolicyDownMigrationRestoresBootcampRespawnSeconds()
+        {
+            WithDisposableSqliteWorld((context, database) =>
+            {
+                context.Database.Migrate();
+
+                var upgradedGroups = context.MissionSpawnGroupEntries
+                    .Where(entry => entry.MissionId == 1994 &&
+                                    entry.ContentRevision == "deployment_11" &&
+                                    entry.SpawnGroupId <= 3)
+                    .OrderBy(entry => entry.SpawnGroupId)
+                    .ToArray();
+                Assert.AreEqual(3, upgradedGroups.Length);
+                Assert.IsTrue(upgradedGroups.All(entry => entry.RespawnSeconds == null));
+                Assert.IsTrue(upgradedGroups.All(entry => entry.SpawnPolicy == MissionSpawnGroupPolicy.ScenarioControlled));
+
+                context.GetService<IMigrator>().Migrate("20260919110000_BootcampMissionContent");
+
+                using var connection = new SqliteConnection($"Data Source={database}.db");
+                connection.Open();
+
+                using var tableInfo = connection.CreateCommand();
+                tableInfo.CommandText =
+                    "SELECT COUNT(*) " +
+                    "FROM pragma_table_info('mission_spawn_group') " +
+                    "WHERE name = 'spawn_policy'";
+                Assert.AreEqual(0L, (long)tableInfo.ExecuteScalar()!);
+
+                using var command = connection.CreateCommand();
+                command.CommandText =
+                    "SELECT spawn_group_id, respawn_seconds " +
+                    "FROM mission_spawn_group " +
+                    "WHERE mission_id = 1994 AND content_revision = 'deployment_11' AND spawn_group_id IN (1, 2, 3) " +
+                    "ORDER BY spawn_group_id";
+
+                using var reader = command.ExecuteReader();
+                var restoredRespawnSeconds = new List<uint>();
+                while (reader.Read())
+                {
+                    restoredRespawnSeconds.Add(reader.GetFieldValue<uint>(1));
+                }
+
+                CollectionAssert.AreEqual(
+                    new uint[] { 1, 1, 1 },
+                    restoredRespawnSeconds.ToArray());
+            });
+        }
+
+        [TestMethod]
         public void SqliteMissionContentRewardShapeDownMigrationMapsMixedRewardsToSelectableKind()
         {
             WithDisposableSqliteWorld((context, database) =>

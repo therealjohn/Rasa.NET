@@ -17,6 +17,18 @@ namespace Rasa.Services.Preloader
         internal const string Revision = "deployment_11";
         internal const uint BootcampMapContextId = 1985;
         internal const uint WildernessMapContextId = 1220;
+        internal static readonly string[] LegacyMissionSpawnGroupColumns =
+        {
+            "mission_id",
+            "content_revision",
+            "spawn_group_id",
+            "requirement",
+            "area_id",
+            "map_context_id",
+            "enabled",
+            "respawn_seconds",
+            "comment"
+        };
 
         internal const uint MajorMcAllisterCreatureId = 510203;
         internal const uint CaptainDelessioCreatureId = 510204;
@@ -50,20 +62,39 @@ namespace Rasa.Services.Preloader
             System.Type entityType,
             IEnumerable<object[]> rows)
         {
-            var columns = entityType.GetProperties(BindingFlags.Instance | BindingFlags.Public)
+            Insert(migrationBuilder, tableName, GetColumns(entityType), rows);
+        }
+
+        internal static void Insert(
+            MigrationBuilder migrationBuilder,
+            string tableName,
+            IEnumerable<string> columns,
+            IEnumerable<object[]> rows)
+        {
+            var columnList = columns.ToArray();
+            if (columnList.Length == 0)
+                throw new InvalidOperationException($"No insert columns were defined for {tableName}.");
+
+            foreach (var row in rows)
+            {
+                if (row.Length != columnList.Length)
+                {
+                    throw new InvalidOperationException(
+                        $"Seed row length mismatch for {tableName}: expected {columnList.Length} values but received {row.Length}.");
+                }
+
+                var values = string.Join(", ", row.Select(ToSqlLiteral));
+                migrationBuilder.Sql(
+                    $"insert into {tableName} ({string.Join(", ", columnList)}) values ({values});");
+            }
+        }
+
+        private static string[] GetColumns(System.Type entityType) =>
+            entityType.GetProperties(BindingFlags.Instance | BindingFlags.Public)
                 .SelectMany(property => property.GetCustomAttributes<ColumnAttribute>())
                 .Select(attribute => attribute.Name)
                 .Where(name => !string.IsNullOrWhiteSpace(name))
                 .ToArray();
-
-            foreach (var row in rows)
-            {
-                var rowColumns = columns.Take(row.Length).ToArray();
-                var values = string.Join(", ", row.Select(ToSqlLiteral));
-                migrationBuilder.Sql(
-                    $"insert into {tableName} ({string.Join(", ", rowColumns)}) values ({values});");
-            }
-        }
 
         private static string ToSqlLiteral(object value)
         {
@@ -1094,7 +1125,11 @@ namespace Rasa.Services.Preloader
 
     public sealed class BootcampMissionSpawnGroupPreloader : PreloaderBase, IPreloader
     {
-        public void Preload(MigrationBuilder migrationBuilder) => BootcampWorldContentSeedData.Insert(migrationBuilder, MissionSpawnGroupEntry.TableName, typeof(MissionSpawnGroupEntry), GetRows());
+        public void Preload(MigrationBuilder migrationBuilder) => BootcampWorldContentSeedData.Insert(
+            migrationBuilder,
+            MissionSpawnGroupEntry.TableName,
+            BootcampWorldContentSeedData.LegacyMissionSpawnGroupColumns,
+            GetRows());
         protected override IEnumerable<object[]> GetRows() => BootcampWorldContentSeedData.MissionSpawnGroups();
     }
 

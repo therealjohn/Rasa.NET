@@ -21,6 +21,7 @@ namespace Rasa.Test.Missions
     using Microsoft.Data.Sqlite;
     using Rasa.Navigation;
     using Repositories.World;
+    using Rasa.Services.Preloader;
     using Services.DbContext;
     using Structures.Missions;
     using Structures.World;
@@ -311,6 +312,100 @@ namespace Rasa.Test.Missions
             StringAssert.Contains(sql, "1994");
             StringAssert.Contains(sql, "1995");
             StringAssert.Contains(sql, "2005");
+        }
+
+        [TestMethod]
+        public void BootcampMissionContentSeedInsertThrowsWhenGenericRowsDoNotMatchEntityColumns()
+        {
+            var builder = new MigrationBuilder("Microsoft.EntityFrameworkCore.Sqlite");
+
+            var ex = Assert.ThrowsExactly<InvalidOperationException>(() =>
+                BootcampWorldContentSeedData.Insert(
+                    builder,
+                    MissionSpawnGroupEntry.TableName,
+                    typeof(MissionSpawnGroupEntry),
+                    new[]
+                    {
+                        new object[] { 1994U, BootcampRevision }
+                    }));
+
+            StringAssert.Contains(ex.Message, "mission_spawn_group");
+            StringAssert.Contains(ex.Message, "expected 10");
+            StringAssert.Contains(ex.Message, "but received 2");
+        }
+
+        [TestMethod]
+        [DataRow(typeof(SqliteWorldContext))]
+        [DataRow(typeof(MySqlWorldContext))]
+        public void BootcampMissionContentScriptsInsertSpawnGroupsWithPreSpawnPolicyColumnShape(
+            Type contextType)
+        {
+            using var context = CreateContext(contextType, "unused");
+            var sql = NormalizeSql(context.GetService<IMigrator>().GenerateScript());
+
+            StringAssert.Contains(
+                sql,
+                "insert into mission_spawn_group (mission_id, content_revision, spawn_group_id, requirement, area_id, map_context_id, enabled, respawn_seconds, comment) values");
+            StringAssert.Contains(
+                sql,
+                "update mission_spawn_group set spawn_policy = 1 where mission_id = 1994 and spawn_group_id in (1, 2, 3)");
+        }
+
+        [TestMethod]
+        public void SqliteHistoricalBootcampMigrationReplaySeedsSpawnGroupsBeforeSpawnPolicyUpgrade()
+        {
+            WithDisposableSqliteWorld((context, database) =>
+            {
+                var migrations = context.Database.GetMigrations().ToArray();
+                var bootcampIndex = Array.IndexOf(migrations, SqliteMigrationId);
+                Assert.IsTrue(bootcampIndex > 0, SqliteMigrationId);
+
+                context.GetService<IMigrator>().Migrate(migrations[bootcampIndex - 1]);
+                context.GetService<IMigrator>().Migrate(SqliteMigrationId);
+
+                using (var connection = new SqliteConnection($"Data Source={database}.db"))
+                {
+                    connection.Open();
+
+                    using var tableInfo = connection.CreateCommand();
+                    tableInfo.CommandText =
+                        "SELECT COUNT(*) " +
+                        "FROM pragma_table_info('mission_spawn_group') " +
+                        "WHERE name = 'spawn_policy'";
+                    Assert.AreEqual(0L, (long)tableInfo.ExecuteScalar()!);
+
+                    using var command = connection.CreateCommand();
+                    command.CommandText =
+                        "SELECT respawn_seconds " +
+                        "FROM mission_spawn_group " +
+                        "WHERE mission_id = 1994 AND content_revision = 'deployment_11' AND spawn_group_id IN (1, 2, 3) " +
+                        "ORDER BY spawn_group_id";
+
+                    using var reader = command.ExecuteReader();
+                    var respawnSeconds = new List<uint>();
+                    while (reader.Read())
+                    {
+                        respawnSeconds.Add(reader.GetFieldValue<uint>(0));
+                    }
+
+                    CollectionAssert.AreEqual(
+                        new uint[] { 1, 1, 1 },
+                        respawnSeconds.ToArray());
+                }
+
+                using var reopened = (SqliteWorldContext)CreateContext(typeof(SqliteWorldContext), database);
+                reopened.Database.Migrate();
+
+                var upgradedGroups = reopened.MissionSpawnGroupEntries
+                    .Where(entry => entry.MissionId == 1994 &&
+                                    entry.ContentRevision == BootcampRevision &&
+                                    entry.SpawnGroupId <= 3)
+                    .OrderBy(entry => entry.SpawnGroupId)
+                    .ToArray();
+                Assert.AreEqual(3, upgradedGroups.Length);
+                Assert.IsTrue(upgradedGroups.All(entry => entry.RespawnSeconds == null));
+                Assert.IsTrue(upgradedGroups.All(entry => entry.SpawnPolicy == MissionSpawnGroupPolicy.ScenarioControlled));
+            });
         }
 
         [TestMethod]
