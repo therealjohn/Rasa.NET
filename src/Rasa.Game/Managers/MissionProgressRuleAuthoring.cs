@@ -70,6 +70,17 @@ namespace Rasa.Managers
             {
                 if (!hasCounterId && hasInitialValue && hasTargetValue && !hasSourceSpawnResolved)
                 {
+                    if (!TryValidateMonotonicRange(
+                            "item counter progress rule",
+                            "subject_id",
+                            trigger.SubjectId.Value,
+                            trigger.InitialValue.Value,
+                            trigger.TargetValue.Value,
+                            out diagnostic))
+                    {
+                        return false;
+                    }
+
                     itemCounters = new Dictionary<uint, MissionObjectiveItemCounterDefinition>
                     {
                         [trigger.SubjectId.Value] = new(
@@ -102,6 +113,17 @@ namespace Rasa.Managers
                 if (!hasCounterId || !hasInitialValue || !hasTargetValue || hasSourceSpawnResolved)
                 {
                     diagnostic = "counter progress rules must declare counter_id, initial_value, and target_value together, without source_spawn_resolved.";
+                    return false;
+                }
+
+                if (!TryValidateMonotonicRange(
+                        "counter progress rule",
+                        "counter_id",
+                        trigger.CounterId.Value,
+                        trigger.InitialValue.Value,
+                        trigger.TargetValue.Value,
+                        out diagnostic))
+                {
                     return false;
                 }
 
@@ -171,6 +193,25 @@ namespace Rasa.Managers
                 aggregateKind,
                 new HashSet<uint>(progressTriggers.Select(trigger => trigger.SubjectId.Value)));
             return true;
+        }
+
+        private static bool TryValidateMonotonicRange(
+            string ruleLabel,
+            string identifierLabel,
+            uint identifierValue,
+            uint initialValue,
+            uint targetValue,
+            out string diagnostic)
+        {
+            if (targetValue > initialValue)
+            {
+                diagnostic = null;
+                return true;
+            }
+
+            diagnostic =
+                $"{ruleLabel} {identifierLabel} {identifierValue} has initial_value {initialValue} and target_value {targetValue}; target_value must be greater than initial_value so runtime monotonic progress can advance.";
+            return false;
         }
     }
 }

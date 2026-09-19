@@ -147,6 +147,64 @@ namespace Rasa.Test.Missions
             StringAssert.Contains(diagnostic.Message, "progress transition 21");
         }
 
+        [TestMethod]
+        public void ValidatorRejectsNonMonotonicCounterRangesWithDeterministicActionableDiagnostics()
+        {
+            var fixture = CreatePureProgressFixture();
+            fixture.Triggers[0].CounterId = 1;
+            fixture.Triggers[0].InitialValue = 5;
+            fixture.Triggers[0].TargetValue = 5;
+            fixture.Transitions.Add(new MissionObjectiveTransitionEntry
+            {
+                MissionId = 321,
+                ContentRevision = "deployment_11",
+                ObjectiveId = 10,
+                TransitionId = 21,
+                Requirement = MissionContentRequirement.Required,
+                Sequence = 2,
+                FromState = (byte)MissionObjectiveState.Incomplete,
+                ToState = (byte)MissionObjectiveState.Completed,
+                Comment = "Progress transition 21"
+            });
+            fixture.Triggers.Add(new MissionTriggerEntry
+            {
+                MissionId = 321,
+                ContentRevision = "deployment_11",
+                ObjectiveId = 10,
+                TransitionId = 21,
+                TriggerId = 2,
+                Requirement = MissionContentRequirement.Required,
+                Kind = MissionTriggerKind.ProgressEvent,
+                Sequence = 1,
+                EventKind = (byte)MissionProgressEventKind.ItemAcquired,
+                SubjectId = 3147,
+                InitialValue = 7,
+                TargetValue = 6,
+                Comment = "Invalid item counter range"
+            });
+
+            var snapshot = new MissionContentLoader().Load(fixture.CreateRepository());
+            var report = new MissionContentValidator().Validate(
+                snapshot,
+                fixture.CreateWorldUnitOfWork());
+            var diagnostics = report.Diagnostics
+                .Where(entry => entry.Code == "invalid-progress-event")
+                .ToArray();
+
+            Assert.IsTrue(report.BlocksReadiness);
+            Assert.AreEqual(2, report.Diagnostics.Count);
+            CollectionAssert.AreEqual(
+                new[] { "invalid-progress-event", "invalid-progress-event" },
+                report.Diagnostics.Select(diagnostic => diagnostic.Code).ToArray());
+            CollectionAssert.AreEqual(
+                new[]
+                {
+                    "counter progress rule counter_id 1 has initial_value 5 and target_value 5; target_value must be greater than initial_value so runtime monotonic progress can advance.",
+                    "item counter progress rule subject_id 3147 has initial_value 7 and target_value 6; target_value must be greater than initial_value so runtime monotonic progress can advance."
+                },
+                diagnostics.Select(diagnostic => diagnostic.Message).ToArray());
+        }
+
         public static IEnumerable<object[]> GetFailureCases()
         {
             yield return Case("duplicate mission", fixture =>
