@@ -29,10 +29,15 @@ starting-experience gameplay tests. The maintained suites now cover:
 - two simultaneous Bootcamp characters in distinct private `1985` instances
 - startup validation logging for required-content defects
 
-Run the focused coverage with:
+Run the Bootcamp-focused regression suites with:
 
 ```powershell
 dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~Bootcamp"
+```
+
+Run the full mission-suite regression pack with:
+
+```powershell
 dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~Rasa.Test.Missions"
 ```
 
@@ -43,6 +48,8 @@ files `BootcampInitiationTests`, `BootcampGearingUpTests`,
 `BootcampBombRetryTests` keep the reconnect, boundary, and failure cases
 focused. `BootcampCharacterEntryTests`, `BootcampDepartureTests`, and
 `BootcampSkipTests` cover first entry, exit-pad departure, and skip parity.
+These automated suites validate server-side mission and gameplay behavior only.
+They do not drive the retail client.
 
 ## Mission protocol boundary
 

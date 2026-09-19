@@ -12,8 +12,11 @@ namespace Rasa.Test.Missions
     using Rasa.Data;
     using Rasa.Game;
     using Rasa.Managers;
+    using Rasa.Packets.MapChannel.Client;
+    using Rasa.Packets.Mission.Server;
     using Rasa.Repositories.Char.CharacterQualification;
     using Rasa.Repositories.Char.CharacterStartingExperience;
+    using Rasa.Repositories.Char.CharacterTeleporter;
     using Rasa.Repositories.Char.GameAccount;
     using Rasa.Repositories.UnitOfWork;
     using Rasa.Structures;
@@ -37,52 +40,45 @@ namespace Rasa.Test.Missions
         private static readonly TimeSpan YoungbloodDelay = TimeSpan.FromSeconds(7);
 
         [TestMethod]
-        public void NewCharacterMissionChainAdvancesFrom1990Through1995WithoutGrantingReadyStateEarly()
+        public void FreshCharacterCompletesTheFull1990To1995BootcampChainAndDepartsToAliaDas()
         {
-            using var harness = BootcampRuntimeTestHarness.Create();
-            var actors = SeedBootcampActors(harness);
-            harness.Context.Drain();
-
-            CompleteInitiation(harness, actors.McAllister);
-            CompleteGearingUp(harness, actors);
-            var youngblood = CompleteCaptureTheFlag(harness, actors);
+            using var harness = CreateFreshBootcampHarness();
+            var youngblood = AdvanceFreshCharacterToMission1995(harness);
             CompleteCallingForReinforcements(harness, youngblood);
 
-            Assert.AreEqual(MissionState.Success,
-                harness.Client.Player.Missions[BootcampRuntimeTestHarness.MissionInitiation].State);
-            Assert.AreEqual(MissionState.Completed,
-                harness.Client.Player.Missions[BootcampRuntimeTestHarness.MissionGearingUp].State);
-            Assert.AreEqual(MissionState.Completed,
-                harness.Client.Player.Missions[MissionCaptureTheFlag].State);
-            Assert.AreEqual(MissionState.Active,
-                harness.Client.Player.Missions[MissionCallingForReinforcements].State);
-            Assert.IsTrue(harness.Client.Player.Missions[MissionCallingForReinforcements].Completeable);
-            Assert.IsNull(harness.Client.PendingTransfer);
+            AssertMissionChainThroughFinale(harness);
 
-            using var verify = harness.Context.CreateChar();
-            Assert.IsFalse(verify.CharacterQualifications.HasQualification(
-                harness.Client.Player.Id,
-                CharacterQualificationKey.BootcampComplete));
-            Assert.IsFalse(verify.GameAccounts.Get(harness.Client.AccountEntry.Id).CanSkipBootcamp);
+            DepartToAliaDas(harness);
+            AssertDurableBootcampDeparture(
+                harness,
+                expectedMissionId: MissionCallingForReinforcements);
         }
 
         [TestMethod]
-        public void TimeoutResetsMission1995AndMission2005FinishesTheRetryPath()
+        public void FreshCharacterTimesOutMission1995ThenCompletes2005AndDepartsWithoutDuplicate1995CompletionOutputs()
         {
-            using var harness = BootcampRuntimeTestHarness.Create();
+            using var harness = CreateFreshBootcampHarness();
             var youngblood = StartTimedFinale(harness);
             harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
+            harness.Context.Drain();
 
             harness.UtcNow += BombDeadline + TimeSpan.FromSeconds(1);
             Assert.IsTrue(harness.Manager.EvaluateDeadlines(harness.Client));
+            var timeoutPackets = harness.Context.Drain();
             Assert.AreEqual(
                 MissionState.Failed,
                 harness.Client.Player.Missions[MissionCallingForReinforcements].State);
+            Assert.AreEqual(1, timeoutPackets.OfType<ObjectiveFailedPacket>().Count());
+            Assert.AreEqual(1, timeoutPackets.OfType<MissionFailedPacket>().Count());
+            Assert.AreEqual(0, timeoutPackets.OfType<MissionCompleteablePacket>().Count());
+            Assert.AreEqual(0, timeoutPackets.OfType<MissionCompletedPacket>().Count());
+            Assert.AreEqual(0, timeoutPackets.OfType<MissionRewardedPacket>().Count());
 
             Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
                 harness.Client,
                 youngblood.EntityId,
                 MissionBombRetry));
+            harness.Context.Drain();
 
             harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-dropship-debris"));
             harness.UtcNow += FuseDelay;
@@ -101,10 +97,13 @@ namespace Rasa.Test.Missions
                 4,
                 1));
 
-            Assert.AreEqual(MissionState.Active, harness.Client.Player.Missions[MissionBombRetry].State);
+            AssertMissionChainThroughRetryDeparture(harness);
             Assert.IsTrue(harness.Client.Player.Missions[MissionBombRetry].Completeable);
-            Assert.IsNotNull(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
-            Assert.IsNotNull(FindScenarioObject(harness, "bootcamp-dropship-debris"));
+
+            DepartToAliaDas(harness);
+            AssertDurableBootcampDeparture(
+                harness,
+                expectedMissionId: MissionBombRetry);
         }
 
         [TestMethod]
@@ -228,6 +227,40 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(
                 CharacterStartingExperienceState.Bootcamp,
                 new CharacterStartingExperienceRepository(verify).Get(secondCharacterId).State);
+        }
+
+        private static BootcampRuntimeTestHarness.Harness CreateFreshBootcampHarness()
+        {
+            var harness = BootcampRuntimeTestHarness.Create();
+            using (var unit = harness.Context.CreateChar())
+            {
+                unit.CharacterStartingExperience.Add(
+                    new CharacterStartingExperienceEntry(
+                        harness.Client.Player.Id,
+                        "deployment_11",
+                        CharacterStartingExperienceState.Bootcamp));
+                unit.CharacterTeleporters.Add(
+                    new CharacterTeleporterEntry(
+                        harness.Client.Player.Id,
+                        BootcampSelectionTestContext.ExitPadWaypointId,
+                        (byte)WaypointType.Dropship));
+            }
+
+            harness.Client.Player.GainedWaypoints.Add(
+                new CharacterTeleporterEntry(
+                    harness.Client.Player.Id,
+                    BootcampSelectionTestContext.ExitPadWaypointId,
+                    (byte)WaypointType.Dropship));
+            return harness;
+        }
+
+        private static Creature AdvanceFreshCharacterToMission1995(BootcampRuntimeTestHarness.Harness harness)
+        {
+            var actors = SeedBootcampActors(harness);
+            harness.Context.Drain();
+            CompleteInitiation(harness, actors.McAllister);
+            CompleteGearingUp(harness, actors);
+            return CompleteCaptureTheFlag(harness, actors);
         }
 
         private static BootcampActors SeedBootcampActors(BootcampRuntimeTestHarness.Harness harness) =>
@@ -439,10 +472,7 @@ namespace Rasa.Test.Missions
 
         private static Creature StartTimedFinale(BootcampRuntimeTestHarness.Harness harness)
         {
-            var youngblood = harness.AddNpc(
-                BootcampRuntimeTestHarness.CaptainYoungbloodCreatureId,
-                BootcampRuntimeTestHarness.CaptainYoungbloodPackageId);
-            harness.SeedMission(1, MissionCaptureTheFlag, (uint)MissionState.Completed, completeable: true);
+            var youngblood = AdvanceFreshCharacterToMission1995(harness);
             Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
                 harness.Client,
                 youngblood.EntityId,
@@ -462,6 +492,42 @@ namespace Rasa.Test.Missions
                 10,
                 1));
             return youngblood;
+        }
+
+        private static void AssertMissionChainThroughFinale(BootcampRuntimeTestHarness.Harness harness)
+        {
+            Assert.AreEqual(
+                MissionState.Success,
+                harness.Client.Player.Missions[BootcampRuntimeTestHarness.MissionInitiation].State);
+            Assert.AreEqual(
+                MissionState.Completed,
+                harness.Client.Player.Missions[BootcampRuntimeTestHarness.MissionGearingUp].State);
+            Assert.AreEqual(
+                MissionState.Completed,
+                harness.Client.Player.Missions[MissionCaptureTheFlag].State);
+            Assert.AreEqual(
+                MissionState.Active,
+                harness.Client.Player.Missions[MissionCallingForReinforcements].State);
+            Assert.IsTrue(harness.Client.Player.Missions[MissionCallingForReinforcements].Completeable);
+        }
+
+        private static void AssertMissionChainThroughRetryDeparture(BootcampRuntimeTestHarness.Harness harness)
+        {
+            Assert.AreEqual(
+                MissionState.Success,
+                harness.Client.Player.Missions[BootcampRuntimeTestHarness.MissionInitiation].State);
+            Assert.AreEqual(
+                MissionState.Completed,
+                harness.Client.Player.Missions[BootcampRuntimeTestHarness.MissionGearingUp].State);
+            Assert.AreEqual(
+                MissionState.Completed,
+                harness.Client.Player.Missions[MissionCaptureTheFlag].State);
+            Assert.AreEqual(
+                MissionState.Failed,
+                harness.Client.Player.Missions[MissionCallingForReinforcements].State);
+            Assert.AreEqual(
+                MissionState.Active,
+                harness.Client.Player.Missions[MissionBombRetry].State);
         }
 
         private static DynamicObject FindScenarioObject(
@@ -506,6 +572,63 @@ namespace Rasa.Test.Missions
             }
 
             throw new AssertFailedException($"Could not find personal inventory item template {templateId}.");
+        }
+
+        private static void DepartToAliaDas(BootcampRuntimeTestHarness.Harness harness)
+        {
+            var exitPad = harness.BootcampMap.Teleporters.Values
+                .Single(teleporter =>
+                    teleporter.ObjectData is WaypointInfo waypoint &&
+                    waypoint.WaypointId == BootcampSelectionTestContext.ExitPadWaypointId);
+            harness.MovePlayerTo(exitPad);
+            DynamicObjectManager.Instance.SelectWaypoint(
+                harness.Client,
+                new SelectWaypointPacket
+                {
+                    WaypointId = BootcampSelectionTestContext.ExitPadWaypointId,
+                    MapInstanceId = harness.BootcampMap.InstanceId
+                });
+            Assert.IsNotNull(harness.Client.PendingTransfer);
+            typeof(MapChannelManager)
+                .GetMethod(
+                    "CompleteMapLinkTransfer",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(harness.Maps, new object[] { harness.Client });
+        }
+
+        private static void AssertDurableBootcampDeparture(
+            BootcampRuntimeTestHarness.Harness harness,
+            uint expectedMissionId)
+        {
+            Assert.AreEqual(BootcampSelectionTestContext.WildernessMapContextId, harness.Client.Player.MapContextId);
+            Assert.IsFalse(harness.Client.Player.MapChannel.IsPrivateInstance);
+            Assert.IsNull(harness.Client.PendingTransfer);
+            Assert.IsNull(harness.Maps.FindOwnedPrivateInstance(
+                BootcampRuntimeTestHarness.BootcampMapContextId,
+                harness.Client.Player.Id));
+
+            using var verify = harness.Context.CreateChar();
+            var levelFourExperience = harness.WorldContext.ExperienceForLevelEntries
+                .Single(entry => entry.Level == 4)
+                .Experience;
+            var durableCharacter = verify.Characters.Get(harness.Client.Player.Id);
+            Assert.AreEqual(24000L, levelFourExperience);
+            Assert.AreEqual((uint)levelFourExperience, durableCharacter.Experience);
+            Assert.AreEqual((byte)4, durableCharacter.Level);
+            Assert.AreEqual(
+                CharacterStartingExperienceState.Completed,
+                verify.CharacterStartingExperience.Get(harness.Client.Player.Id).State);
+            Assert.IsTrue(verify.CharacterQualifications.HasQualification(
+                harness.Client.Player.Id,
+                CharacterQualificationKey.BootcampComplete));
+            Assert.IsTrue(verify.GameAccounts.Get(harness.Client.AccountEntry.Id).CanSkipBootcamp);
+
+            var departureMission = verify.CharacterMissions.GetByCharacterAndMission(
+                harness.Client.Player.Id,
+                expectedMissionId);
+            Assert.IsNotNull(departureMission);
+            Assert.AreEqual((uint)MissionState.Active, departureMission.MissionState);
+            Assert.IsTrue(departureMission.Completeable);
         }
 
         private static void SeedDepartureParityState(

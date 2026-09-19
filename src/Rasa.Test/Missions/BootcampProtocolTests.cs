@@ -224,10 +224,15 @@ namespace Rasa.Test.Missions
                 MissionCaptureTheFlag,
                 selectionIndex: null,
                 rating: null));
+            var capturePackets = harness.Context.Drain();
             AssertPacketTypes(
-                harness.Context.Drain(),
+                capturePackets,
                 typeof(MissionCompleteablePacket),
                 typeof(MissionCompletedPacket));
+            Assert.IsFalse(capturePackets
+                .OfType<MissionCompleteablePacket>()
+                .Single()
+                .IsCompleteable);
 
             Assert.IsTrue(harness.Manager.TryRewardNpcMission(
                 harness.Client,

@@ -69,7 +69,7 @@ namespace Rasa.Test.Missions
             worldContext.Database.Migrate();
 
             var context = MissionTestContext.WithCustomDefinitions(new Dictionary<uint, Mission>());
-            context.Map.MapInfo = new MapInfo(BootcampMapContextId, "bootcamp_runtime", 1556, 0);
+            var bootcampTemplate = CreatePublicMap(BootcampMapContextId, "bootcamp_runtime");
             context.Client.Player.MapContextId = BootcampMapContextId;
             context.Client.Player.Class = (uint)CharacterClass.Recruit;
             context.Client.Player.AppearanceData = new Dictionary<EquipmentData, AppearanceData>();
@@ -95,6 +95,7 @@ namespace Rasa.Test.Missions
 
             var factory = new RuntimeLoadingFactory(context, worldContext);
             MissionManager manager = null;
+            CharacterManager charactersManager = null;
             var now = new DateTime(2026, 9, 19, 12, 0, 0, DateTimeKind.Utc);
             var creatures = new CreatureManager(factory, new ManifestationManager(context));
             foreach (var creatureId in new[]
@@ -128,7 +129,7 @@ namespace Rasa.Test.Missions
             }
 
             MapChannelManager maps = null;
-            var objects = new DynamicObjectManager(null, maps);
+            var objects = new DynamicObjectManager(factory, maps);
             var manifestation = new ManifestationManager(context);
             var deadlineService = new MissionDeadlineService(
                 () => factory,
@@ -145,16 +146,16 @@ namespace Rasa.Test.Missions
                 () => now);
             maps = new MapChannelManager(
                 factory,
+                updateCharacter: (client, update, value) =>
+                    charactersManager.UpdateCharacter(client, update, value),
+                refreshStats: (_, _) => { },
+                assignPlayer: _ => { },
+                enterMapChannels: _ => { },
                 privateInstances: new PrivateMapInstanceService(),
                 scenarioService: scenarioService);
-            maps.MapChannelArray.Add(BootcampMapContextId, context.Map);
-            maps.MapChannelArray.Add(WildernessMapContextId, new MapChannel
-            {
-                MapInfo = new MapInfo(WildernessMapContextId, "alia_das_fixture", 1556, 0),
-                ClientList = new List<Client>(),
-                PlayerLimit = 128
-            });
-            objects = new DynamicObjectManager(null, maps);
+            maps.MapChannelArray.Add(BootcampMapContextId, bootcampTemplate);
+            maps.MapChannelArray.Add(WildernessMapContextId, CreatePublicMap(WildernessMapContextId, "alia_das_fixture"));
+            objects = new DynamicObjectManager(factory, maps);
             manager = new MissionManager(
                 factory,
                 new Dictionary<uint, Mission>(),
@@ -162,11 +163,18 @@ namespace Rasa.Test.Missions
                 manifestation,
                 deadlineService: deadlineService,
                 scenarioService: scenarioService);
+            charactersManager = new CharacterManager(context, manager);
+            objects = new DynamicObjectManager(
+                factory,
+                maps,
+                missionManager: manager,
+                characterManager: charactersManager);
             var report = manager.LoadMissions();
             if (report.BlocksReadiness)
                 throw new InvalidOperationException(
                     string.Join(" | ", report.Diagnostics.Select(diagnostic => diagnostic.Code)));
             var singletons = new ManagerInstances(maps, objects, creatures, manager);
+            objects.InitTeleporters();
             var bootcampMap = maps.GetOrCreatePrivateInstance(BootcampMapContextId, context.Client.Player.Id);
             AttachClientToMap(context.Client, bootcampMap);
 
@@ -345,6 +353,11 @@ namespace Rasa.Test.Missions
 
         private static void AttachClientToMap(Client client, MapChannel destination)
         {
+            if (client.Player.MapChannel != null)
+            {
+                CellManager.Instance.RemoveFromWorld(client);
+                client.Player.MapChannel.ClientList.Remove(client);
+            }
             client.Player.MapChannel = destination;
             client.Player.RuntimeMapChannel = destination;
             client.Player.MapContextId = destination.MapInfo.MapContextId;
@@ -352,6 +365,13 @@ namespace Rasa.Test.Missions
             CellManager.Instance.AddToWorld(client);
             client.State = RasaGame::Rasa.Data.ClientState.Ingame;
         }
+
+        private static MapChannel CreatePublicMap(uint contextId, string name) => new()
+        {
+            MapInfo = new MapInfo(contextId, name, 1556, 0),
+            ClientList = new List<Client>(),
+            PlayerLimit = 128
+        };
 
         internal sealed class Harness : IDisposable
         {
@@ -487,6 +507,7 @@ namespace Rasa.Test.Missions
                 var factory = new RuntimeLoadingFactory(Context, WorldContext);
                 var manifestation = new ManifestationManager(Context);
                 MissionManager manager = null;
+                CharacterManager charactersManager = null;
                 var creatures = new CreatureManager(factory, manifestation);
                 foreach (var creatureId in new[]
                          {
@@ -519,7 +540,7 @@ namespace Rasa.Test.Missions
                 }
 
                 MapChannelManager maps = null;
-                var objects = new DynamicObjectManager(null, maps);
+                var objects = new DynamicObjectManager(factory, maps);
                 var deadlineService = new MissionDeadlineService(
                     () => factory,
                     () => manager,
@@ -535,16 +556,16 @@ namespace Rasa.Test.Missions
                     _getUtcNow);
                 maps = new MapChannelManager(
                     factory,
+                    updateCharacter: (client, update, value) =>
+                        charactersManager.UpdateCharacter(client, update, value),
+                    refreshStats: (_, _) => { },
+                    assignPlayer: _ => { },
+                    enterMapChannels: _ => { },
                     privateInstances: new PrivateMapInstanceService(),
                     scenarioService: scenarioService);
-                maps.MapChannelArray.Add(BootcampMapContextId, Context.Map);
-                maps.MapChannelArray.Add(WildernessMapContextId, new MapChannel
-                {
-                    MapInfo = new MapInfo(WildernessMapContextId, "alia_das_fixture", 1556, 0),
-                    ClientList = new List<Client>(),
-                    PlayerLimit = 128
-                });
-                objects = new DynamicObjectManager(null, maps);
+                maps.MapChannelArray.Add(BootcampMapContextId, CreatePublicMap(BootcampMapContextId, "bootcamp_runtime"));
+                maps.MapChannelArray.Add(WildernessMapContextId, CreatePublicMap(WildernessMapContextId, "alia_das_fixture"));
+                objects = new DynamicObjectManager(factory, maps);
                 manager = new MissionManager(
                     factory,
                     new Dictionary<uint, Mission>(),
@@ -552,6 +573,12 @@ namespace Rasa.Test.Missions
                     manifestation,
                     deadlineService: deadlineService,
                     scenarioService: scenarioService);
+                charactersManager = new CharacterManager(Context, manager);
+                objects = new DynamicObjectManager(
+                    factory,
+                    maps,
+                    missionManager: manager,
+                    characterManager: charactersManager);
                 var report = manager.LoadMissions();
                 if (report.BlocksReadiness)
                     throw new InvalidOperationException(
@@ -559,6 +586,7 @@ namespace Rasa.Test.Missions
 
                 _singletons.Dispose();
                 _singletons = new ManagerInstances(maps, objects, creatures, manager);
+                objects.InitTeleporters();
                 Manager = manager;
                 Maps = maps;
                 BootcampMap = Maps.GetOrCreatePrivateInstance(BootcampMapContextId, characterId);
