@@ -409,7 +409,11 @@ namespace Rasa.Managers
                 if (!DynamicObjectManager.Instance.CompleteMapLoadTransfer(client))
                     return;
 
-                var dropship = new Dropship(Factions.AFS, DropshipType.Teleporter, client);
+                var dropship = new Dropship(
+                    Factions.AFS,
+                    DropshipType.Teleporter,
+                    client,
+                    DropshipRole.Arrival);
                 client.Player.MapChannel = mapChannel;
                 client.Player.MapContextId = dropship.Client.LoadingMap;
 
@@ -695,7 +699,7 @@ namespace Rasa.Managers
                 client.Player.Target = 0;
                 LootDispenserManager.Instance.RemoveForOwner(origin, client);
                 ActorActionManager.Instance.RemoveActor(client.Player);
-                GameEffectManager.Instance.ClearEffects(client.Player);
+                GameEffectManager.Instance.ClearEffects(origin, client.Player);
                 client.Player.WeaponReady = false;
                 MinionManager.Instance.DismissAll(client);
                 MapLinkManager.Instance.RemovePlayer(client);
@@ -774,7 +778,7 @@ namespace Rasa.Managers
 
             // Effects are per map as far as the clients know - nobody on the next map was told
             // about them - and a sprint left running would keep draining adrenaline unseen.
-            GameEffectManager.Instance.ClearEffects(client.Player);
+            GameEffectManager.Instance.ClearEffects(client.Player.MapChannel, client.Player);
 
             // The weapon is put away with them. A manifestation arriving on a map starts with
             // nothing in its hands - the client transitions to _no_tool and is never told

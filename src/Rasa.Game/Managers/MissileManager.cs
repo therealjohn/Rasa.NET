@@ -75,6 +75,37 @@ namespace Rasa.Managers
                 }
         }
 
+        /// <summary>
+        /// Applies the victim's resistance (from the effects on them; see
+        /// GameEffectManager.ApplyResist) to a missile about to land, so the damage taken and
+        /// the damage reported agree, and the hit data says what was resisted.
+        /// </summary>
+        private static void Resist(Actor victim, Missile missile)
+        {
+            missile.DamageA = GameEffectManager.ApplyResist(victim, missile.DamageA, out var resisted);
+
+            if (resisted > 0)
+                foreach (var hit in missile.Args.HitData)
+                    if (hit.EntityId == victim.EntityId)
+                    {
+                        hit.Resisted = (uint)resisted;
+                        hit.FinalAmt = missile.DamageA;
+                    }
+        }
+
+        /// <summary>
+        /// The part of a missile's damage that meets armour. The rest - ArmorBypassPercent of it
+        /// - goes past, and with whatever the armour could not stop comes off health: "Bypass
+        /// Armor: 25% of damage done directly to Health".
+        /// </summary>
+        public static int ArmorShare(Missile missile)
+        {
+            if (missile.ArmorBypassPercent <= 0)
+                return missile.DamageA;
+
+            return missile.DamageA - missile.DamageA * missile.ArmorBypassPercent / 100;
+        }
+
         private void DoDamageToCreature(MapChannel mapChannel, Missile missile)
         {
             var creature = EntityManager.Instance.GetCreature(missile.TargetEntityId);
@@ -86,8 +117,10 @@ namespace Rasa.Managers
             // who opens fire and wins never enters combat at all.
             EnterCombat(missile.Source);
 
-            // decrease armor first
-            var armorDecrease = Math.Min(missile.DamageA, creature.Attributes[Attributes.Armor].Current);
+            Resist(creature, missile);
+
+            // decrease armor first - all of it but what bypasses armour
+            var armorDecrease = Math.Min(ArmorShare(missile), creature.Attributes[Attributes.Armor].Current);
             creature.Attributes[Attributes.Armor].Current -= armorDecrease;
             CellManager.Instance.CellCallMethod(mapChannel, creature, new UpdateArmorPacket(creature.Attributes[Attributes.Armor], creature.EntityId));
 
@@ -129,8 +162,13 @@ namespace Rasa.Managers
             EnterCombat(actor);
             EnterCombat(missile.Source);
 
-            // decrease armor first
-            var armorDecrease = Math.Min(missile.DamageA, actor.Attributes[Attributes.Armor].Current);
+            // What the effects on the victim resist comes off first (Rage, Resistance, Sacrifice,
+            // Base Wave), and off the missile too, since the recovery packet reports its DamageA
+            // as the amount that landed.
+            Resist(actor, missile);
+
+            // decrease armor first - all of it but what bypasses armour
+            var armorDecrease = Math.Min(ArmorShare(missile), actor.Attributes[Attributes.Armor].Current);
 
             actor.Attributes[Attributes.Armor].Current -= armorDecrease;
             CellManager.Instance.CellCallMethod(mapChannel, actor, new UpdateArmorPacket(actor.Attributes[Attributes.Armor], 0));
@@ -156,6 +194,15 @@ namespace Rasa.Managers
 
         public void RequestWeaponAttack(Client client, RequestWeaponAttackPacket packet)
         {
+            // The alternate attack is a melee swing, not a shot: no ammunition, no heat, the
+            // weapon's alt damage, and Hand to Hand's bonus rather than the weapon skill's. It
+            // used to come through here as one more shot of the gun.
+            if (packet.IsAltAction)
+            {
+                ManifestationManager.Instance.TryMeleeAttack(client, packet);
+                return;
+            }
+
             ManifestationManager.Instance.PlayerTryFireWeapon(client);
 
                 /*
@@ -243,11 +290,13 @@ namespace Rasa.Managers
             }
         }
 
-        public void MissileLaunch(MapChannel mapChannel, ActionData action, int damage)
+        /// <param name="armorBypassPercent">Percent of the damage that skips armour: the Torqueshell and Injection Gun skills.</param>
+        public void MissileLaunch(MapChannel mapChannel, ActionData action, int damage, int armorBypassPercent = 0)
         {
             var missile = new Missile
             {
                 DamageA = damage,
+                ArmorBypassPercent = Math.Max(0, Math.Min(100, armorBypassPercent)),
                 Source = action.Actor
             };
 

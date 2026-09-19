@@ -1,8 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Data.Common;
-using System.Numerics;
 using System.Linq;
+using System.Numerics;
 using Microsoft.EntityFrameworkCore;
 using Rasa.Models;
 
@@ -246,6 +246,190 @@ namespace Rasa.Managers
 
         public bool PlayerTryFireWeapon(Client client) => TryFireWeapon(client) == FireResult.Fired;
 
+        #region Weapon skills
+
+        /// <summary>
+        /// Metres past a melee action's range a target may be and still be struck; the client
+        /// checks range before it swings, so this only covers a target that moved.
+        /// </summary>
+        private const float MeleeRangeSlack = 2.5f;
+
+        /// <summary>The weapon skill an item is used under: its template's skill requirement, 0 for none.</summary>
+        public static int WeaponSkillOf(Item weapon)
+        {
+            return weapon?.ItemTemplate?.EquipableInfo?.SkillId ?? 0;
+        }
+
+        /// <summary>The player's pump level in a skill, 0 when they do not have it.</summary>
+        public static int SkillPump(Manifestation player, int skillId)
+        {
+            if (player == null || skillId <= 0)
+                return 0;
+
+            return player.Skills.TryGetValue((SkillId)skillId, out var skill) ? skill.SkillLevel : 0;
+        }
+
+        /// <summary>
+        /// How long this player takes to reload this weapon: its reload time under the reload
+        /// bonus of its skill and tool type (Leech Guns, Launchers' rockets, Firearms' pistols),
+        /// timed as weaponreload.py times it from the effects SyncWeaponSkills gives the client.
+        /// </summary>
+        public static long ReloadTimeFor(Manifestation player, Item weapon)
+        {
+            var reloadMs = weapon.ItemTemplate.WeaponInfo.ReloadTime;
+            var skillId = WeaponSkillOf(weapon);
+            var haste = WeaponSkills.ReloadHaste(skillId, weapon.ItemTemplate.WeaponInfo.ToolType, SkillPump(player, skillId));
+
+            return WeaponSkills.ReloadMs(reloadMs, haste);
+        }
+
+        /// <summary>
+        /// The alternate attack: the melee swing every weapon has besides its own fire, sent as
+        /// RequestWeaponAttack with isAltAction set and the weapon's alt action pair (WeaponInfo
+        /// AltActionId/AltActionArgId, which the server gave the client in WeaponInfo). It uses
+        /// no ammunition and puts no heat on the barrel - baseweaponattack.py does neither for an
+        /// alt action - strikes for the weapon's alt damage and type, and takes Hand to Hand's
+        /// bonus ("Allows unarmed attacks and alternate attacks (melee) with all weapons"). A
+        /// staff's or a blade's own attack is not this: that is the weapon's primary, and goes
+        /// through the fire path under the Staff or Blades skill.
+        ///
+        /// Timed on its own clock from the alt action's recovery and reuse, as the client times
+        /// it. The target has to be within the alt action's range.
+        /// </summary>
+        public void TryMeleeAttack(Client client, RequestWeaponAttackPacket packet)
+        {
+            var player = client.Player;
+            var mapChannel = player?.MapChannel;
+
+            if (mapChannel == null || client.State != ClientState.Ingame || player.State == CharacterState.Dead)
+                return;
+
+            var weapon = InventoryManager.Instance.CurrentWeapon(client);
+            var weaponInfo = weapon?.ItemTemplate?.WeaponInfo;
+
+            if (weaponInfo == null)
+                return;
+
+            if (!player.WeaponReady)
+            {
+                RequestWeaponDraw(client);
+                return;
+            }
+
+            // Only the swing this weapon has. A client naming any other action as its alt attack
+            // is asking for something the weapon cannot do.
+            if ((uint)packet.ActionId != weaponInfo.AltActionId || (uint)packet.ActionArgId != weaponInfo.AltActionArgId)
+            {
+                Logger.WriteLog(LogType.Security, $"{player.FamilyName} sent an alt attack {packet.ActionId}/{packet.ActionArgId} for a weapon whose alt attack is {weaponInfo.AltActionId}/{weaponInfo.AltActionArgId}");
+                return;
+            }
+
+            // A reload still pending has not been interrupted; the client interrupts before it swings.
+            if (IsReloading(player))
+                return;
+
+            AbilityManager.Instance.TryGetLevel(packet.ActionId, (uint)packet.ActionArgId, out var level);
+
+            var now = Environment.TickCount64;
+
+            if (player.NextMeleeAt > now + ShotTolerance)
+                return;
+
+            var interval = level != null ? level.RecoveryMs + level.ReuseMs : 0;
+            player.NextMeleeAt = Math.Max(player.NextMeleeAt, now - ShotTolerance) + Math.Max(MinRefire, interval);
+
+            var targetId = packet.TargetId > 0 ? (ulong)packet.TargetId : player.Target;
+
+            if (targetId != 0 && level != null && level.MaxRange > 0)
+            {
+                Actor target = EntityManager.Instance.GetEntityType(targetId) switch
+                {
+                    EntityType.Creature => EntityManager.Instance.GetCreature(targetId),
+                    EntityType.Character => EntityManager.Instance.GetPlayer(targetId),
+                    _ => null
+                };
+
+                if (target != null && Vector3.Distance(player.Position, target.Position) > level.MaxRange + MeleeRangeSlack)
+                    return;
+            }
+
+            // The alt damage is a single figure - the tooltip shows one number for it - and so is the swing.
+            var damage = (int)(weaponInfo.WeaponAltInfo?.AltMaxDamage ?? 0);
+            var pump = SkillPump(player, WeaponSkills.HandToHand);
+
+            damage = GameEffectManager.ApplyDamageDealt(player, damage, WeaponSkills.DamagePercent(WeaponSkills.HandToHand, pump));
+
+            var action = new ActionData(player, packet.ActionId, (uint)packet.ActionArgId, targetId, 0);
+
+            MissileManager.Instance.MissileLaunch(mapChannel, action, damage);
+        }
+
+        /// <summary>
+        /// Gives the player's client the weapon skill bonuses it predicts for itself, as the
+        /// hidden effects the original server attached: SKILL_LIMITED_COOL_RATE_MODIFIER_EFFECT
+        /// for heat dissipation (OnAttach(skillIds, modifier), read by Actor.GetCoolRateModifier
+        /// and multiplied into its heat meter's cooling) and
+        /// SKILL_LIMITED_BY_TYPE_RELOAD_MODIFIER_EFFECT for reload speed (OnAttach(modifier,
+        /// skillIds, typeIds), summed by weaponreload.py into the reload bar). One effect per
+        /// bonus, seen by this client alone, unannounced, with no end. Without them the client's
+        /// meters ran at the base rates while the server's ran faster - a reload bar still
+        /// filling after the clip was full, a heat meter showing a jam the server had cooled.
+        ///
+        /// The damage and armour-bypass bonuses need nothing on the client: the server says what
+        /// every hit did. Run on every map arrival - effects end with the map - and whenever the
+        /// player's skills change.
+        /// </summary>
+        public void SyncWeaponSkills(Client client)
+        {
+            var player = client?.Player;
+            var mapChannel = player?.MapChannel;
+
+            if (mapChannel == null)
+                return;
+
+            foreach (var old in player.ActiveEffects.Values.Where(e => e.IsSkillPassive).ToList())
+                GameEffectManager.Instance.DettachEffect(mapChannel, player, old);
+
+            foreach (var skillId in new[] { WeaponSkills.MachineGuns, WeaponSkills.PropellantGuns })
+            {
+                var pump = SkillPump(player, skillId);
+                var modifier = WeaponSkills.CoolRateModifier(skillId, pump);
+
+                if (modifier > 1.0)
+                    GameEffectManager.Instance.Attach(mapChannel, player, SkillPassive(mapChannel, player, SkillLimitedCoolRateTypeId, pump),
+                        new List<int> { skillId }, modifier);
+            }
+
+            foreach (var (haste, skillId, toolType) in WeaponSkills.ReloadBonuses(id => SkillPump(player, id)))
+                GameEffectManager.Instance.Attach(mapChannel, player, SkillPassive(mapChannel, player, SkillLimitedReloadTypeId, SkillPump(player, skillId)),
+                    haste, new List<int> { skillId }, toolType.HasValue ? new List<int> { (int)toolType.Value } : null);
+        }
+
+        /// <summary>gameeffectdata.SKILL_LIMITED_COOL_RATE_MODIFIER_EFFECT.</summary>
+        public const int SkillLimitedCoolRateTypeId = 249;
+
+        /// <summary>gameeffectdata.SKILL_LIMITED_BY_TYPE_RELOAD_MODIFIER_EFFECT.</summary>
+        public const int SkillLimitedReloadTypeId = 252;
+
+        private static GameEffect SkillPassive(MapChannel mapChannel, Manifestation player, int typeId, int pump)
+        {
+            return new GameEffect
+            {
+                TypeId = typeId,
+                EffectId = GameEffectManager.Instance.NextEffectId(mapChannel),
+                EffectLevel = (uint)Math.Max(1, pump),
+                SourceId = player.EntityId,
+                Source = player,
+                SourceLevel = player.Level,
+                ExpiresTick = long.MaxValue,
+                AnnounceOnAttach = false,
+                AllowDetach = false,
+                IsSkillPassive = true
+            };
+        }
+
+        #endregion
+
         /// <summary>
         /// Fires the weapon in hand if it can be fired now. Every shot a player makes comes through
         /// here, by three routes: the auto-fire list, the first shot of StartAutoFire, and
@@ -301,8 +485,15 @@ namespace Rasa.Managers
             if (IsReloading(client.Player))
                 return FireResult.NotFired;
 
+            // A weapon with no ammunition class - every blade and staff - is never loaded and
+            // never runs dry. The client knows: baseweaponattack.py only checks the clip when
+            // the weapon has an ammo class, and blades and staves attack with useAmmoInAction 0.
+            // The server asked for a reload of a clip that could never be filled, and so a blade
+            // or a staff never struck at all.
+            var usesAmmo = weaponClassInfo.AmmoClassId != 0;
+
             // do we need to reload?
-            if (weapon.CurrentAmmo < weapon.ItemTemplate.WeaponInfo.AmmoPerShot)
+            if (usesAmmo && weapon.CurrentAmmo < weapon.ItemTemplate.WeaponInfo.AmmoPerShot)
             {
                 RequestWeaponReload(client, true);
                 return FireResult.NotFired;
@@ -321,37 +512,41 @@ namespace Rasa.Managers
             if (ShotWait(client.Player, now) > 0)
                 return FireResult.TooSoon;
 
-            var ammoAfter = weapon.CurrentAmmo - weapon.ItemTemplate.WeaponInfo.AmmoPerShot;
-            try
+            if (usesAmmo)
             {
-                using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
-                unitOfWork.ExecuteTransaction(() =>
+                var ammoAfter = weapon.CurrentAmmo - weapon.ItemTemplate.WeaponInfo.AmmoPerShot;
+                try
                 {
-                    var saved = unitOfWork.Items.GetItem(weapon.Id);
-                    if (saved == null || saved.AmmoCount != weapon.CurrentAmmo)
-                        throw new GameplayRejectionException("Weapon clip changed before the shot committed.");
-
-                    unitOfWork.Items.UpdateAmmo(new Item
+                    using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+                    unitOfWork.ExecuteTransaction(() =>
                     {
-                        Id = weapon.Id,
-                        CurrentAmmo = ammoAfter
+                        var saved = unitOfWork.Items.GetItem(weapon.Id);
+                        if (saved == null || saved.AmmoCount != weapon.CurrentAmmo)
+                            throw new GameplayRejectionException("Weapon clip changed before the shot committed.");
+
+                        unitOfWork.Items.UpdateAmmo(new Item
+                        {
+                            Id = weapon.Id,
+                            CurrentAmmo = ammoAfter
+                        });
                     });
-                });
-            }
-            catch (Exception error) when (
-                error is GameplayRejectionException ||
-                error is DbUpdateException ||
-                error is DbException)
-            {
-                Logger.WriteLog(LogType.Error,
-                    $"Could not persist shot for item {weapon.Id}: {error.Message}");
-                return FireResult.NotFired;
+                }
+                catch (Exception error) when (
+                    error is GameplayRejectionException ||
+                    error is DbUpdateException ||
+                    error is DbException)
+                {
+                    Logger.WriteLog(LogType.Error,
+                        $"Could not persist shot for item {weapon.Id}: {error.Message}");
+                    return FireResult.NotFired;
+                }
+
+                weapon.CurrentAmmo = ammoAfter;
+                client.CallMethod(weapon.EntityId, new WeaponAmmoInfoPacket(ammoAfter));
             }
 
             client.Player.NextShotAt = Math.Max(client.Player.NextShotAt, now - ShotTolerance) +
                                        Math.Max(MinRefire, weapon.ItemTemplate.WeaponInfo.Refire);
-            weapon.CurrentAmmo = ammoAfter;
-            client.CallMethod(weapon.EntityId, new WeaponAmmoInfoPacket(ammoAfter));
 
             // The barrel gets hotter. Done after the shot has been paid for in ammo, so a shot
             // that did not happen does not heat anything, and before the missile, so a shot that
@@ -361,9 +556,16 @@ namespace Rasa.Managers
             // let's calculate damage
             var damageRange = weaponClassInfo.MaxDamage - weaponClassInfo.MinDamage;
             var damage = weaponClassInfo.MinDamage + new Random().Next(0, damageRange + 1);
+
+            // Then the weapon skill's bonus (+10% a pump from pump 2) and what the effects on
+            // the shooter do to it - Rage's bonus, Sacrifice's trade - added together.
+            var skillId = WeaponSkillOf(weapon);
+            var pump = SkillPump(client.Player, skillId);
+
+            damage = GameEffectManager.ApplyDamageDealt(client.Player, damage, WeaponSkills.DamagePercent(skillId, pump));
             var action = new ActionData(client.Player, weaponClassInfo.WeaponAttackActionId, weaponClassInfo.WeaponAttackArgId, client.Player.Target, 0);
             // launch correct missile type depending on weapon type
-            MissileManager.Instance.MissileLaunch(client.Player.MapChannel, action, damage);
+            MissileManager.Instance.MissileLaunch(client.Player.MapChannel, action, damage, WeaponSkills.ArmorBypassPercent(skillId, pump));
             
             return FireResult.Fired;
         }
@@ -403,7 +605,12 @@ namespace Rasa.Managers
         /// does - <c>_UpdateWeaponHeat</c> cools by the elapsed time whenever the value is
         /// touched. Nothing needs to tick, and a weapon nobody is firing costs nothing.
         /// </summary>
-        public double CurrentHeat(Item weapon)
+        /// <param name="coolModifier">
+        /// The owner's cool-rate multiplier for this weapon - the Machine Guns and Propellant
+        /// Guns heat dissipation bonus, which the client applies the same way
+        /// (coolRate x deltaTime x GetCoolRateModifier()).
+        /// </param>
+        public double CurrentHeat(Item weapon, double coolModifier = 1.0)
         {
             if (weapon?.ItemTemplate?.WeaponInfo == null)
                 return 0;
@@ -416,7 +623,7 @@ namespace Rasa.Managers
                 return weapon.Heat;
             }
 
-            var cooled = weapon.Heat - WeaponHeat.Cooling(weapon.ItemTemplate.WeaponInfo.CoolRate, now - weapon.HeatUpdatedAt);
+            var cooled = weapon.Heat - WeaponHeat.Cooling(weapon.ItemTemplate.WeaponInfo.CoolRate * coolModifier, now - weapon.HeatUpdatedAt);
 
             weapon.Heat = cooled < 0 ? 0 : cooled;
             weapon.HeatUpdatedAt = now;
@@ -438,7 +645,9 @@ namespace Rasa.Managers
             if (weapon?.ItemTemplate?.WeaponInfo == null)
                 return;
 
-            var heat = CurrentHeat(weapon) + WeaponHeat.PerShot(weapon.ItemTemplate.WeaponInfo.HeatPerShot, ConditionPercent(weapon));
+            var skillId = WeaponSkillOf(weapon);
+            var coolModifier = WeaponSkills.CoolRateModifier(skillId, SkillPump(client.Player, skillId));
+            var heat = CurrentHeat(weapon, coolModifier) + WeaponHeat.PerShot(weapon.ItemTemplate.WeaponInfo.HeatPerShot, ConditionPercent(weapon));
 
             weapon.Heat = heat;
 
@@ -984,6 +1193,9 @@ namespace Rasa.Managers
             client.CallMethod(player.EntityId, new AllCreditsPacket(player.Credits));
 
             client.CallMethod(player.EntityId, new LockboxFundsPacket(player.LockboxCredits));
+
+            // After the skills: the weapon skill bonuses the client predicts from its own effects.
+            SyncWeaponSkills(client);
         }
 
         internal void PublishAbilityLoadout(Client client)
@@ -1138,7 +1350,11 @@ namespace Rasa.Managers
                 new TargetCategoryPacket(Factions.AFS),
                 new PlayerFlagsPacket(),
                 new IsTrialAccountPacket(player.IsTrialAccount),
-                new EquipmentInfoPacket(client.Player.Inventory.EquippedInventory)
+                new EquipmentInfoPacket(client.Player.Inventory.EquippedInventory),
+                // "Received because the manifestation was loaded on the server", and only ever
+                // for the player's own. It is what fills the advancement tracker; it offers
+                // nothing, so it goes out whether the list is empty or not.
+                new TierAdvancementInfoPacket(AvailableClassIds(player))
             };
 
             return entityData;
@@ -1257,6 +1473,15 @@ namespace Rasa.Managers
                     player.EntityId,
                     new AttributeInfoPacket(player.Attributes));
                 SendAvailableAllocationPoints(client);
+
+                var opened = AvailableClassIds(player);
+                if (opened.Count > 0 &&
+                    CharacterClassTree.LevelFor((CharacterClass)opened[0]) == player.Level)
+                {
+                    client.CallMethod(
+                        player.EntityId,
+                        new AvailableCharacterClassesPacket(opened));
+                }
             }
 
             player.Level = grant.FinalLevel;
@@ -1426,6 +1651,84 @@ namespace Rasa.Managers
             var regenPercent = player.Attributes.TryGetValue(Attributes.Regen, out var regen) ? regen.CurrentMax : 100;
 
             return (int)Math.Round(chi.CurrentMax * AdrenalinePerKillPercent / 100D * regenPercent / 100D);
+        }
+
+        /// <summary>
+        /// The classes this character may advance into right now: the direct children of their
+        /// own class, once the level that tier opens at is reached.
+        /// </summary>
+        public List<uint> AvailableClassIds(Manifestation player)
+        {
+            var available = new List<uint>();
+
+            foreach (var characterClass in CharacterClassTree.AdvancementsFor((CharacterClass)player.Class, player.Level))
+                available.Add((uint)characterClass);
+
+            return available;
+        }
+
+        /// <summary>Whether there is an advancement waiting - what the trainer's Train button reads.</summary>
+        public bool CanAdvance(Manifestation player)
+        {
+            return AvailableClassIds(player).Count > 0;
+        }
+
+        /// <summary>
+        /// The Train button in the tier select window.
+        ///
+        /// One-way, as it was live: there is no route back down the tree and no way to swap to
+        /// the sibling class. Cloning is the respec - a clone credit copies the character with
+        /// its skills reset - and that is already wired.
+        ///
+        /// Refused rather than thrown, for the reason LevelSkills is: an exception out of a
+        /// packet handler is a closed connection, and a client that offers a class the server
+        /// will not grant should be told no rather than dropped.
+        /// </summary>
+        public void SelectNewCharacterClass(Client client, SelectNewCharacterClassPacket packet)
+        {
+            var player = client.Player;
+            var current = (CharacterClass)player.Class;
+            var chosen = (CharacterClass)packet.ClassId;
+
+            string refusal = null;
+
+            if (!CharacterClassTree.Exists(chosen))
+                refusal = $"class {packet.ClassId}, which is not a character class";
+            else if (!CharacterClassTree.CanAdvanceTo(current, chosen))
+                refusal = $"{chosen}, which does not advance from {current}";
+            else if (player.Level < CharacterClassTree.LevelFor(chosen))
+                refusal = $"{chosen} at level {player.Level}, which opens at {CharacterClassTree.LevelFor(chosen)}";
+
+            if (refusal != null)
+            {
+                Logger.WriteLog(LogType.Security,
+                    $"{player.FamilyName} asked to advance into {refusal}. Ignored.");
+
+                // Put their client back where the server is.
+                client.CallMethod(player.EntityId, new CharacterClassPacket(player.Class));
+                client.CallMethod(player.EntityId, new TierAdvancementInfoPacket(AvailableClassIds(player)));
+                return;
+            }
+
+            player.Class = (uint)chosen;
+            CharacterManager.Instance.UpdateCharacter(client, CharacterUpdate.Class, player.Class);
+
+            Logger.WriteLog(LogType.Debug, $"{player.FamilyName} advanced from {current} to {chosen}.");
+
+            client.CallMethod(player.EntityId, new CharacterClassPacket(player.Class));
+
+            // The skills the new class grants become trainable through the gate in
+            // ValidateSkillLevels, which reads Player.Class - so nothing else has to change for
+            // them to unlock. Resending the skills and the points is what makes the window
+            // redraw with them in it.
+            client.CallMethod(player.EntityId, new SkillsPacket(player.Skills));
+            SendAvailableAllocationPoints(client);
+
+            // What is ahead from here: the next tier's pair, or nothing at tier 4.
+            client.CallMethod(player.EntityId, new TierAdvancementInfoPacket(AvailableClassIds(player)));
+
+            // Class is the third field of the party tuple, as DebugChgPlayerClass notes.
+            PartyManager.Instance.MemberInfoChanged(client);
         }
 
         public void DebugChgPlayerClass(Client client, uint newClassId)
@@ -1679,7 +1982,6 @@ namespace Rasa.Managers
                 updated[skillId] = new SkillsData(
                     skillId, abilityId, packet.SkillLevels[i]);
             }
-
             try
             {
                 using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
@@ -1725,6 +2027,7 @@ namespace Rasa.Managers
             client.CallMethod(client.Player.EntityId,
                 new AbilitiesPacket(updated));
             SendAvailableAllocationPoints(client);
+            SyncWeaponSkills(client);
         }
 
         public void NotifyEquipmentUpdate(Client client)
@@ -2300,7 +2603,7 @@ namespace Rasa.Managers
                 else
                     client.CellIgnoreSelfCallMethod(client, new PerformWindupPacket(PerformType.TwoArgs, ActionId.WeaponReload, reloadActionId));
 
-                client.Player.MapChannel.PerformRecovery.Add(new ActionData(client.Player, ActionId.WeaponReload, reloadActionId, foundAmmo, weapon.ItemTemplate.WeaponInfo.ReloadTime)
+                client.Player.MapChannel.PerformRecovery.Add(new ActionData(client.Player, ActionId.WeaponReload, reloadActionId, foundAmmo, ReloadTimeFor(client.Player, weapon))
                 {
                     SourceId = weapon.EntityId
                 });
@@ -2331,7 +2634,7 @@ namespace Rasa.Managers
             else
                 client.CellIgnoreSelfCallMethod(client, new PerformWindupPacket(PerformType.TwoArgs, ActionId.WeaponReload, (uint)weaponClassInfo.ReloadActionId));
 
-            client.Player.MapChannel.PerformRecovery.Add(new ActionData(client.Player, ActionId.WeaponReload, (uint)weaponClassInfo.ReloadActionId, foundAmmo, weapon.ItemTemplate.WeaponInfo.ReloadTime)
+            client.Player.MapChannel.PerformRecovery.Add(new ActionData(client.Player, ActionId.WeaponReload, (uint)weaponClassInfo.ReloadActionId, foundAmmo, ReloadTimeFor(client.Player, weapon))
             {
                 SourceId = weapon.EntityId
             });

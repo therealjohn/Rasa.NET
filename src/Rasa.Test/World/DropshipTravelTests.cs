@@ -73,7 +73,11 @@ namespace Rasa.Test.World
                 manager.CompleteMapLoadTransfer(client);
                 Assert.IsNull(client.PendingTransfer);
                 Assert.AreEqual(1, saved);
-                var arrival = new Dropship(Factions.AFS, DropshipType.Teleporter, client);
+                var arrival = new Dropship(
+                    Factions.AFS,
+                    DropshipType.Teleporter,
+                    client,
+                    DropshipRole.Arrival);
                 CellManager.Instance.AddToWorld(destination, arrival);
                 manager.Dropships.Add(arrival.EntityId, arrival);
                 for (var step = 0; step < 6; step++)
@@ -219,7 +223,11 @@ namespace Rasa.Test.World
         {
             using var world = new WorldTestContext();
             var client = world.CreateClient();
-            var ship = new Dropship(Factions.AFS, DropshipType.Teleporter, client);
+            var ship = new Dropship(
+                Factions.AFS,
+                DropshipType.Teleporter,
+                client,
+                DropshipRole.Departure);
             var manager = new DynamicObjectManager(null);
             manager.Dropships.Add(ship.EntityId, ship);
             try
@@ -240,7 +248,7 @@ namespace Rasa.Test.World
         {
             return new MapChannel
             {
-                MapInfo = new MapInfo(1300, "fixture-destination", 1, 0),
+                MapInfo = new MapInfo(1300, "adv_foreas_fixture_destination", 1, 0),
                 ClientList = new List<Rasa.Game.Client>(),
                 PlayerLimit = 128
             };

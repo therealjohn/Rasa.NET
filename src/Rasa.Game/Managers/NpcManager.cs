@@ -165,6 +165,23 @@ namespace Rasa.Managers
             if (creature.Npc.NpcIsClanMaster)
                 convoDataDict.Add(ConversationType.Clan, true);
 
+            // Training = 10. CanTrain is what enables the window's Train button, so it is the
+            // whole of the offer: the client checks only that the class is a direct child of the
+            // player's, and asks nothing about level. Sent on every trainer, true or false, so a
+            // player who is not due an advancement still gets the window and can read the tree.
+            //
+            // The dialog id has to be a real one. The client looks it up unconditionally, and a
+            // line it cannot find is printed as "Missing translation for npctrainerdialoglanguage
+            // ID n" where the trainer's greeting should be.
+            if (creature.Npc.NpcIsTrainer && ClassTrainers.TryGet(creature.DbId, out var trainer))
+            {
+                var line = ClassTrainers.DialogFor(trainer.Trains,
+                    (CharacterClass)client.Player.Class, (int)client.Player.Level);
+
+                convoDataDict.Add(ConversationType.Training,
+                    new TrainingConverse(line == TrainerDialog.Offer, trainer.DialogGroup + (int)line));
+            }
+
             /*
             // Greeting = 0
             var greetingId = 19;
@@ -368,6 +385,22 @@ namespace Rasa.Managers
                     }
                 }
             }*/
+
+            // is NPC a class trainer?
+            //
+            // This is what makes a trainer clickable at all. npc.py's _GetUseAction offers the
+            // CONVERSE action only while convoStatus != CONVO_STATUS_NONE, and convoStatus comes
+            // from this packet alone - so a trainer left at None has no use action, the client
+            // never sends RequestNPCConverse, and nothing in the Converse reply can matter.
+            // It also puts the trainer pip over their head, which is how a player finds one.
+            //
+            // Before Vending, mirroring npc.py's own Converse order, where training is offered
+            // ahead of a vendor package.
+            if (creature.Npc.NpcIsTrainer && statusSet == false)
+            {
+                client.CallMethod(creature.EntityId, new NPCConversationStatusPacket(ConversationStatus.Train, new List<uint>())); // status - train
+                statusSet = true;
+            }
 
             // is NPC vendor?
             if (vendor != null && statusSet == false)

@@ -43,6 +43,10 @@ namespace Rasa.Managers
         {
         }
 
+        /// <summary>
+        /// A player has walked onto a dropship pad: they gain it, the first time, the way a
+        /// waypoint is gained, and the travel window opens with the pads they can fly to.
+        /// </summary>
         internal void PlayerEnterTriggerRange(Client client, MapTrigger mapTrigger)
         {
             if (client.State == ClientState.Ingame && client.PendingTransfer == null &&
@@ -61,7 +65,7 @@ namespace Rasa.Managers
                 Objects.CheckPlayerWaypoint(client, waypoint);
                 mapTrigger.TriggeredBy.Add(client);
 
-                var dropshipInfoList = Objects.CreateListOfDropships(client);
+                var dropshipInfoList = Objects.CreateListOfDropships(client, mapTrigger.TriggerId);
 
                 client.CallMethod(SysEntity.ClientMethodId,
                     new EnteredWaypointPacket(client.Player.MapChannel.InstanceId, mapTrigger.MapContextId,
