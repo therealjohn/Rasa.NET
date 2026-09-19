@@ -1184,7 +1184,20 @@ namespace Rasa.Migrations.SqliteWorld
 
                     b.HasKey("MissionId", "ContentRevision", "ObjectiveId", "TransitionId", "ActionId");
 
-                    b.ToTable("mission_action");
+                    b.HasIndex("MissionId", "ContentRevision", "RewardId");
+
+                    b.HasIndex("MissionId", "ContentRevision", "ScenarioId");
+
+                    b.HasIndex("MissionId", "ContentRevision", "SpawnGroupId");
+
+                    b.HasIndex("MissionId", "ContentRevision", "TargetObjectiveId");
+
+                    b.HasIndex("MissionId", "ContentRevision", "ObjectiveId", "IndicatorId");
+
+                    b.ToTable("mission_action", t =>
+                        {
+                            t.HasCheckConstraint("CK_mission_action_kind_parameter_set", "(kind IN (1, 2, 3, 4, 5, 6, 7, 8)) AND (kind <> 1 OR (target_objective_id IS NOT NULL AND objective_state IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL)) AND (kind <> 2 OR (target_objective_id IS NOT NULL AND objective_state IS NOT NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL)) AND (kind <> 3 OR (target_objective_id IS NOT NULL AND objective_state IS NOT NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL)) AND (kind <> 4 OR (reward_id IS NOT NULL AND target_objective_id IS NULL AND objective_state IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL)) AND (kind <> 5 OR (scenario_id IS NOT NULL AND target_objective_id IS NULL AND objective_state IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL)) AND (kind <> 6 OR (spawn_group_id IS NOT NULL AND target_objective_id IS NULL AND objective_state IS NULL AND reward_id IS NULL AND scenario_id IS NULL AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL)) AND (kind <> 7 OR (indicator_id IS NOT NULL AND target_objective_id IS NULL AND objective_state IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL)) AND (kind <> 8 OR (player_flag_id IS NOT NULL AND player_flag_value IS NOT NULL AND target_objective_id IS NULL AND objective_state IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL AND indicator_id IS NULL))");
+                        });
                 });
 
             modelBuilder.Entity("Rasa.Structures.World.MissionAreaEntry", b =>
@@ -1355,7 +1368,10 @@ namespace Rasa.Migrations.SqliteWorld
 
                     b.HasKey("MissionId", "ContentRevision", "EvidenceId");
 
-                    b.ToTable("mission_evidence");
+                    b.ToTable("mission_evidence", t =>
+                        {
+                            t.HasCheckConstraint("CK_mission_evidence_source_location", "source_uri IS NOT NULL OR local_client_path IS NOT NULL");
+                        });
                 });
 
             modelBuilder.Entity("Rasa.Structures.World.MissionIndicatorEntry", b =>
@@ -1790,6 +1806,8 @@ namespace Rasa.Migrations.SqliteWorld
 
                     b.HasKey("MissionId", "ContentRevision", "SpawnGroupId");
 
+                    b.HasIndex("MissionId", "ContentRevision", "AreaId");
+
                     b.ToTable("mission_spawn_group");
                 });
 
@@ -1882,7 +1900,14 @@ namespace Rasa.Migrations.SqliteWorld
 
                     b.HasKey("MissionId", "ContentRevision", "ObjectiveId", "TransitionId", "TriggerId");
 
-                    b.ToTable("mission_trigger");
+                    b.HasIndex("MissionId", "ContentRevision", "AreaId");
+
+                    b.HasIndex("MissionId", "ContentRevision", "RelatedObjectiveId");
+
+                    b.ToTable("mission_trigger", t =>
+                        {
+                            t.HasCheckConstraint("CK_mission_trigger_kind_parameter_set", "(kind IN (1, 2, 3, 4, 5)) AND (kind <> 1 OR (npc_package_id IS NOT NULL AND player_flag_id IS NOT NULL AND related_objective_id IS NULL AND related_state IS NULL AND event_kind IS NULL AND subject_id IS NULL AND counter_id IS NULL AND initial_value IS NULL AND target_value IS NULL AND area_id IS NULL AND duration_seconds IS NULL AND source_spawn_resolved IS NULL)) AND (kind <> 2 OR (event_kind IS NOT NULL AND subject_id IS NOT NULL AND counter_id IS NOT NULL AND initial_value IS NOT NULL AND target_value IS NOT NULL AND source_spawn_resolved IS NOT NULL AND related_objective_id IS NULL AND related_state IS NULL AND area_id IS NULL AND duration_seconds IS NULL AND npc_package_id IS NULL AND player_flag_id IS NULL)) AND (kind <> 3 OR (related_objective_id IS NOT NULL AND related_state IS NOT NULL AND event_kind IS NULL AND subject_id IS NULL AND counter_id IS NULL AND initial_value IS NULL AND target_value IS NULL AND area_id IS NULL AND duration_seconds IS NULL AND npc_package_id IS NULL AND player_flag_id IS NULL AND source_spawn_resolved IS NULL)) AND (kind <> 4 OR (area_id IS NOT NULL AND related_objective_id IS NULL AND related_state IS NULL AND event_kind IS NULL AND subject_id IS NULL AND counter_id IS NULL AND initial_value IS NULL AND target_value IS NULL AND duration_seconds IS NULL AND npc_package_id IS NULL AND player_flag_id IS NULL AND source_spawn_resolved IS NULL)) AND (kind <> 5 OR (duration_seconds IS NOT NULL AND related_objective_id IS NULL AND related_state IS NULL AND event_kind IS NULL AND subject_id IS NULL AND counter_id IS NULL AND initial_value IS NULL AND target_value IS NULL AND area_id IS NULL AND npc_package_id IS NULL AND player_flag_id IS NULL AND source_spawn_resolved IS NULL))");
+                        });
                 });
 
             modelBuilder.Entity("Rasa.Structures.World.NpcMissionEntry", b =>
@@ -2379,6 +2404,31 @@ namespace Rasa.Migrations.SqliteWorld
 
             modelBuilder.Entity("Rasa.Structures.World.MissionActionEntry", b =>
                 {
+                    b.HasOne("Rasa.Structures.World.MissionRewardDefinitionEntry", null)
+                        .WithMany()
+                        .HasForeignKey("MissionId", "ContentRevision", "RewardId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Rasa.Structures.World.MissionScenarioEntry", null)
+                        .WithMany()
+                        .HasForeignKey("MissionId", "ContentRevision", "ScenarioId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Rasa.Structures.World.MissionSpawnGroupEntry", null)
+                        .WithMany()
+                        .HasForeignKey("MissionId", "ContentRevision", "SpawnGroupId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Rasa.Structures.World.MissionObjectiveDefinitionEntry", null)
+                        .WithMany()
+                        .HasForeignKey("MissionId", "ContentRevision", "TargetObjectiveId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Rasa.Structures.World.MissionIndicatorEntry", null)
+                        .WithMany()
+                        .HasForeignKey("MissionId", "ContentRevision", "ObjectiveId", "IndicatorId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("Rasa.Structures.World.MissionObjectiveTransitionEntry", "Transition")
                         .WithMany("Actions")
                         .HasForeignKey("MissionId", "ContentRevision", "ObjectiveId", "TransitionId")
@@ -2517,11 +2567,26 @@ namespace Rasa.Migrations.SqliteWorld
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("Rasa.Structures.World.MissionAreaEntry", null)
+                        .WithMany()
+                        .HasForeignKey("MissionId", "ContentRevision", "AreaId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.Navigation("Content");
                 });
 
             modelBuilder.Entity("Rasa.Structures.World.MissionTriggerEntry", b =>
                 {
+                    b.HasOne("Rasa.Structures.World.MissionAreaEntry", null)
+                        .WithMany()
+                        .HasForeignKey("MissionId", "ContentRevision", "AreaId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Rasa.Structures.World.MissionObjectiveDefinitionEntry", null)
+                        .WithMany()
+                        .HasForeignKey("MissionId", "ContentRevision", "RelatedObjectiveId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("Rasa.Structures.World.MissionObjectiveTransitionEntry", "Transition")
                         .WithMany("Triggers")
                         .HasForeignKey("MissionId", "ContentRevision", "ObjectiveId", "TransitionId")

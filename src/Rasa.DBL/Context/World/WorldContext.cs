@@ -171,6 +171,66 @@ namespace Rasa.Context.World
 
         private void SetupMissionContent(ModelBuilder modelBuilder)
         {
+            const string triggerParameterSetConstraint =
+                "(kind IN (1, 2, 3, 4, 5)) " +
+                "AND (kind <> 1 OR (npc_package_id IS NOT NULL AND player_flag_id IS NOT NULL " +
+                "AND related_objective_id IS NULL AND related_state IS NULL " +
+                "AND event_kind IS NULL AND subject_id IS NULL AND counter_id IS NULL " +
+                "AND initial_value IS NULL AND target_value IS NULL " +
+                "AND area_id IS NULL AND duration_seconds IS NULL " +
+                "AND source_spawn_resolved IS NULL)) " +
+                "AND (kind <> 2 OR (event_kind IS NOT NULL AND subject_id IS NOT NULL " +
+                "AND counter_id IS NOT NULL AND initial_value IS NOT NULL " +
+                "AND target_value IS NOT NULL AND source_spawn_resolved IS NOT NULL " +
+                "AND related_objective_id IS NULL AND related_state IS NULL " +
+                "AND area_id IS NULL AND duration_seconds IS NULL " +
+                "AND npc_package_id IS NULL AND player_flag_id IS NULL)) " +
+                "AND (kind <> 3 OR (related_objective_id IS NOT NULL AND related_state IS NOT NULL " +
+                "AND event_kind IS NULL AND subject_id IS NULL AND counter_id IS NULL " +
+                "AND initial_value IS NULL AND target_value IS NULL " +
+                "AND area_id IS NULL AND duration_seconds IS NULL " +
+                "AND npc_package_id IS NULL AND player_flag_id IS NULL " +
+                "AND source_spawn_resolved IS NULL)) " +
+                "AND (kind <> 4 OR (area_id IS NOT NULL " +
+                "AND related_objective_id IS NULL AND related_state IS NULL " +
+                "AND event_kind IS NULL AND subject_id IS NULL AND counter_id IS NULL " +
+                "AND initial_value IS NULL AND target_value IS NULL " +
+                "AND duration_seconds IS NULL AND npc_package_id IS NULL " +
+                "AND player_flag_id IS NULL AND source_spawn_resolved IS NULL)) " +
+                "AND (kind <> 5 OR (duration_seconds IS NOT NULL " +
+                "AND related_objective_id IS NULL AND related_state IS NULL " +
+                "AND event_kind IS NULL AND subject_id IS NULL AND counter_id IS NULL " +
+                "AND initial_value IS NULL AND target_value IS NULL " +
+                "AND area_id IS NULL AND npc_package_id IS NULL " +
+                "AND player_flag_id IS NULL AND source_spawn_resolved IS NULL))";
+            const string actionParameterSetConstraint =
+                "(kind IN (1, 2, 3, 4, 5, 6, 7, 8)) " +
+                "AND (kind <> 1 OR (target_objective_id IS NOT NULL AND objective_state IS NULL " +
+                "AND reward_id IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL " +
+                "AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL)) " +
+                "AND (kind <> 2 OR (target_objective_id IS NOT NULL AND objective_state IS NOT NULL " +
+                "AND reward_id IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL " +
+                "AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL)) " +
+                "AND (kind <> 3 OR (target_objective_id IS NOT NULL AND objective_state IS NOT NULL " +
+                "AND reward_id IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL " +
+                "AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL)) " +
+                "AND (kind <> 4 OR (reward_id IS NOT NULL AND target_objective_id IS NULL " +
+                "AND objective_state IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL " +
+                "AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL)) " +
+                "AND (kind <> 5 OR (scenario_id IS NOT NULL AND target_objective_id IS NULL " +
+                "AND objective_state IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL " +
+                "AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL)) " +
+                "AND (kind <> 6 OR (spawn_group_id IS NOT NULL AND target_objective_id IS NULL " +
+                "AND objective_state IS NULL AND reward_id IS NULL AND scenario_id IS NULL " +
+                "AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL)) " +
+                "AND (kind <> 7 OR (indicator_id IS NOT NULL AND target_objective_id IS NULL " +
+                "AND objective_state IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL " +
+                "AND scenario_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL)) " +
+                "AND (kind <> 8 OR (player_flag_id IS NOT NULL AND player_flag_value IS NOT NULL " +
+                "AND target_objective_id IS NULL AND objective_state IS NULL " +
+                "AND reward_id IS NULL AND spawn_group_id IS NULL " +
+                "AND scenario_id IS NULL AND indicator_id IS NULL))";
+
             modelBuilder.Entity<MissionContentDefinitionEntry>()
                 .HasKey(entry => new { entry.MissionId, entry.ContentRevision });
             modelBuilder.Entity<MissionContentDefinitionEntry>()
@@ -292,6 +352,9 @@ namespace Rasa.Context.World
                 .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
 
             modelBuilder.Entity<MissionTriggerEntry>()
+                .ToTable(table => table.HasCheckConstraint(
+                    "CK_mission_trigger_kind_parameter_set",
+                    triggerParameterSetConstraint))
                 .HasKey(entry => new
                 {
                     entry.MissionId,
@@ -309,6 +372,38 @@ namespace Rasa.Context.World
                     entry.ContentRevision,
                     entry.ObjectiveId,
                     entry.TransitionId
+                })
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionTriggerEntry>()
+                .HasOne<MissionObjectiveDefinitionEntry>()
+                .WithMany()
+                .HasForeignKey(entry => new
+                {
+                    entry.MissionId,
+                    entry.ContentRevision,
+                    entry.RelatedObjectiveId
+                })
+                .HasPrincipalKey(entry => new
+                {
+                    entry.MissionId,
+                    entry.ContentRevision,
+                    entry.ObjectiveId
+                })
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionTriggerEntry>()
+                .HasOne<MissionAreaEntry>()
+                .WithMany()
+                .HasForeignKey(entry => new
+                {
+                    entry.MissionId,
+                    entry.ContentRevision,
+                    entry.AreaId
+                })
+                .HasPrincipalKey(entry => new
+                {
+                    entry.MissionId,
+                    entry.ContentRevision,
+                    entry.AreaId
                 })
                 .OnDelete(DeleteBehavior.Restrict);
             modelBuilder.Entity<MissionTriggerEntry>()
@@ -360,6 +455,9 @@ namespace Rasa.Context.World
                 .AsUnsignedInt(_dbContextPropertyModifier, 11);
 
             modelBuilder.Entity<MissionActionEntry>()
+                .ToTable(table => table.HasCheckConstraint(
+                    "CK_mission_action_kind_parameter_set",
+                    actionParameterSetConstraint))
                 .HasKey(entry => new
                 {
                     entry.MissionId,
@@ -377,6 +475,88 @@ namespace Rasa.Context.World
                     entry.ContentRevision,
                     entry.ObjectiveId,
                     entry.TransitionId
+                })
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionActionEntry>()
+                .HasOne<MissionObjectiveDefinitionEntry>()
+                .WithMany()
+                .HasForeignKey(entry => new
+                {
+                    entry.MissionId,
+                    entry.ContentRevision,
+                    entry.TargetObjectiveId
+                })
+                .HasPrincipalKey(entry => new
+                {
+                    entry.MissionId,
+                    entry.ContentRevision,
+                    entry.ObjectiveId
+                })
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionActionEntry>()
+                .HasOne<MissionRewardDefinitionEntry>()
+                .WithMany()
+                .HasForeignKey(entry => new
+                {
+                    entry.MissionId,
+                    entry.ContentRevision,
+                    entry.RewardId
+                })
+                .HasPrincipalKey(entry => new
+                {
+                    entry.MissionId,
+                    entry.ContentRevision,
+                    entry.RewardId
+                })
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionActionEntry>()
+                .HasOne<MissionSpawnGroupEntry>()
+                .WithMany()
+                .HasForeignKey(entry => new
+                {
+                    entry.MissionId,
+                    entry.ContentRevision,
+                    entry.SpawnGroupId
+                })
+                .HasPrincipalKey(entry => new
+                {
+                    entry.MissionId,
+                    entry.ContentRevision,
+                    entry.SpawnGroupId
+                })
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionActionEntry>()
+                .HasOne<MissionScenarioEntry>()
+                .WithMany()
+                .HasForeignKey(entry => new
+                {
+                    entry.MissionId,
+                    entry.ContentRevision,
+                    entry.ScenarioId
+                })
+                .HasPrincipalKey(entry => new
+                {
+                    entry.MissionId,
+                    entry.ContentRevision,
+                    entry.ScenarioId
+                })
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionActionEntry>()
+                .HasOne<MissionIndicatorEntry>()
+                .WithMany()
+                .HasForeignKey(entry => new
+                {
+                    entry.MissionId,
+                    entry.ContentRevision,
+                    entry.ObjectiveId,
+                    entry.IndicatorId
+                })
+                .HasPrincipalKey(entry => new
+                {
+                    entry.MissionId,
+                    entry.ContentRevision,
+                    entry.ObjectiveId,
+                    entry.IndicatorId
                 })
                 .OnDelete(DeleteBehavior.Restrict);
             modelBuilder.Entity<MissionActionEntry>()
@@ -508,6 +688,22 @@ namespace Rasa.Context.World
                 .HasForeignKey(entry => new { entry.MissionId, entry.ContentRevision })
                 .OnDelete(DeleteBehavior.Restrict);
             modelBuilder.Entity<MissionSpawnGroupEntry>()
+                .HasOne<MissionAreaEntry>()
+                .WithMany()
+                .HasForeignKey(entry => new
+                {
+                    entry.MissionId,
+                    entry.ContentRevision,
+                    entry.AreaId
+                })
+                .HasPrincipalKey(entry => new
+                {
+                    entry.MissionId,
+                    entry.ContentRevision,
+                    entry.AreaId
+                })
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionSpawnGroupEntry>()
                 .Property(entry => entry.SpawnGroupId)
                 .AsUnsignedInt(_dbContextPropertyModifier, 11);
             modelBuilder.Entity<MissionSpawnGroupEntry>()
@@ -579,6 +775,9 @@ namespace Rasa.Context.World
                 .AsUnsignedInt(_dbContextPropertyModifier, 11);
 
             modelBuilder.Entity<MissionEvidenceEntry>()
+                .ToTable(table => table.HasCheckConstraint(
+                    "CK_mission_evidence_source_location",
+                    "source_uri IS NOT NULL OR local_client_path IS NOT NULL"))
                 .HasKey(entry => new { entry.MissionId, entry.ContentRevision, entry.EvidenceId });
             modelBuilder.Entity<MissionEvidenceEntry>()
                 .HasOne(entry => entry.Content)

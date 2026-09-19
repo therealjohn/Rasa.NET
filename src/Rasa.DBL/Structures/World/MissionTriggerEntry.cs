@@ -72,6 +72,11 @@ namespace Rasa.Structures.World
         [Column("event_kind")]
         public byte? EventKind { get; set; }
 
+        /// <summary>
+        /// Progress-event subjects intentionally stay scalar. Depending on EventKind the value is
+        /// a mission id, creature id, item class id, waypoint id, logos id, or interaction class
+        /// id, so there is no single authored row type to reference here.
+        /// </summary>
         [Column("subject_id")]
         public uint? SubjectId { get; set; }
 
