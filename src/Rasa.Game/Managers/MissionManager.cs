@@ -1,45 +1,286 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Data.Common;
+using System.Linq;
+using Microsoft.EntityFrameworkCore;
 
 namespace Rasa.Managers
 {
     using Data;
     using Game;
+    using Packets;
+    using Packets.MapChannel.Server;
+    using Packets.Mission.Server;
+    using Repositories.Char;
+    using Repositories.Char.CharacterMissionProgress;
     using Repositories.UnitOfWork;
     using Structures;
+    using Structures.Char;
+
+    internal readonly struct MissionRewardItem
+    {
+        internal uint ItemTemplateId { get; }
+        internal uint Quantity { get; }
+
+        internal MissionRewardItem(uint itemTemplateId, uint quantity)
+        {
+            ItemTemplateId = itemTemplateId;
+            Quantity = quantity;
+        }
+    }
+
+    internal sealed class MissionRewardDefinition
+    {
+        internal uint Experience { get; }
+        internal IReadOnlyDictionary<CurencyType, int> Currencies { get; }
+        internal IReadOnlyList<MissionRewardItem> FixedItems { get; }
+        internal IReadOnlyList<MissionRewardItem> SelectableItems { get; }
+
+        internal MissionRewardDefinition(
+            uint experience,
+            IReadOnlyDictionary<CurencyType, int> currencies,
+            IReadOnlyList<MissionRewardItem> fixedItems,
+            IReadOnlyList<MissionRewardItem> selectableItems)
+        {
+            Experience = experience;
+            Currencies = new Dictionary<CurencyType, int>(
+                currencies ?? new Dictionary<CurencyType, int>());
+            FixedItems = (fixedItems ?? Array.Empty<MissionRewardItem>()).ToArray();
+            SelectableItems = (selectableItems ?? Array.Empty<MissionRewardItem>()).ToArray();
+        }
+
+        internal MissionRewardGrant CreateGrant(
+            int? selectionIndex,
+            Action<Item> beforeItemPublication = null)
+        {
+            if (Currencies.Any(entry =>
+                    entry.Value < 0 ||
+                    entry.Key is not CurencyType.Credits and not CurencyType.Prestige))
+                throw new GameplayRejectionException("Mission reward contains an unsupported currency.");
+            if (FixedItems.Any(item => item.ItemTemplateId == 0 || item.Quantity == 0) ||
+                SelectableItems.Any(item => item.ItemTemplateId == 0 || item.Quantity == 0))
+                throw new GameplayRejectionException("Mission reward contains an invalid item.");
+            if (SelectableItems.Count == 0)
+            {
+                if (selectionIndex.HasValue)
+                    throw new GameplayRejectionException("Mission reward selection is invalid.");
+                return new MissionRewardGrant(
+                    Experience, Currencies, FixedItems, beforeItemPublication);
+            }
+            if (!selectionIndex.HasValue ||
+                selectionIndex.Value < 0 ||
+                selectionIndex.Value >= SelectableItems.Count)
+                throw new GameplayRejectionException("Mission reward selection is invalid.");
+
+            return new MissionRewardGrant(
+                Experience,
+                Currencies,
+                FixedItems.Concat(new[] { SelectableItems[selectionIndex.Value] }).ToArray(),
+                beforeItemPublication);
+        }
+
+        internal RewardInfo CreateInfo()
+        {
+            var info = new RewardInfo();
+            foreach (var currency in Currencies)
+            {
+                if (currency.Value >= 0)
+                    info.FixedReward.Credits[currency.Key] = (uint)currency.Value;
+            }
+            foreach (var item in FixedItems)
+                info.FixedReward.FixedItems.Add(CreateItem(item));
+            foreach (var item in SelectableItems)
+                info.SelectableReward.Add(CreateItem(item));
+            return info;
+
+            static RewardItem CreateItem(MissionRewardItem item)
+            {
+                var reward = new RewardItem
+                {
+                    ItemTemplateId = item.ItemTemplateId,
+                    Quantity = item.Quantity
+                };
+                if (ItemManager.Instance.ItemTemplateItemClass.TryGetValue(
+                        item.ItemTemplateId, out var entityClass))
+                    reward.Class = entityClass;
+                return reward;
+            }
+        }
+    }
+
+    internal sealed class MissionRewardGrant : IDisposable
+    {
+        private readonly uint _experience;
+        private readonly IReadOnlyDictionary<CurencyType, int> _currencies;
+        private readonly InventoryManager.InventoryGrant _inventory;
+        private readonly IReadOnlyList<InventoryManager.InventoryItemGrant> _items;
+        private ManifestationManager.ProgressionGrant _progression;
+        private int _previousCredits;
+        private int _previousPrestige;
+        private int _credits;
+        private int _prestige;
+
+        internal MissionRewardGrant(
+            uint experience,
+            IReadOnlyDictionary<CurencyType, int> currencies,
+            IReadOnlyList<MissionRewardItem> items,
+            Action<Item> beforeItemPublication = null)
+        {
+            _experience = experience;
+            _currencies = currencies;
+            _items = items.Select(item =>
+                new InventoryManager.InventoryItemGrant(item.ItemTemplateId, item.Quantity)).ToArray();
+            _inventory = new InventoryManager.InventoryGrant(beforeItemPublication);
+        }
+
+        internal void PlanAndSave(
+            Client client,
+            CharacterEntry durableCharacter,
+            ICharUnitOfWork unitOfWork,
+            ManifestationManager manifestationManager)
+        {
+            var player = client.Player;
+            if (!player.Credits.TryGetValue(CurencyType.Credits, out var runtimeCredits) ||
+                !player.Credits.TryGetValue(CurencyType.Prestige, out var runtimePrestige) ||
+                durableCharacter.Credit != runtimeCredits ||
+                durableCharacter.Prestige != runtimePrestige)
+                throw new GameplayRejectionException("Runtime currencies no longer match durable character state.");
+
+            _previousCredits = durableCharacter.Credit;
+            _previousPrestige = durableCharacter.Prestige;
+            _credits = _previousCredits;
+            _prestige = _previousPrestige;
+            try
+            {
+                foreach (var currency in _currencies)
+                {
+                    switch (currency.Key)
+                    {
+                        case CurencyType.Credits:
+                            _credits = checked(_credits + currency.Value);
+                            break;
+                        case CurencyType.Prestige:
+                            _prestige = checked(_prestige + currency.Value);
+                            break;
+                        default:
+                            throw new GameplayRejectionException("Mission reward contains an unsupported currency.");
+                    }
+                }
+            }
+            catch (OverflowException error)
+            {
+                throw new GameplayRejectionException(
+                    "Mission reward currency exceeds the supported range.",
+                    error);
+            }
+
+            if (_items.Count > 0)
+                _inventory.PlanAndSave(client, _items, unitOfWork);
+            if (_experience > 0)
+            {
+                try
+                {
+                    _progression = manifestationManager.PlanExperience(
+                        client, _experience, durableCharacter, unitOfWork);
+                }
+                catch (OverflowException error)
+                {
+                    throw new GameplayRejectionException(
+                        "Mission reward experience exceeds the supported range.",
+                        error);
+                }
+            }
+            if (_credits != durableCharacter.Credit || _prestige != durableCharacter.Prestige)
+                unitOfWork.Characters.UpdateCharacterCurrencies(player.Id, _credits, _prestige);
+        }
+
+        internal void ConvergeRuntime(Client client)
+        {
+            _inventory.ConvergeRuntime(client);
+            if (_progression is { HasChanges: true })
+            {
+                client.Player.Experience = _progression.TotalExperience;
+                client.Player.Level = _progression.FinalLevel;
+                client.Player.CloneCredits = _progression.FinalCloneCredits;
+            }
+            client.Player.Credits[CurencyType.Credits] = _credits;
+            client.Player.Credits[CurencyType.Prestige] = _prestige;
+        }
+
+        internal void Publish(Client client, ManifestationManager manifestationManager)
+        {
+            _inventory.Publish(client);
+            MissionManager.TryPublish(
+                () => manifestationManager.PublishExperience(client, _progression),
+                "mission experience");
+            PublishCurrency(
+                CurencyType.Credits,
+                _credits,
+                _previousCredits);
+            PublishCurrency(
+                CurencyType.Prestige,
+                _prestige,
+                _previousPrestige);
+
+            void PublishCurrency(CurencyType type, int total, int previous)
+            {
+                if (total == previous)
+                    return;
+                MissionManager.TryPublish(
+                    () => client.CallMethod(
+                        client.Player.EntityId,
+                        new UpdateCreditsPacket(
+                            type,
+                            total,
+                            (uint)(total - previous))),
+                    $"mission {type} total");
+            }
+        }
+
+        internal IReadOnlyList<MissionProgressEvent> CreateItemAcquisitionEvents() =>
+            _items
+                .Select(item =>
+                    ItemManager.Instance.ItemTemplateItemClass.TryGetValue(
+                        item.ItemTemplateId,
+                        out var itemClass)
+                        ? new
+                        {
+                            ItemClassId = (uint)itemClass,
+                            item.Quantity
+                        }
+                        : null)
+                .Where(item => item != null)
+                .GroupBy(item => item.ItemClassId)
+                .Select(group => MissionProgressEvent.ItemAcquired(
+                    group.Key,
+                    group.Aggregate(
+                        0U,
+                        (total, item) => checked(total + item.Quantity))))
+                .ToArray();
+
+        public void Dispose() => _inventory.Dispose();
+    }
 
     public class MissionManager
     {
-        /*      Mission Packets:
-         * - MissionStatusInfo(self, missionStatusDict)
-         * - MissionCompleteable(self, missionId, bCompleteable)
-         * - MissionCompleted(self, missionId)
-         * - MissionRewarded(self, missionId)
-         * - MissionFailed(self, missionId)
-         * - MissionDiscarded(self, missionId)
-         * - MissionCleared(self, missionId)
-         * - MissionGained(self, missionId, missionInfo)
-         * - ObjectiveRevealed(self, missionId, objectiveId, missionInfo)
-         * - ObjectiveActivated(self, missionId, objectiveId)
-         * - ObjectiveCompleted(self, missionId, objectiveId)
-         * - ObjectiveFailed(self, missionId, objectiveId)
-         * - UpdateObjectiveCounter(self, missionId, objectiveId, counterId, counterVal, initialVal, targetVal)
-         * - UpdateObjectiveItemCounter(self, missionId, objectiveId, itemClassId, counterVal, targetVal)
-         * - DispenseSharedMission(self, actorId, missionId, missionInfo)
-         * - DispenseRadioMission(self, missionId, missionInfo, bForceDialog)
-         * 
-         */
-
+        private const int MissionLogCapacity = 30;
         private static MissionManager _instance;
-        private static readonly object InstanceLock = new object();
+        private static readonly object InstanceLock = new();
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
+        private readonly Dictionary<uint, Mission> _loadedMissions;
+        private readonly IReadOnlyDictionary<uint, Mission> _loadedMissionsView;
+        private readonly Dictionary<uint, MissionRewardDefinition> _rewardDefinitions;
+        private readonly ManifestationManager _manifestationManager;
+        private readonly Action<Item> _beforeRewardItemPublication;
+        private readonly Action<PythonPacket> _beforeMissionPacketPublication;
 
-        public readonly Dictionary<uint, Mission> LoadedMissions = new Dictionary<uint, Mission>();
+        public IReadOnlyDictionary<uint, Mission> LoadedMissions => _loadedMissionsView;
 
         public static MissionManager Instance
         {
             get
             {
-                // ReSharper disable once InvertIf
                 if (_instance == null)
                 {
                     lock (InstanceLock)
@@ -54,20 +295,1791 @@ namespace Rasa.Managers
         }
 
         private MissionManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory)
+            : this(gameUnitOfWorkFactory, new Dictionary<uint, Mission>())
+        {
+        }
+
+        public MissionManager(
+            IGameUnitOfWorkFactory gameUnitOfWorkFactory,
+            IReadOnlyDictionary<uint, Mission> definitions)
+            : this(
+                gameUnitOfWorkFactory,
+                definitions,
+                new Dictionary<uint, MissionRewardDefinition>(),
+                new ManifestationManager(gameUnitOfWorkFactory))
+        {
+        }
+
+        internal MissionManager(
+            IGameUnitOfWorkFactory gameUnitOfWorkFactory,
+            IReadOnlyDictionary<uint, Mission> definitions,
+            IReadOnlyDictionary<uint, MissionRewardDefinition> rewardDefinitions,
+            ManifestationManager manifestationManager,
+            Action<Item> beforeRewardItemPublication = null,
+            Action<PythonPacket> beforeMissionPacketPublication = null)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
+            _loadedMissions = definitions.ToDictionary(entry => entry.Key, entry => entry.Value);
+            _loadedMissionsView = new ReadOnlyDictionary<uint, Mission>(_loadedMissions);
+            _rewardDefinitions = new Dictionary<uint, MissionRewardDefinition>(
+                rewardDefinitions ?? new Dictionary<uint, MissionRewardDefinition>());
+            _manifestationManager = manifestationManager;
+            _beforeRewardItemPublication = beforeRewardItemPublication;
+            _beforeMissionPacketPublication = beforeMissionPacketPublication;
         }
 
         public void LoadMissions()
         {
             using var unitOfWork = _gameUnitOfWorkFactory.CreateWorld();
-            var missions = unitOfWork.NpcMissions.Get();
-
-            foreach (var mission in missions)
+            foreach (var mission in unitOfWork.NpcMissions.Get())
             {
-                LoadedMissions.Add(mission.Id, new Mission(mission));
-
+                var definition = new Mission(mission, isOperational: true);
+                var rewardRows = unitOfWork.NpcMissionRewards.Get(mission.Id);
+                if (rewardRows.Count == 0)
+                    _rewardDefinitions[mission.Id] = new MissionRewardDefinition(
+                        0,
+                        new Dictionary<CurencyType, int>(),
+                        Array.Empty<MissionRewardItem>(),
+                        Array.Empty<MissionRewardItem>());
+                else
+                    definition = definition.DisableOperational(
+                        "mission reward rows use an undocumented type contract");
+                _loadedMissions[mission.Id] = definition;
             }
+            foreach (var recovered in MissionDefinitionCatalog.CreateRecoveredInactiveDefinitions())
+            {
+                _loadedMissions.TryGetValue(recovered.Key, out var worldDefinition);
+                _loadedMissions[recovered.Key] = recovered.Value.WithWorldMetadata(worldDefinition);
+            }
+            foreach (var definition in _loadedMissions.Values.Where(
+                definition => !definition.IsOperational))
+                Logger.WriteLog(
+                    LogType.Error,
+                    $"Mission {definition.MissionId} is inactive: {definition.OperationalDiagnostic}.");
+        }
+
+        internal void Hydrate(
+            Manifestation player,
+            IReadOnlyList<CharacterMissionEntry> rows,
+            CharacterMissionProgressSnapshot progress)
+        {
+            player.Missions = BuildHydration(player.Id, rows, progress).Missions;
+        }
+
+        internal void HydrateAndClearInvalid(
+            Manifestation player,
+            ICharUnitOfWork unitOfWork)
+        {
+            HydrationResult result = null;
+            unitOfWork.ExecuteTransaction(() =>
+            {
+                result = BuildHydration(
+                    player.Id,
+                    unitOfWork.CharacterMissions.Get(player.Id),
+                    unitOfWork.CharacterMissionProgress.Get(player.Id));
+                foreach (var missionId in result.InvalidMissionIds)
+                    unitOfWork.CharacterMissions.Remove(player.Id, missionId);
+            });
+            player.Missions = result.Missions;
+        }
+
+        private HydrationResult BuildHydration(
+            uint characterId,
+            IReadOnlyList<CharacterMissionEntry> rows,
+            CharacterMissionProgressSnapshot progress)
+        {
+            var hydrated = new Dictionary<uint, MissionLog>();
+            var invalid = new List<uint>();
+            foreach (var row in rows)
+            {
+                if (!TryGetOperationalMission(row.MissionId, out var definition))
+                {
+                    Logger.WriteLog(LogType.Error,
+                        $"Cleared mission {row.MissionId} for character {characterId}: definition is not operational.");
+                    invalid.Add(row.MissionId);
+                    continue;
+                }
+
+                var state = (MissionState)row.MissionState;
+                if (!IsPublishedState(state))
+                {
+                    Logger.WriteLog(LogType.Error,
+                        $"Cleared mission {row.MissionId} for character {characterId}: unsupported state {row.MissionState}.");
+                    invalid.Add(row.MissionId);
+                    continue;
+                }
+
+                if (!TryHydrateObjectives(definition, progress, out var objectives))
+                {
+                    Logger.WriteLog(LogType.Error,
+                        $"Cleared mission {row.MissionId} for character {characterId}: objective state is incomplete or invalid.");
+                    invalid.Add(row.MissionId);
+                    continue;
+                }
+                var derivedCompleteable =
+                    state == MissionState.Active &&
+                    definition.Objectives.Values
+                        .Where(objective => objective.IsRequired.Value)
+                        .All(objective =>
+                            objectives[objective.ObjectiveId].State ==
+                            MissionObjectiveState.Completed);
+                if (state == MissionState.Active && row.Completeable != derivedCompleteable)
+                {
+                    Logger.WriteLog(LogType.Error,
+                        $"Cleared mission {row.MissionId} for character {characterId}: completable state does not match objectives.");
+                    invalid.Add(row.MissionId);
+                    continue;
+                }
+
+                hydrated[row.MissionId] = new MissionLog(
+                    row.MissionId,
+                    state,
+                    derivedCompleteable,
+                    objectives);
+            }
+
+            return new HydrationResult(hydrated, invalid);
+        }
+
+        internal void Hydrate(Manifestation player, IReadOnlyList<CharacterMissionEntry> rows) =>
+            Hydrate(player, rows, CharacterMissionProgressSnapshot.Empty);
+
+        private sealed class HydrationResult
+        {
+            internal Dictionary<uint, MissionLog> Missions { get; }
+            internal IReadOnlyList<uint> InvalidMissionIds { get; }
+
+            internal HydrationResult(
+                Dictionary<uint, MissionLog> missions,
+                IReadOnlyList<uint> invalidMissionIds)
+            {
+                Missions = missions;
+                InvalidMissionIds = invalidMissionIds;
+            }
+        }
+
+        public IReadOnlyDictionary<uint, MissionInfo> BuildStatusSnapshot(Manifestation player)
+        {
+            var snapshot = new Dictionary<uint, MissionInfo>();
+            foreach (var entry in player.Missions)
+            {
+                if (!TryGetOperationalMission(entry.Key, out var definition) ||
+                    !IsPublishedState(entry.Value.State))
+                    continue;
+
+                snapshot.Add(entry.Key, definition.CreateInfo(
+                    entry.Value.State,
+                    entry.Value.Completeable,
+                    entry.Value.Objectives));
+            }
+
+            return snapshot;
+        }
+
+        public void PublishInitialState(Client client)
+        {
+            PublishMissionPacket(
+                client,
+                new MissionStatusInfoPacket(BuildStatusSnapshot(client.Player)),
+                "mission status snapshot");
+        }
+
+        public bool TryAcceptNpcMission(Client client, ulong npcEntityId, uint missionId)
+        {
+            if (client == null)
+                return false;
+
+            lock (client.SyncRoot)
+            {
+                if (!IsActivePlayer(client))
+                    return Reject($"Rejected mission {missionId}: character is not active in the world.");
+                if (!TryGetOperationalMission(missionId, out var definition))
+                    return Reject($"Rejected mission {missionId}: definition is not operational.");
+                if (!TryGetNpcOnPlayerMap(client.Player, npcEntityId, out var npc))
+                    return Reject($"Rejected mission {missionId}: NPC entity {npcEntityId} is not in the current map instance.");
+                if (npc.Npc == null || npc.DbId != definition.MissionGiver)
+                    return Reject($"Rejected mission {missionId}: NPC {npc.DbId} is not its authoritative giver.");
+                if (client.Player.Missions.ContainsKey(missionId))
+                    return Reject($"Rejected mission {missionId}: character {client.Player.Id} already has it.");
+
+                var objectiveLogs = definition.CreateInitialObjectiveLogs();
+                var initialCompleteable = definition.Objectives.Values
+                    .Where(objective => objective.IsRequired.Value)
+                    .All(objective =>
+                        objective.InitialState.Value == MissionObjectiveState.Completed);
+                var log = new MissionLog(
+                    missionId,
+                    MissionState.Active,
+                    initialCompleteable,
+                    objectiveLogs);
+                var accepted = false;
+                var durableLogFull = false;
+                try
+                {
+                    using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+                    unitOfWork.ExecuteTransaction(() =>
+                    {
+                        if (unitOfWork.CharacterMissions.Count(client.Player.Id) >= MissionLogCapacity)
+                        {
+                            durableLogFull = true;
+                            return;
+                        }
+                        if (unitOfWork.CharacterMissions.GetByCharacterAndMission(
+                                client.Player.Id, missionId) != null)
+                            return;
+
+                        unitOfWork.CharacterMissions.Add(new CharacterMissionEntry(
+                            client.Player.Id,
+                            missionId,
+                            (uint)MissionState.Active)
+                        {
+                            Completeable = initialCompleteable
+                        });
+                        unitOfWork.CharacterMissionProgress.AddObjectives(
+                            definition.Objectives.Values.Select(objective =>
+                            {
+                                var entry = new CharacterMissionObjectiveEntry(
+                                    client.Player.Id,
+                                    missionId,
+                                    objective.ObjectiveId,
+                                    (byte)objective.InitialState.Value);
+                                foreach (var counter in objective.Counters)
+                                    entry.Counters.Add(new CharacterMissionObjectiveCounterEntry(
+                                        client.Player.Id,
+                                        missionId,
+                                        objective.ObjectiveId,
+                                        counter.Key,
+                                        counter.Value.InitialValue));
+                                foreach (var counter in objective.ItemCounters)
+                                    entry.ItemCounters.Add(new CharacterMissionObjectiveItemCounterEntry(
+                                        client.Player.Id,
+                                        missionId,
+                                        objective.ObjectiveId,
+                                        counter.Key,
+                                        counter.Value.InitialValue));
+                                return entry;
+                            }));
+                        accepted = true;
+                    });
+                }
+                catch (Exception error) when (error is DbUpdateException || error is DbException)
+                {
+                    Logger.WriteLog(LogType.Error,
+                        $"Unable to accept mission {missionId} for character {client.Player.Id}: {error.Message}");
+                    return false;
+                }
+
+                if (durableLogFull)
+                {
+                    CommunicatorManager.Instance.SystemMessage(client, "Mission log is full.");
+                    return false;
+                }
+                if (!accepted)
+                    return Reject($"Rejected mission {missionId}: character {client.Player.Id} already has it.");
+
+                client.Player.Missions.Add(missionId, log);
+                client.CallMethod(
+                    client.Player.EntityId,
+                    new MissionGainedPacket(missionId, definition.CreateInfo(
+                        log.State, log.Completeable, log.Objectives)));
+                return true;
+            }
+        }
+
+        internal bool TryCompleteNpcMission(
+            Client client,
+            ulong npcEntityId,
+            uint missionId,
+            int? selectionIndex,
+            int? rating)
+        {
+            if (client == null)
+                return false;
+
+            lock (client.SyncRoot)
+            {
+                if (!IsActivePlayer(client))
+                    return Reject($"Rejected mission {missionId} completion: character is not active in the world.");
+                if (!TryGetOperationalMission(missionId, out var definition))
+                    return Reject($"Rejected mission {missionId} completion: definition is not operational.");
+                if (selectionIndex.HasValue || rating.HasValue)
+                    return Reject($"Rejected mission {missionId} completion: reward selection belongs to the reward request.");
+                if (!TryGetNpcOnPlayerMap(client.Player, npcEntityId, out var npc) ||
+                    npc.Npc == null ||
+                    npc.DbId != definition.MissionReciver)
+                    return Reject($"Rejected mission {missionId} completion: NPC is not its authoritative receiver.");
+                if (!client.Player.Missions.TryGetValue(missionId, out var runtimeMission) ||
+                    runtimeMission.State != MissionState.Active ||
+                    !runtimeMission.Completeable)
+                    return Reject($"Rejected mission {missionId} completion: runtime mission is not completable.");
+
+                var progressPlan = MissionProgressPublicationPlan.Empty;
+                try
+                {
+                    using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+                    unitOfWork.ExecuteTransaction(() =>
+                    {
+                        var durableMission =
+                            unitOfWork.CharacterMissions.GetByCharacterAndMission(
+                                client.Player.Id, missionId);
+                        if (durableMission?.MissionState != (uint)MissionState.Active ||
+                            !durableMission.Completeable)
+                            throw new GameplayRejectionException(
+                                "Durable mission is not completable.");
+                        if (!TryGetNpcOnPlayerMap(client.Player, npcEntityId, out var currentNpc) ||
+                            !ReferenceEquals(currentNpc, npc) ||
+                            currentNpc.DbId != definition.MissionReciver)
+                            throw new GameplayRejectionException(
+                                "Mission receiver changed before completion persistence.");
+
+                        durableMission.MissionState = (uint)MissionState.Success;
+                        durableMission.Completeable = false;
+                        progressPlan = PlanProgress(
+                            client,
+                            new[] { MissionProgressEvent.Mission(missionId) },
+                            unitOfWork);
+                    });
+                }
+                catch (Exception error) when (GameplayRejectionException.IsExpected(error))
+                {
+                    Logger.WriteLog(
+                        LogType.Error,
+                        $"Unable to mark mission {missionId} successful for character {client.Player.Id}: {error}");
+                    return false;
+                }
+
+                runtimeMission.State = MissionState.Success;
+                runtimeMission.Completeable = false;
+                TryPublish(
+                    () => client.CallMethod(
+                        client.Player.EntityId,
+                        new MissionCompleteablePacket(missionId, false)),
+                    $"mission {missionId} no longer completable");
+                TryPublish(
+                    () => client.CallMethod(
+                        client.Player.EntityId,
+                        new MissionCompletedPacket(missionId)),
+                    $"mission {missionId} completed");
+                progressPlan.Publish(client);
+                return true;
+            }
+        }
+
+        internal bool TryCompleteNpcMission(
+            Client client,
+            ulong npcEntityId,
+            uint missionId,
+            int selectionIndex)
+        {
+            if (!TryCompleteNpcMission(
+                    client,
+                    npcEntityId,
+                    missionId,
+                    null,
+                    null))
+                return false;
+            return TryRewardNpcMission(
+                client,
+                npcEntityId,
+                missionId,
+                selectionIndex,
+                null);
+        }
+
+        private bool TryGrantNpcMission(
+            Client client,
+            ulong npcEntityId,
+            uint missionId,
+            int? selectionIndex,
+            int? rating,
+            MissionState expectedState,
+            bool requireCompletable,
+            bool publishCompleted)
+        {
+            if (client == null)
+                return false;
+
+            lock (client.SyncRoot)
+            {
+                if (!IsActivePlayer(client))
+                    return Reject($"Rejected mission {missionId} turn-in: character is not active in the world.");
+                if (!TryGetOperationalMission(missionId, out var definition))
+                    return Reject($"Rejected mission {missionId} turn-in: definition is not operational.");
+                if (!_rewardDefinitions.TryGetValue(missionId, out var rewardDefinition))
+                    return Reject($"Rejected mission {missionId} turn-in: no approved reward definition is loaded.");
+                if (rating.HasValue)
+                    return Reject($"Rejected mission {missionId} turn-in: ratings are not supported.");
+                if (!TryGetNpcOnPlayerMap(client.Player, npcEntityId, out var npc))
+                    return Reject($"Rejected mission {missionId} turn-in: NPC entity {npcEntityId} is not in the current map instance.");
+                if (npc.Npc == null || npc.DbId != definition.MissionReciver)
+                    return Reject($"Rejected mission {missionId} turn-in: NPC {npc.DbId} is not its authoritative receiver.");
+                if (!client.Player.Missions.TryGetValue(missionId, out var runtimeMission) ||
+                    runtimeMission.State != expectedState ||
+                    requireCompletable && !runtimeMission.Completeable)
+                    return Reject($"Rejected mission {missionId} turn-in: runtime mission is not in the required state.");
+                if (!_manifestationManager.ValidateProgressionForClient(client))
+                    return false;
+
+                MissionRewardGrant grant = null;
+                var progressPlan = MissionProgressPublicationPlan.Empty;
+                try
+                {
+                    try
+                    {
+                        using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+                        unitOfWork.ExecuteTransaction(() =>
+                        {
+                            var character = unitOfWork.Characters.Get(client.Player.Id);
+                            var mission = unitOfWork.CharacterMissions.GetByCharacterAndMission(
+                                client.Player.Id, missionId);
+                            if (client.AccountEntry == null ||
+                                character.AccountId != client.AccountEntry.Id)
+                                throw new GameplayRejectionException("Durable character owner changed.");
+                            if (mission == null ||
+                                mission.MissionState != (uint)expectedState ||
+                                requireCompletable && !mission.Completeable ||
+                                expectedState == MissionState.Success && mission.Completeable)
+                                throw new GameplayRejectionException("Durable mission is not in the required state.");
+                            if (!TryGetNpcOnPlayerMap(client.Player, npcEntityId, out var currentNpc) ||
+                                !ReferenceEquals(currentNpc, npc) ||
+                                currentNpc.EntityId != npcEntityId ||
+                                currentNpc.DbId != definition.MissionReciver ||
+                                currentNpc.Npc == null)
+                                throw new GameplayRejectionException(
+                                    "Mission receiver changed before reward persistence.");
+
+                            grant = rewardDefinition.CreateGrant(
+                                selectionIndex,
+                                _beforeRewardItemPublication);
+                            grant.PlanAndSave(client, character, unitOfWork, _manifestationManager);
+                            progressPlan = PlanProgress(
+                                client,
+                                grant.CreateItemAcquisitionEvents(),
+                                unitOfWork);
+                            mission.MissionState = (uint)MissionState.Completed;
+                            mission.Completeable = false;
+                        });
+                    }
+                    catch (Exception error) when (GameplayRejectionException.IsExpected(error))
+                    {
+                        Logger.WriteLog(LogType.Error,
+                            $"Unable to complete mission {missionId} for character {client.Player.Id}: {error}");
+                        ReconcileMissionFromDurable(client, missionId);
+                        return false;
+                    }
+
+                    client.Player.Missions[missionId] =
+                        new MissionLog(
+                            missionId,
+                            MissionState.Completed,
+                            false,
+                            runtimeMission.Objectives);
+                    grant.ConvergeRuntime(client);
+                    progressPlan.Publish(client);
+                    grant.Publish(client, _manifestationManager);
+                    if (publishCompleted)
+                        client.CallMethod(client.Player.EntityId, new MissionCompletedPacket(missionId));
+                    TryPublish(
+                        () => client.CallMethod(
+                            client.Player.EntityId,
+                            new MissionRewardedPacket(missionId)),
+                        $"mission {missionId} rewarded");
+                    return true;
+                }
+                finally
+                {
+                    grant?.Dispose();
+                }
+            }
+        }
+
+        private void ReconcileMissionFromDurable(Client client, uint missionId)
+        {
+            client.Player.Missions.TryGetValue(missionId, out var previous);
+            var previousObjectiveStates = previous?.Objectives.ToDictionary(
+                entry => entry.Key,
+                entry => entry.Value.State) ??
+                new Dictionary<uint, MissionObjectiveState>();
+
+            try
+            {
+                using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+                Hydrate(
+                    client.Player,
+                    unitOfWork.CharacterMissions.Get(client.Player.Id),
+                    unitOfWork.CharacterMissionProgress.Get(client.Player.Id));
+            }
+            catch (Exception error) when (GameplayRejectionException.IsExpected(error))
+            {
+                Logger.WriteLog(
+                    LogType.Error,
+                    $"Unable to reconcile mission {missionId} for character {client.Player.Id}: {error}");
+                return;
+            }
+
+            if (!client.Player.Missions.TryGetValue(missionId, out var current))
+            {
+                if (previous != null && previous.State is
+                    MissionState.Success or MissionState.Failed or MissionState.Completed)
+                    TryPublish(
+                        () => client.CallMethod(
+                            client.Player.EntityId,
+                            new MissionClearedPacket(missionId)),
+                        $"mission {missionId} cleared reconciliation");
+                return;
+            }
+
+            foreach (var objective in current.Objectives)
+                if (objective.Value.State == MissionObjectiveState.Failed &&
+                    (!previousObjectiveStates.TryGetValue(
+                         objective.Key,
+                         out var previousState) ||
+                     previousState != MissionObjectiveState.Failed))
+                    TryPublish(
+                        () => client.CallMethod(
+                            client.Player.EntityId,
+                            new ObjectiveFailedPacket(missionId, objective.Key)),
+                        $"mission {missionId} objective {objective.Key} failed reconciliation");
+
+            if (previous?.State == current.State)
+                return;
+
+            switch (current.State)
+            {
+                case MissionState.Failed:
+                    TryPublish(
+                        () => client.CallMethod(
+                            client.Player.EntityId,
+                            new MissionFailedPacket(missionId)),
+                        $"mission {missionId} failed reconciliation");
+                    break;
+                case MissionState.Success:
+                    TryPublish(
+                        () => client.CallMethod(
+                            client.Player.EntityId,
+                            new MissionCompleteablePacket(missionId, false)),
+                        $"mission {missionId} completable reconciliation");
+                    TryPublish(
+                        () => client.CallMethod(
+                            client.Player.EntityId,
+                            new MissionCompletedPacket(missionId)),
+                        $"mission {missionId} success reconciliation");
+                    break;
+                case MissionState.Completed:
+                    if (previous?.State != MissionState.Success)
+                    {
+                        TryPublish(
+                            () => client.CallMethod(
+                                client.Player.EntityId,
+                                new MissionCompleteablePacket(missionId, false)),
+                            $"mission {missionId} completable reconciliation");
+                        TryPublish(
+                            () => client.CallMethod(
+                                client.Player.EntityId,
+                                new MissionCompletedPacket(missionId)),
+                            $"mission {missionId} completion reconciliation");
+                    }
+                    TryPublish(
+                        () => client.CallMethod(
+                            client.Player.EntityId,
+                            new MissionRewardedPacket(missionId)),
+                        $"mission {missionId} reward reconciliation");
+                    break;
+            }
+        }
+
+        internal bool TryCompleteNpcObjective(
+            Client client,
+            ulong npcEntityId,
+            uint missionId,
+            uint objectiveId,
+            uint playerFlagId)
+        {
+            if (client == null)
+                return false;
+
+            lock (client.SyncRoot)
+            {
+                if (!IsActivePlayer(client))
+                    return Reject($"Rejected mission {missionId} objective completion: character is not active in the world.");
+                if (!TryGetOperationalMission(missionId, out var definition) ||
+                    !definition.Objectives.TryGetValue(objectiveId, out var objectiveDefinition))
+                    return Reject($"Rejected mission {missionId} objective {objectiveId}: definition is unavailable.");
+                if (!client.Player.Missions.TryGetValue(missionId, out var runtimeMission) ||
+                    runtimeMission.State != MissionState.Active ||
+                    !runtimeMission.Objectives.TryGetValue(objectiveId, out var runtimeObjective) ||
+                    runtimeObjective.State != MissionObjectiveState.Incomplete)
+                    return Reject($"Rejected mission {missionId} objective {objectiveId}: runtime state is not incomplete.");
+                if (!TryGetNpcOnPlayerMap(client.Player, npcEntityId, out var npc))
+                    return Reject($"Rejected mission {missionId} objective {objectiveId}: NPC is not in the current map instance.");
+                if (npc.Npc == null ||
+                    !objectiveDefinition.Conversations.Any(conversation =>
+                        conversation.Type == MissionObjectiveConversationType.Completion &&
+                        conversation.NpcPackageId == npc.Npc.NpcPackageId &&
+                        conversation.PlayerFlagId == playerFlagId))
+                    return Reject($"Rejected mission {missionId} objective {objectiveId}: completion binding does not match.");
+
+                var npcPackageId = npc.Npc.NpcPackageId;
+                var revealed = objectiveDefinition.RevealedObjectiveIds.ToArray();
+                var activated = objectiveDefinition.ActivatedObjectiveIds.ToArray();
+                var appliedRevealed = new List<uint>();
+                var appliedActivated = new List<uint>();
+                IReadOnlyDictionary<uint, CharacterMissionObjectiveEntry> durableObjectives = null;
+                var completeable = false;
+                try
+                {
+                    using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+                    unitOfWork.ExecuteTransaction(() =>
+                    {
+                        var durableMission = unitOfWork.CharacterMissions.GetByCharacterAndMission(
+                            client.Player.Id, missionId);
+                        durableObjectives = unitOfWork.CharacterMissionProgress.GetTracked(
+                            client.Player.Id, missionId);
+                        durableObjectives.TryGetValue(objectiveId, out var durableObjective);
+                        if (durableMission?.MissionState != (uint)MissionState.Active ||
+                            durableObjective?.ObjectiveState != (byte)MissionObjectiveState.Incomplete)
+                            throw new GameplayRejectionException(
+                                "Durable mission objective is not incomplete.");
+                        if (!TryGetNpcOnPlayerMap(client.Player, npcEntityId, out var currentNpc) ||
+                            !ReferenceEquals(currentNpc, npc) ||
+                            currentNpc.Npc?.NpcPackageId != npcPackageId)
+                            throw new GameplayRejectionException(
+                                "Mission objective NPC changed before persistence.");
+
+                        durableObjective.ObjectiveState = (byte)MissionObjectiveState.Completed;
+                        foreach (var successorId in revealed)
+                        {
+                            if (!durableObjectives.TryGetValue(successorId, out var successor))
+                                throw new GameplayRejectionException(
+                                    "Configured revealed mission objective is missing.");
+                            if (successor.ObjectiveState == (byte)MissionObjectiveState.Inactive)
+                            {
+                                successor.ObjectiveState = (byte)MissionObjectiveState.NotAssigned;
+                                appliedRevealed.Add(successorId);
+                            }
+                        }
+                        foreach (var successorId in activated)
+                        {
+                            if (!durableObjectives.TryGetValue(successorId, out var successor))
+                                throw new GameplayRejectionException(
+                                    "Configured activated mission objective is missing.");
+                            if (successor.ObjectiveState ==
+                                (byte)MissionObjectiveState.Inactive ||
+                                successor.ObjectiveState ==
+                                (byte)MissionObjectiveState.NotAssigned)
+                            {
+                                successor.ObjectiveState = (byte)MissionObjectiveState.Incomplete;
+                                appliedActivated.Add(successorId);
+                            }
+                            else if (successor.ObjectiveState is
+                                ((byte)MissionObjectiveState.Incomplete) or
+                                ((byte)MissionObjectiveState.Completed) or
+                                ((byte)MissionObjectiveState.Failed))
+                                continue;
+                            else
+                                throw new GameplayRejectionException(
+                                    "Configured activated mission objective state is invalid.");
+                        }
+
+                        completeable = true;
+                        foreach (var candidate in definition.Objectives.Values.Where(
+                            candidate => candidate.IsRequired.Value))
+                        {
+                            if (candidate.ObjectiveId == objectiveId)
+                                continue;
+                            if (!durableObjectives.TryGetValue(candidate.ObjectiveId, out var required))
+                                throw new GameplayRejectionException(
+                                    "Required mission objective state is missing.");
+                            if (required.ObjectiveState != (byte)MissionObjectiveState.Completed)
+                                completeable = false;
+                        }
+                        durableMission.Completeable = completeable;
+                    });
+                }
+                catch (Exception error) when (GameplayRejectionException.IsExpected(error))
+                {
+                    Logger.WriteLog(LogType.Error,
+                        $"Unable to complete mission {missionId} objective {objectiveId} for character {client.Player.Id}: {error}");
+                    return false;
+                }
+
+                foreach (var touchedObjectiveId in revealed
+                    .Concat(activated)
+                    .Append(objectiveId)
+                    .Distinct())
+                {
+                    var durableObjective = durableObjectives[touchedObjectiveId];
+                    var runtime = runtimeMission.Objectives[touchedObjectiveId];
+                    runtime.State = (MissionObjectiveState)durableObjective.ObjectiveState;
+                    foreach (var counter in durableObjective.Counters)
+                        runtime.SetCounter(counter.CounterId, counter.CounterValue);
+                    foreach (var counter in durableObjective.ItemCounters)
+                        runtime.SetItemCounter(counter.ItemClassId, counter.CounterValue);
+                }
+                runtimeMission.Completeable = completeable;
+
+                client.CallMethod(client.Player.EntityId,
+                    new ObjectiveCompletedPacket(missionId, objectiveId));
+                foreach (var successorId in revealed.Where(appliedRevealed.Contains))
+                    client.CallMethod(client.Player.EntityId,
+                        new ObjectiveRevealedPacket(
+                            missionId,
+                            successorId,
+                            definition.CreateInfo(
+                                runtimeMission.State,
+                                runtimeMission.Completeable,
+                                runtimeMission.Objectives)));
+                foreach (var successorId in appliedActivated)
+                    client.CallMethod(client.Player.EntityId,
+                        new ObjectiveActivatedPacket(missionId, successorId));
+                if (completeable)
+                    client.CallMethod(client.Player.EntityId,
+                        new MissionCompleteablePacket(missionId, true));
+                return true;
+            }
+        }
+
+        internal bool TryRewardNpcMission(
+            Client client,
+            ulong npcEntityId,
+            uint missionId,
+            int? selectionIndex,
+            int? rating)
+        {
+            if (client == null)
+                return false;
+
+            lock (client.SyncRoot)
+            {
+                if (!IsActivePlayer(client))
+                    return Reject($"Rejected mission {missionId} reward: character is not active in the world.");
+                if (!TryGetOperationalMission(missionId, out _))
+                    return Reject($"Rejected mission {missionId} reward: definition is not operational.");
+            }
+
+            return TryGrantNpcMission(
+                client,
+                npcEntityId,
+                missionId,
+                selectionIndex,
+                rating,
+                MissionState.Success,
+                requireCompletable: false,
+                publishCompleted: false);
+        }
+
+        internal bool TryFailObjective(
+            Client client,
+            uint missionId,
+            uint objectiveId)
+        {
+            if (client == null)
+                return false;
+
+            lock (client.SyncRoot)
+            {
+                if (!IsActivePlayer(client) ||
+                    !TryGetOperationalMission(missionId, out var definition) ||
+                    !definition.Objectives.TryGetValue(objectiveId, out var objectiveDefinition) ||
+                    !client.Player.Missions.TryGetValue(missionId, out var runtimeMission) ||
+                    runtimeMission.State != MissionState.Active ||
+                    !runtimeMission.Objectives.TryGetValue(objectiveId, out var runtimeObjective) ||
+                    runtimeObjective.State != MissionObjectiveState.Incomplete)
+                    return false;
+
+                var publicationPlan = MissionFailurePublicationPlan.Empty;
+                try
+                {
+                    using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+                    unitOfWork.ExecuteTransaction(() =>
+                    {
+                        var durableMission =
+                            unitOfWork.CharacterMissions.GetByCharacterAndMission(
+                                client.Player.Id, missionId);
+                        var durableObjectives =
+                            unitOfWork.CharacterMissionProgress.GetTracked(
+                                client.Player.Id, missionId);
+                        durableObjectives.TryGetValue(
+                            objectiveId, out var durableObjective);
+                        if (durableMission?.MissionState != (uint)MissionState.Active ||
+                            durableObjective?.ObjectiveState !=
+                            (byte)MissionObjectiveState.Incomplete)
+                            throw new GameplayRejectionException(
+                                "Durable mission objective cannot fail from its current state.");
+
+                        durableObjective.ObjectiveState =
+                            (byte)MissionObjectiveState.Failed;
+                        var failMission = objectiveDefinition.IsRequired.Value;
+                        var completeable = !failMission &&
+                            definition.Objectives.Values
+                                .Where(objective => objective.IsRequired.Value)
+                                .All(objective =>
+                                    durableObjectives.TryGetValue(
+                                        objective.ObjectiveId,
+                                        out var requiredObjective) &&
+                                    requiredObjective.ObjectiveState ==
+                                        (byte)MissionObjectiveState.Completed);
+                        var completeableChanged =
+                            durableMission.Completeable != completeable;
+                        durableMission.Completeable = completeable;
+                        if (failMission)
+                            durableMission.MissionState = (uint)MissionState.Failed;
+                        publicationPlan = new MissionFailurePublicationPlan(
+                            missionId,
+                            objectiveId,
+                            failMission ? MissionState.Failed : MissionState.Active,
+                            completeable,
+                            completeableChanged);
+                    });
+                }
+                catch (Exception error) when (GameplayRejectionException.IsExpected(error))
+                {
+                    Logger.WriteLog(
+                        LogType.Error,
+                        $"Unable to fail mission {missionId} objective {objectiveId}: {error}");
+                    return false;
+                }
+
+                publicationPlan.Publish(client, this);
+                return true;
+            }
+        }
+
+        internal bool TryFailMission(Client client, uint missionId)
+        {
+            if (client == null)
+                return false;
+
+            lock (client.SyncRoot)
+            {
+                if (!IsActivePlayer(client) ||
+                    !TryGetOperationalMission(missionId, out _) ||
+                    !client.Player.Missions.TryGetValue(missionId, out var runtimeMission) ||
+                    runtimeMission.State != MissionState.Active)
+                    return false;
+
+                try
+                {
+                    using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+                    unitOfWork.ExecuteTransaction(() =>
+                    {
+                        var durableMission =
+                            unitOfWork.CharacterMissions.GetByCharacterAndMission(
+                                client.Player.Id, missionId);
+                        if (durableMission?.MissionState != (uint)MissionState.Active)
+                            throw new GameplayRejectionException(
+                                "Durable mission cannot fail from its current state.");
+                        durableMission.MissionState = (uint)MissionState.Failed;
+                        durableMission.Completeable = false;
+                    });
+                }
+                catch (Exception error) when (GameplayRejectionException.IsExpected(error))
+                {
+                    Logger.WriteLog(
+                        LogType.Error,
+                        $"Unable to fail mission {missionId}: {error}");
+                    return false;
+                }
+
+                runtimeMission.State = MissionState.Failed;
+                runtimeMission.Completeable = false;
+                client.CallMethod(
+                    client.Player.EntityId,
+                    new MissionFailedPacket(missionId));
+                return true;
+            }
+        }
+
+        internal bool TryClear(Client client, uint missionId)
+        {
+            if (client == null)
+                return false;
+
+            lock (client.SyncRoot)
+            {
+                if (!IsActivePlayer(client) ||
+                    !TryGetOperationalMission(missionId, out _) ||
+                    !client.Player.Missions.TryGetValue(missionId, out var runtimeMission) ||
+                    runtimeMission.State is not
+                        (MissionState.Success or MissionState.Failed or MissionState.Completed))
+                    return false;
+
+                try
+                {
+                    using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+                    var removed = false;
+                    unitOfWork.ExecuteTransaction(() =>
+                    {
+                        var durableMission =
+                            unitOfWork.CharacterMissions.GetByCharacterAndMission(
+                                client.Player.Id, missionId);
+                        if (durableMission == null ||
+                            (MissionState)durableMission.MissionState is not
+                                (MissionState.Success or MissionState.Failed or MissionState.Completed))
+                            return;
+                        unitOfWork.CharacterMissionProgress.Remove(
+                            client.Player.Id, missionId);
+                        unitOfWork.CharacterMissions.Remove(
+                            client.Player.Id, missionId);
+                        removed = true;
+                    });
+                    if (!removed)
+                        return false;
+                }
+                catch (Exception error) when (GameplayRejectionException.IsExpected(error))
+                {
+                    Logger.WriteLog(
+                        LogType.Error,
+                        $"Unable to clear mission {missionId}: {error}");
+                    return false;
+                }
+
+                client.Player.Missions.Remove(missionId);
+                client.CallMethod(
+                    client.Player.EntityId,
+                    new MissionClearedPacket(missionId));
+                return true;
+            }
+        }
+
+        internal bool TryAbandon(Client client, uint missionId)
+        {
+            if (client == null)
+                return false;
+
+            lock (client.SyncRoot)
+            {
+                if (!IsActivePlayer(client) ||
+                    !TryGetOperationalMission(missionId, out _) ||
+                    !client.Player.Missions.TryGetValue(missionId, out var log) ||
+                    log.State != MissionState.Active)
+                    return false;
+
+                try
+                {
+                    using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+                    var removed = false;
+                    unitOfWork.ExecuteTransaction(() =>
+                    {
+                        var durableMission = unitOfWork.CharacterMissions.GetByCharacterAndMission(
+                            client.Player.Id, missionId);
+                        if (durableMission?.MissionState != (uint)MissionState.Active)
+                            return;
+
+                        unitOfWork.CharacterMissions.Remove(client.Player.Id, missionId);
+                        removed = true;
+                    });
+                    if (!removed)
+                        return false;
+                }
+                catch (Exception error) when (error is DbUpdateException || error is DbException)
+                {
+                    Logger.WriteLog(LogType.Error,
+                        $"Unable to abandon mission {missionId} for character {client.Player.Id}: {error.Message}");
+                    return false;
+                }
+
+                client.Player.Missions.Remove(missionId);
+                client.CallMethod(client.Player.EntityId, new MissionDiscardedPacket(missionId));
+                return true;
+            }
+        }
+
+        internal bool RecordProgress(Client client, MissionProgressEvent progress)
+        {
+            if (client == null)
+                return false;
+
+            lock (client.SyncRoot)
+            {
+                if (!IsActivePlayer(client) ||
+                    client.AccountEntry == null ||
+                    !HasProgressCandidate(client, progress))
+                    return false;
+
+                var plan = MissionProgressPublicationPlan.Empty;
+                try
+                {
+                    using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+                    unitOfWork.ExecuteTransaction(() =>
+                        plan = PlanProgress(
+                            client,
+                            new[] { progress },
+                            unitOfWork));
+                }
+                catch (Exception error) when (GameplayRejectionException.IsExpected(error))
+                {
+                    Logger.WriteLog(LogType.Error,
+                        $"Unable to record mission progress {progress.Kind}:{progress.SubjectId} " +
+                        $"for character {client.Player.Id}: {error}");
+                    return false;
+                }
+
+                plan.Publish(client);
+                return plan.HasChanges;
+            }
+        }
+
+        private bool HasProgressCandidate(
+            Client client,
+            MissionProgressEvent progress)
+        {
+            if (!Enum.IsDefined(
+                    typeof(MissionProgressEventKind), progress.Kind) ||
+                progress.SubjectId == 0 ||
+                progress.Quantity == 0)
+                return false;
+
+            return _loadedMissions.Values
+                .Where(definition => definition.IsOperational)
+                .Any(mission =>
+                    client.Player.Missions.TryGetValue(
+                        mission.MissionId, out var runtimeMission) &&
+                    runtimeMission.State == MissionState.Active &&
+                    mission.Objectives.Values.Any(objective =>
+                        objective.ProgressRule != null &&
+                        objective.ProgressRule.Matches(progress) &&
+                        runtimeMission.Objectives.TryGetValue(
+                            objective.ObjectiveId, out var runtimeObjective) &&
+                        runtimeObjective.State ==
+                            MissionObjectiveState.Incomplete &&
+                        CanAdvanceFromRuntime(
+                            client.Player,
+                            objective.ProgressRule)));
+        }
+
+        internal MissionProgressPublicationPlan PlanProgress(
+            Client client,
+            IReadOnlyList<MissionProgressEvent> progressEvents,
+            ICharUnitOfWork unitOfWork)
+        {
+            if (client == null ||
+                unitOfWork == null ||
+                !IsActivePlayer(client) ||
+                client.AccountEntry == null)
+                return MissionProgressPublicationPlan.Empty;
+
+            var progresses = AggregateProgress(progressEvents);
+            if (progresses.Count == 0)
+                return MissionProgressPublicationPlan.Empty;
+
+            var candidates = new List<ProgressCandidate>();
+            foreach (var mission in _loadedMissions.Values
+                .Where(definition => definition.IsOperational)
+                .OrderBy(definition => definition.MissionId))
+            {
+                if (!client.Player.Missions.TryGetValue(
+                        mission.MissionId, out var runtimeMission) ||
+                    runtimeMission.State != MissionState.Active)
+                    continue;
+                foreach (var objective in mission.Objectives.Values
+                    .OrderBy(definition => definition.ObjectiveId))
+                {
+                    var rule = objective.ProgressRule;
+                    var matchingProgress = rule == null
+                        ? (MissionProgressEvent?)null
+                        : progresses
+                            .Where(rule.Matches)
+                            .Select(value => (MissionProgressEvent?)value)
+                            .FirstOrDefault();
+                    if (!matchingProgress.HasValue ||
+                        !runtimeMission.Objectives.TryGetValue(
+                            objective.ObjectiveId, out var runtimeObjective) ||
+                        runtimeObjective.State != MissionObjectiveState.Incomplete ||
+                        !CanAdvanceFromRuntime(client.Player, rule))
+                        continue;
+                    candidates.Add(new ProgressCandidate(
+                        mission,
+                        runtimeMission,
+                        objective,
+                        runtimeObjective,
+                        matchingProgress.Value));
+                }
+            }
+            if (candidates.Count == 0)
+                return MissionProgressPublicationPlan.Empty;
+
+            var durableCharacter = unitOfWork.Characters.Get(client.Player.Id);
+            if (durableCharacter.AccountId != client.AccountEntry.Id)
+                throw new GameplayRejectionException(
+                    "Durable character owner changed.");
+
+            var publications = new List<ProgressPublication>();
+            var completableMissions = new SortedSet<uint>();
+            var waypointIds = new HashSet<uint>(
+                client.Player.GainedWaypoints.Select(entry => entry.WaypointId));
+            var logosIds = new HashSet<uint>(client.Player.Logos);
+            IReadOnlySet<uint> durableWaypointIds = null;
+            IReadOnlySet<uint> durableLogosIds = null;
+
+            foreach (var missionGroup in candidates.GroupBy(
+                candidate => candidate.Definition.MissionId))
+            {
+                var first = missionGroup.First();
+                var durableMission = unitOfWork.CharacterMissions.GetByCharacterAndMission(
+                    client.Player.Id, first.Definition.MissionId);
+                var durableObjectives = unitOfWork.CharacterMissionProgress.GetTracked(
+                    client.Player.Id, first.Definition.MissionId);
+                if (durableMission?.MissionState != (uint)MissionState.Active ||
+                    durableMission.Completeable != first.RuntimeMission.Completeable)
+                    throw new GameplayRejectionException(
+                        "Durable mission state is stale.");
+
+                foreach (var candidate in missionGroup)
+                {
+                    if (!durableObjectives.TryGetValue(
+                            candidate.ObjectiveDefinition.ObjectiveId,
+                            out var durableObjective) ||
+                        durableObjective.ObjectiveState !=
+                            (byte)MissionObjectiveState.Incomplete ||
+                        candidate.RuntimeObjective.State !=
+                            MissionObjectiveState.Incomplete)
+                        throw new GameplayRejectionException(
+                            "Durable mission objective state is stale.");
+
+                    var rule = candidate.ObjectiveDefinition.ProgressRule;
+                    if (rule.RuleType == MissionProgressRuleType.CompleteDistinctSet)
+                    {
+                        IReadOnlySet<uint> runtimeSubjects;
+                        IReadOnlySet<uint> durableSubjects;
+                        if (rule.Kind == MissionProgressEventKind.WaypointAcquired)
+                        {
+                            runtimeSubjects = waypointIds;
+                            durableWaypointIds ??= new HashSet<uint>(
+                                unitOfWork.CharacterTeleporters.Get(client.Player.Id)
+                                    .Select(entry => entry.WaypointId));
+                            durableSubjects = durableWaypointIds;
+                        }
+                        else if (rule.Kind == MissionProgressEventKind.LogosAcquired)
+                        {
+                            runtimeSubjects = logosIds;
+                            durableLogosIds ??= new HashSet<uint>(
+                                unitOfWork.CharacterLogoses.GetLogos(client.Player.Id));
+                            durableSubjects = durableLogosIds;
+                        }
+                        else
+                            throw new GameplayRejectionException(
+                                "Distinct progress rule has an unsupported event kind.");
+
+                        if (!rule.AreAllSubjectsObserved(runtimeSubjects) ||
+                            !rule.AreAllSubjectsObserved(durableSubjects))
+                            throw new GameplayRejectionException(
+                                "Distinct progress subjects are incomplete.");
+                        durableObjective.ObjectiveState =
+                            (byte)MissionObjectiveState.Completed;
+                        publications.Add(ProgressPublication.ForCompleted(candidate));
+                        continue;
+                    }
+
+                    if (rule.RuleType == MissionProgressRuleType.IncrementExactCounter)
+                    {
+                        var counterId = rule.CounterId.Value;
+                        if (!candidate.RuntimeObjective.Counters.TryGetValue(
+                            counterId, out var runtimeValue))
+                            throw new GameplayRejectionException(
+                                "Runtime mission counter is missing.");
+                        var durableCounter = durableObjective.Counters.SingleOrDefault(
+                            counter => counter.CounterId == counterId);
+                        if (durableCounter == null ||
+                            durableCounter.CounterValue != runtimeValue ||
+                            runtimeValue < rule.InitialValue.Value)
+                            throw new GameplayRejectionException(
+                                "Durable mission counter is stale.");
+                        if (runtimeValue >= rule.TargetValue.Value)
+                            throw new GameplayRejectionException(
+                                "Mission counter cannot advance monotonically.");
+                        var value = runtimeValue + Math.Min(
+                            candidate.Progress.Quantity,
+                            rule.TargetValue.Value - runtimeValue);
+                        durableCounter.CounterValue = value;
+                        var completed = value == rule.TargetValue.Value;
+                        if (completed)
+                            durableObjective.ObjectiveState =
+                                (byte)MissionObjectiveState.Completed;
+                        publications.Add(ProgressPublication.Counter(
+                            candidate, counterId, value, completed));
+                        continue;
+                    }
+
+                    if (rule.RuleType ==
+                        MissionProgressRuleType.IncrementExactItemCounter)
+                    {
+                        var itemClassId = rule.CounterId.Value;
+                        if (!candidate.RuntimeObjective.ItemCounters.TryGetValue(
+                            itemClassId, out var runtimeValue))
+                            throw new GameplayRejectionException(
+                                "Runtime mission item counter is missing.");
+                        var durableCounter =
+                            durableObjective.ItemCounters.SingleOrDefault(
+                                counter => counter.ItemClassId == itemClassId);
+                        if (durableCounter == null ||
+                            durableCounter.CounterValue != runtimeValue ||
+                            runtimeValue < rule.InitialValue.Value)
+                            throw new GameplayRejectionException(
+                                "Durable mission item counter is stale.");
+                        if (runtimeValue >= rule.TargetValue.Value)
+                            throw new GameplayRejectionException(
+                                "Mission item counter cannot advance monotonically.");
+                        var value = runtimeValue + Math.Min(
+                            candidate.Progress.Quantity,
+                            rule.TargetValue.Value - runtimeValue);
+                        durableCounter.CounterValue = value;
+                        var completed = value == rule.TargetValue.Value;
+                        if (completed)
+                            durableObjective.ObjectiveState =
+                                (byte)MissionObjectiveState.Completed;
+                        publications.Add(
+                            ProgressPublication.ItemCounter(
+                                candidate,
+                                itemClassId,
+                                value,
+                                completed));
+                        continue;
+                    }
+
+                    durableObjective.ObjectiveState =
+                        (byte)MissionObjectiveState.Completed;
+                    publications.Add(ProgressPublication.ForCompleted(candidate));
+                }
+
+                var completeable = first.Definition.Objectives.Values
+                    .Where(objective => objective.IsRequired.Value)
+                    .All(objective =>
+                        durableObjectives.TryGetValue(
+                            objective.ObjectiveId, out var durableObjective) &&
+                        durableObjective.ObjectiveState ==
+                            (byte)MissionObjectiveState.Completed);
+                durableMission.Completeable = completeable;
+                if (completeable && !first.RuntimeMission.Completeable)
+                    completableMissions.Add(first.Definition.MissionId);
+            }
+
+            return new MissionProgressPublicationPlan(
+                publications,
+                completableMissions);
+        }
+
+        private static IReadOnlyList<MissionProgressEvent> AggregateProgress(
+            IReadOnlyList<MissionProgressEvent> progressEvents)
+        {
+            var valid = (progressEvents ?? Array.Empty<MissionProgressEvent>())
+                .Where(progress =>
+                    Enum.IsDefined(typeof(MissionProgressEventKind), progress.Kind) &&
+                    progress.SubjectId != 0 &&
+                    progress.Quantity != 0)
+                .ToArray();
+            if (valid.Length == 0)
+                return Array.Empty<MissionProgressEvent>();
+
+            var result = new List<MissionProgressEvent>();
+            foreach (var group in valid.GroupBy(
+                progress => (progress.Kind, progress.SubjectId)))
+            {
+                uint quantity;
+                try
+                {
+                    quantity = group.Aggregate(
+                        0U,
+                        (total, progress) => checked(total + progress.Quantity));
+                }
+                catch (OverflowException error)
+                {
+                    throw new GameplayRejectionException(
+                        "Mission progress quantity exceeds the supported range.",
+                        error);
+                }
+
+                result.Add(group.Key.Kind switch
+                {
+                    MissionProgressEventKind.ItemAcquired =>
+                        MissionProgressEvent.ItemAcquired(
+                            group.Key.SubjectId, quantity),
+                    MissionProgressEventKind.ItemConsumed =>
+                        MissionProgressEvent.ItemConsumed(
+                            group.Key.SubjectId, quantity),
+                    _ => group.First()
+                });
+            }
+            return result;
+        }
+
+        private static bool CanAdvanceFromRuntime(
+            Manifestation player,
+            MissionProgressRule rule)
+        {
+            if (rule.RuleType != MissionProgressRuleType.CompleteDistinctSet)
+                return true;
+            if (rule.Kind == MissionProgressEventKind.WaypointAcquired)
+                return rule.AreAllSubjectsObserved(new HashSet<uint>(
+                    player.GainedWaypoints.Select(entry => entry.WaypointId)));
+            if (rule.Kind == MissionProgressEventKind.LogosAcquired)
+                return rule.AreAllSubjectsObserved(new HashSet<uint>(player.Logos));
+            return false;
+        }
+
+        private static bool IsPublishedState(MissionState state) =>
+            state == MissionState.Active ||
+            state == MissionState.Success ||
+            state == MissionState.Failed ||
+            state == MissionState.Completed;
+
+        internal bool TryGetRewardInfo(uint missionId, out RewardInfo rewardInfo)
+        {
+            if (_rewardDefinitions.TryGetValue(missionId, out var definition))
+            {
+                rewardInfo = definition.CreateInfo();
+                return true;
+            }
+
+            rewardInfo = null;
+            return false;
+        }
+
+        internal MissionConversationState ClassifyNpcConversation(
+            Manifestation player,
+            Creature creature)
+        {
+            var dispensable = new Dictionary<uint, MissionInfo>();
+            var objectives = new List<CompleteableObjectives>();
+            var completeable = new Dictionary<uint, RewardInfo>();
+            var rewardable = new List<RewardableMissions>();
+
+            foreach (var mission in _loadedMissions.Values)
+            {
+                if (!mission.IsOperational)
+                    continue;
+                if (!player.Missions.TryGetValue(mission.MissionId, out var log))
+                {
+                    if (mission.MissionGiver == creature.DbId)
+                        dispensable.Add(
+                            mission.MissionId,
+                            mission.CreateInfo(
+                                MissionState.Active,
+                                false,
+                                mission.CreateInitialObjectiveLogs()));
+                    continue;
+                }
+
+                if (log.State == MissionState.Active)
+                {
+                    if (log.Completeable &&
+                        mission.MissionReciver == creature.DbId)
+                    {
+                        var completionReward = _rewardDefinitions.TryGetValue(
+                            mission.MissionId, out var definition)
+                            ? definition.CreateInfo()
+                            : new RewardInfo();
+                        completeable.Add(mission.MissionId, completionReward);
+                        continue;
+                    }
+
+                    foreach (var objective in mission.Objectives.Values)
+                    {
+                        if (!log.Objectives.TryGetValue(objective.ObjectiveId, out var objectiveLog) ||
+                            objectiveLog.State != MissionObjectiveState.Incomplete)
+                            continue;
+                        foreach (var conversation in objective.Conversations.Where(conversation =>
+                            conversation.Type == MissionObjectiveConversationType.Completion &&
+                            conversation.NpcPackageId == creature.Npc.NpcPackageId))
+                            objectives.Add(new CompleteableObjectives(
+                                (int)mission.MissionId,
+                                (int)objective.ObjectiveId,
+                                (int)conversation.PlayerFlagId));
+                    }
+                }
+                else if (log.State == MissionState.Success &&
+                    mission.MissionReciver == creature.DbId &&
+                    TryGetRewardInfo(mission.MissionId, out var reward))
+                {
+                    rewardable.Add(new RewardableMissions((int)mission.MissionId, reward));
+                }
+            }
+
+            return new MissionConversationState(
+                dispensable,
+                objectives,
+                completeable,
+                rewardable);
+        }
+
+        private static bool TryHydrateObjectives(
+            Mission definition,
+            CharacterMissionProgressSnapshot progress,
+            out IReadOnlyDictionary<uint, MissionObjectiveLog> objectives)
+        {
+            objectives = null;
+            if (definition.Objectives.Count == 0)
+            {
+                if (progress.Missions.TryGetValue(definition.MissionId, out var emptyProgress) &&
+                    emptyProgress.Objectives.Count != 0)
+                    return false;
+                objectives = new Dictionary<uint, MissionObjectiveLog>();
+                return true;
+            }
+            if (!progress.Missions.TryGetValue(definition.MissionId, out var missionProgress))
+                return false;
+            if (missionProgress.Objectives.Keys.Except(definition.Objectives.Keys).Any() ||
+                definition.Objectives.Keys.Except(missionProgress.Objectives.Keys).Any())
+                return false;
+
+            var result = new Dictionary<uint, MissionObjectiveLog>();
+            foreach (var objectiveDefinition in definition.Objectives.Values)
+            {
+                if (!missionProgress.Objectives.TryGetValue(
+                        objectiveDefinition.ObjectiveId, out var objectiveProgress) ||
+                    !Enum.IsDefined(typeof(MissionObjectiveState), (int)objectiveProgress.State) ||
+                    objectiveDefinition.Counters.Keys.Except(objectiveProgress.Counters.Keys).Any() ||
+                    objectiveProgress.Counters.Keys.Except(objectiveDefinition.Counters.Keys).Any() ||
+                    objectiveDefinition.ItemCounters.Keys.Except(objectiveProgress.ItemCounters.Keys).Any() ||
+                    objectiveProgress.ItemCounters.Keys.Except(objectiveDefinition.ItemCounters.Keys).Any())
+                    return false;
+
+                result.Add(
+                    objectiveDefinition.ObjectiveId,
+                    new MissionObjectiveLog(
+                        objectiveDefinition.ObjectiveId,
+                        (MissionObjectiveState)objectiveProgress.State,
+                        objectiveProgress.Counters,
+                        objectiveProgress.ItemCounters));
+            }
+
+            objectives = result;
+            return true;
+        }
+
+        internal bool TryGetOperationalMission(uint missionId, out Mission mission)
+        {
+            if (_loadedMissions.TryGetValue(missionId, out mission) && mission.IsOperational)
+                return true;
+
+            mission = null;
+            return false;
+        }
+
+        private static bool IsActivePlayer(Client client)
+        {
+            var player = client.Player;
+            return client.State == ClientState.Ingame &&
+                client.PendingTransfer == null &&
+                player != null &&
+                player.Id != 0 &&
+                player.MapChannel != null &&
+                !player.Disconected &&
+                !player.RemoveFromMap &&
+                CellManager.Instance.IsInWorld(client);
+        }
+
+        private static bool TryGetNpcOnPlayerMap(
+            Manifestation player,
+            ulong npcEntityId,
+            out Creature npc)
+        {
+            npc = null;
+            if (!EntityManager.Instance.RegisteredEntities.TryGetValue(npcEntityId, out var entityType) ||
+                entityType != EntityType.Creature ||
+                !EntityManager.Instance.Creatures.TryGetValue(npcEntityId, out var candidate) ||
+                candidate.MapContextId != player.MapChannel.MapInfo.MapContextId ||
+                !player.MapChannel.MapCellInfo.Cells.Values.Any(
+                    cell => cell.CreatureList.Any(creature => ReferenceEquals(creature, candidate))))
+                return false;
+
+            npc = candidate;
+            return true;
+        }
+
+        private static bool Reject(string message)
+        {
+            Logger.WriteLog(LogType.Network, message);
+            return false;
+        }
+
+        internal static void TryPublish(Action publication, string description)
+        {
+            try
+            {
+                publication();
+            }
+            catch (Exception error)
+            {
+                Logger.WriteLog(
+                    LogType.Error,
+                    $"Unable to publish {description}; durable state is already committed: {error}");
+            }
+        }
+
+        private void PublishMissionPacket(
+            Client client,
+            PythonPacket packet,
+            string description)
+        {
+            TryPublish(
+                () =>
+                {
+                    _beforeMissionPacketPublication?.Invoke(packet);
+                    client.CallMethod(client.Player.EntityId, packet);
+                },
+                description);
+        }
+
+        internal sealed class MissionFailurePublicationPlan
+        {
+            internal static readonly MissionFailurePublicationPlan Empty =
+                new(0, 0, MissionState.Active, false, false);
+
+            private readonly uint _missionId;
+            private readonly uint _objectiveId;
+            private readonly MissionState _missionState;
+            private readonly bool _completeable;
+            private readonly bool _completeableChanged;
+
+            internal MissionFailurePublicationPlan(
+                uint missionId,
+                uint objectiveId,
+                MissionState missionState,
+                bool completeable,
+                bool completeableChanged)
+            {
+                _missionId = missionId;
+                _objectiveId = objectiveId;
+                _missionState = missionState;
+                _completeable = completeable;
+                _completeableChanged = completeableChanged;
+            }
+
+            internal void Publish(Client client, MissionManager manager)
+            {
+                if (!client.Player.Missions.TryGetValue(_missionId, out var mission) ||
+                    !mission.Objectives.TryGetValue(_objectiveId, out var objective))
+                    return;
+
+                objective.State = MissionObjectiveState.Failed;
+                mission.State = _missionState;
+                mission.Completeable = _completeable;
+
+                manager.PublishMissionPacket(
+                    client,
+                    new ObjectiveFailedPacket(_missionId, _objectiveId),
+                    $"mission {_missionId} objective {_objectiveId} failed");
+                if (_completeableChanged)
+                    manager.PublishMissionPacket(
+                        client,
+                        new MissionCompleteablePacket(_missionId, _completeable),
+                        $"mission {_missionId} completable after objective failure");
+                if (_missionState == MissionState.Failed)
+                    manager.PublishMissionPacket(
+                        client,
+                        new MissionFailedPacket(_missionId),
+                        $"mission {_missionId} failed after objective failure");
+            }
+        }
+
+        internal sealed class MissionProgressPublicationPlan
+        {
+            internal static readonly MissionProgressPublicationPlan Empty =
+                new(Array.Empty<ProgressPublication>(), Array.Empty<uint>());
+
+            private readonly ProgressPublication[] _publications;
+            private readonly uint[] _completableMissions;
+
+            internal bool HasChanges => _publications.Length > 0;
+
+            internal MissionProgressPublicationPlan(
+                IEnumerable<ProgressPublication> publications,
+                IEnumerable<uint> completableMissions)
+            {
+                _publications = publications.ToArray();
+                _completableMissions = completableMissions.ToArray();
+            }
+
+            internal void Publish(Client client)
+            {
+                foreach (var publication in _publications.Where(
+                    publication =>
+                        publication.CounterId.HasValue &&
+                        !publication.IsItemCounter))
+                    if (TryGetRuntimeObjective(
+                            client,
+                            publication,
+                            out var objective))
+                        objective.SetCounter(
+                            publication.CounterId.Value,
+                            publication.CounterValue.Value);
+
+                foreach (var publication in _publications.Where(
+                    publication => publication.IsItemCounter))
+                    if (TryGetRuntimeObjective(
+                            client,
+                            publication,
+                            out var objective))
+                        objective.SetItemCounter(
+                            publication.CounterId.Value,
+                            publication.CounterValue.Value);
+
+                foreach (var publication in _publications.Where(
+                    publication => publication.Completed))
+                    if (TryGetRuntimeObjective(
+                            client,
+                            publication,
+                            out var objective))
+                        objective.State = MissionObjectiveState.Completed;
+
+                foreach (var missionId in _completableMissions)
+                    if (client.Player.Missions.TryGetValue(
+                            missionId, out var mission))
+                        mission.Completeable = true;
+
+                foreach (var publication in _publications.Where(
+                    publication =>
+                        publication.CounterId.HasValue &&
+                        !publication.IsItemCounter))
+                    TryPublish(
+                        () => client.CallMethod(
+                            client.Player.EntityId,
+                            new UpdateObjectiveCounterPacket(
+                                publication.MissionId,
+                                publication.ObjectiveId,
+                                publication.CounterId.Value,
+                                publication.CounterValue.Value,
+                                publication.InitialValue.Value,
+                                publication.TargetValue.Value)),
+                        $"mission {publication.MissionId} objective counter");
+
+                foreach (var publication in _publications.Where(
+                    publication => publication.IsItemCounter))
+                    TryPublish(
+                        () => client.CallMethod(
+                            client.Player.EntityId,
+                            new UpdateObjectiveItemCounterPacket(
+                                publication.MissionId,
+                                publication.ObjectiveId,
+                                publication.CounterId.Value,
+                                publication.CounterValue.Value,
+                                publication.TargetValue.Value)),
+                        $"mission {publication.MissionId} objective item counter");
+
+                foreach (var publication in _publications.Where(
+                    publication => publication.Completed))
+                    TryPublish(
+                        () => client.CallMethod(
+                            client.Player.EntityId,
+                            new ObjectiveCompletedPacket(
+                                publication.MissionId,
+                                publication.ObjectiveId)),
+                        $"mission {publication.MissionId} objective completion");
+
+                foreach (var missionId in _completableMissions)
+                    TryPublish(
+                        () => client.CallMethod(
+                            client.Player.EntityId,
+                            new MissionCompleteablePacket(missionId, true)),
+                        $"mission {missionId} completable");
+            }
+
+            private static bool TryGetRuntimeObjective(
+                Client client,
+                ProgressPublication publication,
+                out MissionObjectiveLog objective)
+            {
+                objective = null;
+                return client.Player.Missions.TryGetValue(
+                        publication.MissionId, out var mission) &&
+                    mission.Objectives.TryGetValue(
+                        publication.ObjectiveId, out objective);
+            }
+        }
+
+        internal readonly struct ProgressCandidate
+        {
+            internal Mission Definition { get; }
+            internal MissionLog RuntimeMission { get; }
+            internal MissionObjectiveDefinition ObjectiveDefinition { get; }
+            internal MissionObjectiveLog RuntimeObjective { get; }
+            internal MissionProgressEvent Progress { get; }
+
+            internal ProgressCandidate(
+                Mission definition,
+                MissionLog runtimeMission,
+                MissionObjectiveDefinition objectiveDefinition,
+                MissionObjectiveLog runtimeObjective,
+                MissionProgressEvent progress)
+            {
+                Definition = definition;
+                RuntimeMission = runtimeMission;
+                ObjectiveDefinition = objectiveDefinition;
+                RuntimeObjective = runtimeObjective;
+                Progress = progress;
+            }
+        }
+
+        internal readonly struct ProgressPublication
+        {
+            internal uint MissionId { get; }
+            internal uint ObjectiveId { get; }
+            internal uint? CounterId { get; }
+            internal uint? CounterValue { get; }
+            internal uint? InitialValue { get; }
+            internal uint? TargetValue { get; }
+            internal bool Completed { get; }
+            internal bool IsItemCounter { get; }
+
+            private ProgressPublication(
+                uint missionId,
+                uint objectiveId,
+                uint? counterId,
+                uint? counterValue,
+                uint? initialValue,
+                uint? targetValue,
+                bool completed,
+                bool isItemCounter = false)
+            {
+                MissionId = missionId;
+                ObjectiveId = objectiveId;
+                CounterId = counterId;
+                CounterValue = counterValue;
+                InitialValue = initialValue;
+                TargetValue = targetValue;
+                Completed = completed;
+                IsItemCounter = isItemCounter;
+            }
+
+            internal static ProgressPublication ForCompleted(ProgressCandidate candidate) =>
+                new(
+                    candidate.Definition.MissionId,
+                    candidate.ObjectiveDefinition.ObjectiveId,
+                    null,
+                    null,
+                    null,
+                    null,
+                    true);
+
+            internal static ProgressPublication Counter(
+                ProgressCandidate candidate,
+                uint counterId,
+                uint counterValue,
+                bool completed) =>
+                new(
+                    candidate.Definition.MissionId,
+                    candidate.ObjectiveDefinition.ObjectiveId,
+                    counterId,
+                    counterValue,
+                    candidate.ObjectiveDefinition.ProgressRule.InitialValue,
+                    candidate.ObjectiveDefinition.ProgressRule.TargetValue,
+                    completed);
+
+            internal static ProgressPublication ItemCounter(
+                ProgressCandidate candidate,
+                uint itemClassId,
+                uint counterValue,
+                bool completed) =>
+                new(
+                    candidate.Definition.MissionId,
+                    candidate.ObjectiveDefinition.ObjectiveId,
+                    itemClassId,
+                    counterValue,
+                    candidate.ObjectiveDefinition.ProgressRule.InitialValue,
+                    candidate.ObjectiveDefinition.ProgressRule.TargetValue,
+                    completed,
+                    isItemCounter: true);
         }
     }
 }

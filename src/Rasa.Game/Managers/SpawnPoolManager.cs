@@ -35,7 +35,7 @@ namespace Rasa.Managers
             }
         }
 
-        private SpawnPoolManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory)
+        internal SpawnPoolManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
         }
@@ -61,6 +61,9 @@ namespace Rasa.Managers
         internal void DecreaseQueuedCreatureCount(SpawnPool spawnPool, int count)
         {
             spawnPool.QueuedCreatures -= count;
+
+            if (spawnPool.QueuedCreatures == 0)
+                spawnPool.QueuedCreatureList = null;
 
             if ((spawnPool.DropshipQueue + spawnPool.QueuedCreatures + spawnPool.AliveCreatures) == 0)
                 spawnPool.UpdateTimer = 0;
@@ -110,6 +113,7 @@ namespace Rasa.Managers
                 if (data.Creature6Id > 0)
                     spawnPoolSlots.Add(new SpawnPoolSlot(data.Creature6Id, data.Creature6MinCount, data.Creature6MaxCount));
 
+                var respawnMilliseconds = data.RespawnTime * 1000L;
                 var spawnPool = new SpawnPool
                 {
                     AnimType = data.AnimType,
@@ -118,9 +122,8 @@ namespace Rasa.Managers
                     Position = data.Position,
                     Rotation = (float)data.Rotation,
                     Mode = data.Mode,
-                    RespawnTime = data.RespawnTime * 100,  //convert to ms
-                    // to spawn all cretures at server start, we set UpdateTimer to RespawnTime
-                    UpdateTimer = data.RespawnTime * 100, //convert to ms
+                    RespawnTime = respawnMilliseconds,
+                    UpdateTimer = respawnMilliseconds,
                     SpawnSlot = spawnPoolSlots
                 };
 
@@ -130,6 +133,7 @@ namespace Rasa.Managers
             Logger.WriteLog(LogType.Initialize, $"Loaded {LoadedSpawnPools.Count} SpawnPools");
         }
 
+        // timePassed is elapsed milliseconds since this map's previous spawn-pool update.
         public void SpawnPoolWorker(MapChannel mapChannel, long timePassed)
         {
             foreach (var key in LoadedSpawnPools)
@@ -139,12 +143,14 @@ namespace Rasa.Managers
                 if (spawnPool.MapContextId != mapChannel.MapInfo.MapContextId)
                     continue; // spawnpool is not for this map
 
-                var totalCreaturesActive = spawnPool.AliveCreatures + spawnPool.QueuedCreatures;
+                if (spawnPool.Mode != 0 || spawnPool.AnimType < 0 || spawnPool.AnimType > 2)
+                    continue;
 
-                if (totalCreaturesActive > 0)
-                    continue; // there is still active creatures
+                if (spawnPool.AliveCreatures > 0 || spawnPool.QueuedCreatures > 0 || spawnPool.DropshipQueue > 0)
+                    continue;
 
-                spawnPool.UpdateTimer += timePassed;
+                if (spawnPool.UpdateTimer < spawnPool.RespawnTime)
+                    spawnPool.UpdateTimer += Math.Min(Math.Max(0, timePassed), spawnPool.RespawnTime - spawnPool.UpdateTimer);
 
                 if (spawnPool.UpdateTimer < spawnPool.RespawnTime)
                     continue; // spawnpool is still on cooldown
@@ -159,36 +165,91 @@ namespace Rasa.Managers
                 {
                     IncreaseQueuedCreatureCount(spawnPool, creatureList.Count);
 
-                    SpawnCreatures(spawnPool, creatureList);
-
-                    DecreaseQueuedCreatureCount(spawnPool, creatureList.Count);
+                    try
+                    {
+                        SpawnCreatures(spawnPool, creatureList);
+                    }
+                    finally
+                    {
+                        DecreaseQueuedCreatureCount(spawnPool, creatureList.Count);
+                    }
                 }
-                // animType == 1; bane dropship animation
-                else if (spawnPool.AnimType == 1)
+                else
                 {
-                    IncreaseQueueCount(spawnPool);
-                    IncreaseQueuedCreatureCount(spawnPool, creatureList.Count);
-
-                    // create bane_dropship
-                    var dropship = new Dropship(Factions.Bane, DropshipType.Spawner, spawnPool);
-
-                    CellManager.Instance.AddToWorld(mapChannel, dropship);
-
-                    DynamicObjectManager.Instance.Dropships.Add(dropship.EntityId, dropship);
+                    EnqueueDropship(mapChannel, spawnPool, creatureList);
                 }
-                // animType == 2; human dropship animation
-                else if (spawnPool.AnimType == 2)
+            }
+        }
+
+        private void EnqueueDropship(MapChannel mapChannel, SpawnPool spawnPool, List<Creature> creatureList)
+        {
+            Dropship dropship = null;
+            var reserved = false;
+            try
+            {
+                dropship = new Dropship(spawnPool.AnimType == 1 ? Factions.Bane : Factions.AFS,
+                    DropshipType.Spawner, spawnPool);
+                spawnPool.QueuedCreatureList = creatureList;
+                IncreaseQueueCount(spawnPool);
+                IncreaseQueuedCreatureCount(spawnPool, creatureList.Count);
+                reserved = true;
+                CellManager.Instance.AddToWorld(mapChannel, dropship);
+                DynamicObjectManager.Instance.Dropships.Add(dropship.EntityId, dropship);
+            }
+            catch
+            {
+                try
                 {
-                    IncreaseQueueCount(spawnPool);
-                    IncreaseQueuedCreatureCount(spawnPool, creatureList.Count);
+                    if (dropship != null)
+                        RollBackDropship(mapChannel, dropship);
+                }
+                finally
+                {
+                    if (reserved)
+                    {
+                        DecreaseQueuedCreatureCount(spawnPool, creatureList.Count);
+                        DecreaseQueueCount(spawnPool);
+                    }
+                }
+                throw;
+            }
+        }
 
-                    // create human_dropship
-                    var dropship = new Dropship(Factions.AFS, DropshipType.Spawner, spawnPool);
+        private void RollBackDropship(MapChannel mapChannel, Dropship dropship)
+        {
+            var entities = EntityManager.Instance;
+            var wasRegistered = entities.RegisteredEntities.TryGetValue(dropship.EntityId, out var entityType) &&
+                entityType == EntityType.Object &&
+                entities.DynamicObjects.TryGetValue(dropship.EntityId, out var registered) && registered == dropship;
+            var workers = DynamicObjectManager.Instance.Dropships;
+            if (workers.TryGetValue(dropship.EntityId, out var worker) && worker == dropship)
+                workers.Remove(dropship.EntityId);
+            try
+            {
+                if (wasRegistered)
+                    CellManager.Instance.RemoveFromWorld(mapChannel, dropship);
+            }
+            catch (Exception exception)
+            {
+                Logger.WriteLog(LogType.Error, $"Failed to remove rejected dropship {dropship.EntityId}: {exception.Message}");
+            }
+            finally
+            {
+                if (mapChannel.MapCellInfo?.Cells != null)
+                    foreach (var cell in mapChannel.MapCellInfo.Cells.Values)
+                        cell?.DynamicObjectList?.RemoveAll(candidate => candidate == dropship);
 
-                    CellManager.Instance.AddToWorld(mapChannel, dropship);
+                var hasObject = entities.DynamicObjects.TryGetValue(dropship.EntityId, out var current);
+                var ownsObject = hasObject && current == dropship;
+                if (ownsObject)
+                    entities.UnregisterDynamicObject(dropship.EntityId);
 
-                    DynamicObjectManager.Instance.Dropships.Add(dropship.EntityId, dropship);
-
+                if (ownsObject || (!wasRegistered && !hasObject))
+                {
+                    if (entities.RegisteredEntities.ContainsKey(dropship.EntityId))
+                        entities.ReleaseEntity(dropship.EntityId, EntityType.Object);
+                    else
+                        entities.FreeEntity(dropship.EntityId);
                 }
             }
         }
@@ -204,27 +265,89 @@ namespace Rasa.Managers
                 if (creature == null)
                     continue;
 
-                RandomizePosition(creature, creatureList.Count);
+                try
+                {
+                    RandomizePosition(creature, creatureList.Count);
+                    CellManager.Instance.AddToWorld(mapChannel, creature);
+                }
+                catch
+                {
+                    RollBackSpawn(mapChannel, creature);
+                    throw;
+                }
+            }
+        }
 
-                CellManager.Instance.AddToWorld(mapChannel, creature);
+        private void RollBackSpawn(MapChannel mapChannel, Creature creature)
+        {
+            var removed = false;
+            try
+            {
+                removed = CellManager.Instance.RemoveCreatureFromWorld(mapChannel, creature);
+            }
+            catch (Exception exception)
+            {
+                Logger.WriteLog(LogType.Error, $"Failed to remove rejected spawn {creature.EntityId}: {exception.Message}");
+            }
+            finally
+            {
+                if (!removed)
+                {
+                    if (mapChannel.MapCellInfo?.Cells != null)
+                        foreach (var cell in mapChannel.MapCellInfo.Cells.Values)
+                            cell?.CreatureList?.RemoveAll(candidate => candidate == creature);
+
+                    var entities = EntityManager.Instance;
+                    if (entities.RegisteredEntities.ContainsKey(creature.EntityId))
+                        entities.ReleaseEntity(creature.EntityId, EntityType.Creature);
+                    else
+                        entities.FreeEntity(creature.EntityId);
+                }
+                DecreaseAliveCreatureCount(mapChannel, creature.SpawnPool);
             }
         }
 
         internal List<Creature> CreateListOfCreatures(SpawnPool spawnPool)
         {
+            return spawnPool.QueuedCreatureList ??
+                CreateListOfCreatures(spawnPool, CreatureManager.Instance.LoadedCreatures, Random.Shared);
+        }
+
+        public static List<Creature> CreateListOfCreatures(SpawnPool spawnPool,
+            IReadOnlyDictionary<uint, Creature> definitions, Random random)
+        {
             var creatureList = new List<Creature>();
+
+            if (spawnPool.SpawnSlot == null)
+                return creatureList;
 
             foreach (var spawnSlot in spawnPool.SpawnSlot)
             {
-                var spawnCreatureCount = new Random().Next(spawnSlot.CountMin, spawnSlot.CountMax + 1);
+                if (creatureList.Count == 64)
+                    break;
 
-                for (var i = 0; i < spawnCreatureCount; i++)
+                if (spawnSlot == null || spawnSlot.CreatureId == 0)
+                    continue;
+
+                if (spawnSlot.CountMin < 0 || spawnSlot.CountMax < spawnSlot.CountMin)
                 {
-                    creatureList.Add(new Creature(CreatureManager.Instance.LoadedCreatures[spawnSlot.CreatureId]));
-
-                    if (creatureList.Count > 63)    // cannot spawn more than 64 creatures at once
-                        break;
+                    Logger.WriteLog(LogType.Error, $"SpawnPool {spawnPool.DbId}: invalid counts for creature {spawnSlot.CreatureId}");
+                    continue;
                 }
+
+                if (spawnSlot.CountMax == 0)
+                    continue;
+
+                if (!definitions.TryGetValue(spawnSlot.CreatureId, out var definition) || definition == null)
+                {
+                    Logger.WriteLog(LogType.Error, $"SpawnPool {spawnPool.DbId}: missing creature {spawnSlot.CreatureId}");
+                    continue;
+                }
+
+                var spawnCreatureCount = random.Next(spawnSlot.CountMin, spawnSlot.CountMax + 1);
+
+                for (var i = 0; i < spawnCreatureCount && creatureList.Count < 64; i++)
+                    creatureList.Add(new Creature(definition));
             }
 
             return creatureList;
@@ -239,6 +362,10 @@ namespace Rasa.Managers
                 pos.X += new Random().Next() % 5 - 2;
                 pos.Z += new Random().Next() % 5 - 2;
             }
+
+            // Spawn pools were placed by hand; on a slope the offset members would hang in the
+            // air or start in the ground. With a navmesh they stand on it.
+            pos = NavMeshManager.SnapToGround(MapChannelManager.Instance.FindByContextId(creature.SpawnPool.MapContextId), pos);
 
             CreatureManager.Instance.SetLocation(creature, pos, creature.SpawnPool.Rotation, creature.SpawnPool.MapContextId);
         }

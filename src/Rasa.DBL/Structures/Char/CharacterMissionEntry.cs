@@ -1,4 +1,5 @@
-﻿using System.ComponentModel.DataAnnotations;
+﻿using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace Rasa.Structures.Char
@@ -19,7 +20,6 @@ namespace Rasa.Structures.Char
             MissionState = mission_state;
         }
 
-        [Key]
         [Column("character_id")]
         [Required]
         public uint CharacterId { get; set; }
@@ -31,5 +31,12 @@ namespace Rasa.Structures.Char
         [Column("mission_state")]
         [Required]
         public uint MissionState { get; set; }
+
+        [Column("completeable")]
+        [Required]
+        public bool Completeable { get; set; }
+
+        public ICollection<CharacterMissionObjectiveEntry> Objectives { get; set; } =
+            new List<CharacterMissionObjectiveEntry>();
     }
 }

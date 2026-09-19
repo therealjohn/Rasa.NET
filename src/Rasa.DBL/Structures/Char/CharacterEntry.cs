@@ -15,6 +15,7 @@ namespace Rasa.Structures.Char
 
     [Table(CharacterEntry.TableName)]
     [Index(nameof(CharacterEntry.AccountId), Name = "character_index_account")]
+    [Index(nameof(CharacterEntry.AccountId), nameof(CharacterEntry.Slot), IsUnique = true, Name = "character_index_account_slot")]
     public class CharacterEntry : IHasId
     {
         public const string TableName = "character";
@@ -72,6 +73,10 @@ namespace Rasa.Structures.Char
         [Column("active_weapon")]
         [Required]
         public byte ActiveWeapon { get; set; }
+
+        [Column("current_ability_slot")]
+        [Required]
+        public byte CurrentAbilitySlot { get; set; }
 
         [Column("body")]
         [Required]

@@ -1,10 +1,12 @@
 ﻿namespace Rasa.Repositories.Char
 {
+    using Auction;
     using Character;
     using CharacterAppearance;
     using CharacterSkills;
     using Clan;
     using ClanInventory;
+    using ClanLockboxLog;
     using ClanMember;
     using GameAccount;
     using CharacterAbilityDrawer;
@@ -14,16 +16,23 @@
     using CharacterLockbox;
     using CharacterLogos;
     using CharacterMission;
+    using CharacterMissionProgress;
     using CharacterOption;
     using CharacterTeleporter;
     using CharacterTitle;
     using Friend;
     using Ignored;
     using Items;
+    using Petition;
     using UserOption;
 
     public interface ICharUnitOfWork : IUnitOfWork
     {
+        void ExecuteTransaction(System.Action operation) =>
+            throw new System.NotSupportedException(
+                "This character unit of work does not support transactions.");
+
+        IAuctionRepository Auctions { get; }
         ICensoredWordRepository CensoredWords { get; }
         ICharacterRepository Characters { get; }
         ICharacterAbilityDrawerRepository CharacterAbilityDrawers { get; }
@@ -32,6 +41,7 @@
         ICharacterLockboxRepository CharacterLockboxes { get; }
         ICharacterLogosRepository CharacterLogoses { get; }
         ICharacterMissionRepository CharacterMissions { get; }
+        ICharacterMissionProgressRepository CharacterMissionProgress { get; }
         ICharacterOptionRepository CharacterOptions { get; }
         ICharacterSkillsRepository CharacterSkills { get; }
         ICharacterTeleporterRepository CharacterTeleporters { get; }
@@ -39,10 +49,12 @@
         IClanRepository Clans { get; }
         IClanInventoryRepository ClanInventories { get; }
         IClanMemberRepository ClanMembers { get; }
+        IClanLockboxLogRepository ClanLockboxLogs { get; }
         IFriendRepository Friends { get; }
         IGameAccountRepository GameAccounts { get; }
         IIgnoredRepository Ignoreds { get; }
         IItemRepository Items { get; }
+        IPetitionRepository Petitions { get; }
         IUserOptionRepository UserOptions { get; }
     }
 }

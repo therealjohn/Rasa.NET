@@ -9,6 +9,7 @@
         Wormhole            = 5,
         MapTrigger          = 6,
         DropshipTeleporter  = 7,
-        Logos               = 8
+        Logos               = 8,
+        Kraftwerks          = 9
     }
 }

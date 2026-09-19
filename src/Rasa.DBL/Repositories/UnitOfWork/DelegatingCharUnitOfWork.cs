@@ -3,10 +3,12 @@
 namespace Rasa.Repositories.UnitOfWork
 {
     using Char;
+    using Char.Auction;
     using Char.Character;
     using Char.CharacterAppearance;
     using Char.Clan;
     using Char.ClanInventory;
+    using Char.ClanLockboxLog;
     using Char.ClanMember;
     using Char.GameAccount;
     using Char.CensorWord;
@@ -15,6 +17,7 @@ namespace Rasa.Repositories.UnitOfWork
     using Char.CharacterLockbox;
     using Char.CharacterLogos;
     using Char.CharacterMission;
+    using Char.CharacterMissionProgress;
     using Char.CharacterOption;
     using Char.CharacterSkills;
     using Char.CharacterTeleporter;
@@ -22,6 +25,7 @@ namespace Rasa.Repositories.UnitOfWork
     using Char.Friend;
     using Char.Ignored;
     using Char.Items;
+    using Char.Petition;
     using Char.UserOption;
 
     public class DelegatingCharUnitOfWork : DelegatingUnitOfWorkBase, ICharUnitOfWork
@@ -34,7 +38,11 @@ namespace Rasa.Repositories.UnitOfWork
             _parent = parent;
         }
 
+        public IAuctionRepository Auctions => _parent.Auctions;
+
         public ICensoredWordRepository CensoredWords => _parent.CensoredWords;
+
+        public void ExecuteTransaction(System.Action operation) => _parent.ExecuteTransaction(operation);
 
         public ICharacterRepository Characters => _parent.Characters;
 
@@ -50,6 +58,9 @@ namespace Rasa.Repositories.UnitOfWork
 
         public ICharacterMissionRepository CharacterMissions => _parent.CharacterMissions;
 
+        public ICharacterMissionProgressRepository CharacterMissionProgress =>
+            _parent.CharacterMissionProgress;
+
         public ICharacterOptionRepository CharacterOptions => _parent.CharacterOptions;
 
         public ICharacterSkillsRepository CharacterSkills => _parent.CharacterSkills;
@@ -63,6 +74,7 @@ namespace Rasa.Repositories.UnitOfWork
         public IClanInventoryRepository ClanInventories => _parent.ClanInventories;
 
         public IClanMemberRepository ClanMembers => _parent.ClanMembers;
+        public IClanLockboxLogRepository ClanLockboxLogs => _parent.ClanLockboxLogs;
 
         public IFriendRepository Friends => _parent.Friends;
 
@@ -71,6 +83,8 @@ namespace Rasa.Repositories.UnitOfWork
         public IIgnoredRepository Ignoreds => _parent.Ignoreds;
 
         public IItemRepository Items => _parent.Items;
+
+        public IPetitionRepository Petitions => _parent.Petitions;
 
         public IUserOptionRepository UserOptions => _parent.UserOptions;
     }

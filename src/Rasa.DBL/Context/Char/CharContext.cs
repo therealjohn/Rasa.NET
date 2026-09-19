@@ -34,16 +34,23 @@ namespace Rasa.Context.Char
         public DbSet<CharacterLockboxEntry> CharacterLockboxEntries { get; set; }
         public DbSet<CharacterLogosEntry> CharacterLogosEntries { get; set; }
         public DbSet<CharacterMissionEntry> CharacterMissionEntries { get; set; }
+        public DbSet<CharacterMissionObjectiveEntry> CharacterMissionObjectiveEntries { get; set; }
+        public DbSet<CharacterMissionObjectiveCounterEntry> CharacterMissionObjectiveCounterEntries { get; set; }
+        public DbSet<CharacterMissionObjectiveItemCounterEntry> CharacterMissionObjectiveItemCounterEntries { get; set; }
         public DbSet<CharacterOptionEntry> CharacterOptionEntries { get; set; }
         public DbSet<CharacterSkillsEntry> CharacterSkillsEntries { get; set; }
         public DbSet<CharacterTeleporterEntry> CharacterTeleporterEntries { get; set; }
         public DbSet<CharacterTitleEntry> CharacterTitleEntries { get; set; }
         public DbSet<ClanEntry> ClanEntries { get; set; }
+        public DbSet<AuctionEntry> AuctionEntries { get; set; }
+
         public DbSet<ClanInventoryEntry> ClanInventoryEntries { get; set; }
         public DbSet<ClanMemberEntry> ClanMemberEntries { get; set; }
+        public DbSet<ClanLockboxLogEntry> ClanLockboxLogEntries { get; set; }
         public DbSet<FriendEntry> FriendEntries { get; set; }
         public DbSet<IgnoredEntry> IgnoredEntries { get; set; }
         public DbSet<ItemEntry> ItemEntries { get; set; }
+        public DbSet<PetitionEntry> PetitionEntries { get; set; }
         public DbSet<UserOptionEntry> UserOptionEntries { get; set; }
         protected override DatabaseConnectionConfiguration GetDatabaseConnectionConfiguration()
         {
@@ -57,11 +64,16 @@ namespace Rasa.Context.Char
             SetupCharacterTable(modelBuilder);
             SetupCharacterAppearanceTable(modelBuilder);
             SetupCharacterLogosTable(modelBuilder);
+            SetupCharacterMissionTable(modelBuilder);
+            SetupCharacterMissionObjectiveTables(modelBuilder);
             SetupCharacterSkillTable(modelBuilder);
             SetupCharacterTeleporterTable(modelBuilder);
             SetupCharacterOptionsTable(modelBuilder);
             SetupClanMemberTable(modelBuilder);
             SetupClanTable(modelBuilder);
+            SetupFriendTable(modelBuilder);
+            SetupIgnoredTable(modelBuilder);
+            SetupPetitionTable(modelBuilder);
             SetupUserOptionsTable(modelBuilder);
         }
 
@@ -237,6 +249,77 @@ namespace Rasa.Context.Char
                 .HasKey(e => new { e.CharacterId, e.LogosId });
         }
 
+        private void SetupCharacterMissionTable(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<CharacterMissionEntry>()
+                .HasKey(e => new { e.CharacterId, e.MissionId });
+            modelBuilder.Entity<CharacterMissionEntry>()
+                .HasOne<CharacterEntry>()
+                .WithMany()
+                .HasForeignKey(e => e.CharacterId)
+                .OnDelete(DeleteBehavior.Cascade);
+            modelBuilder.Entity<CharacterMissionEntry>()
+                .Property(e => e.Completeable)
+                .HasDefaultValue(false);
+        }
+
+        private void SetupCharacterMissionObjectiveTables(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<CharacterMissionObjectiveEntry>()
+                .HasKey(entry => new { entry.CharacterId, entry.MissionId, entry.ObjectiveId });
+            modelBuilder.Entity<CharacterMissionObjectiveEntry>()
+                .HasOne(entry => entry.Mission)
+                .WithMany(mission => mission.Objectives)
+                .HasForeignKey(entry => new { entry.CharacterId, entry.MissionId })
+                .OnDelete(DeleteBehavior.Cascade);
+            modelBuilder.Entity<CharacterMissionObjectiveEntry>()
+                .Property(entry => entry.ObjectiveState)
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3)
+                .IsConcurrencyToken();
+
+            modelBuilder.Entity<CharacterMissionObjectiveCounterEntry>()
+                .HasKey(entry => new
+                {
+                    entry.CharacterId,
+                    entry.MissionId,
+                    entry.ObjectiveId,
+                    entry.CounterId
+                });
+            modelBuilder.Entity<CharacterMissionObjectiveCounterEntry>()
+                .HasOne(entry => entry.Objective)
+                .WithMany(objective => objective.Counters)
+                .HasForeignKey(entry => new { entry.CharacterId, entry.MissionId, entry.ObjectiveId })
+                .OnDelete(DeleteBehavior.Cascade);
+            modelBuilder.Entity<CharacterMissionObjectiveCounterEntry>()
+                .Property(entry => entry.CounterId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<CharacterMissionObjectiveCounterEntry>()
+                .Property(entry => entry.CounterValue)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11)
+                .IsConcurrencyToken();
+
+            modelBuilder.Entity<CharacterMissionObjectiveItemCounterEntry>()
+                .HasKey(entry => new
+                {
+                    entry.CharacterId,
+                    entry.MissionId,
+                    entry.ObjectiveId,
+                    entry.ItemClassId
+                });
+            modelBuilder.Entity<CharacterMissionObjectiveItemCounterEntry>()
+                .HasOne(entry => entry.Objective)
+                .WithMany(objective => objective.ItemCounters)
+                .HasForeignKey(entry => new { entry.CharacterId, entry.MissionId, entry.ObjectiveId })
+                .OnDelete(DeleteBehavior.Cascade);
+            modelBuilder.Entity<CharacterMissionObjectiveItemCounterEntry>()
+                .Property(entry => entry.ItemClassId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<CharacterMissionObjectiveItemCounterEntry>()
+                .Property(entry => entry.CounterValue)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11)
+                .IsConcurrencyToken();
+        }
+
         private void SetupCharacterOptionsTable(ModelBuilder modelBuilder)
         {
             modelBuilder.Entity<CharacterOptionEntry>()
@@ -297,6 +380,58 @@ namespace Rasa.Context.Char
             modelBuilder.Entity<ClanEntry>()
                 .Property(e => e.CreatedAt)
                 .AsCurrentDateTime(_dbContextPropertyModifier);
+        }
+
+        // One row per (owner, contact). These were keyed on account_id alone, which capped
+        // every account at a single friend and a single ignored player.
+        private void SetupFriendTable(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<FriendEntry>()
+                .HasKey(e => new { e.AccountId, e.FriendAccountId });
+        }
+
+        private void SetupIgnoredTable(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<IgnoredEntry>()
+                .HasKey(e => new { e.AccountId, e.IgnoredAccountId });
+        }
+
+        private void SetupPetitionTable(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<PetitionEntry>()
+                .Property(e => e.Id)
+                .AsIdColumn(_dbContextPropertyModifier);
+
+            modelBuilder.Entity<PetitionEntry>()
+                .Property(e => e.AccountId)
+                .AsIdColumn(_dbContextPropertyModifier);
+
+            modelBuilder.Entity<PetitionEntry>()
+                .Property(e => e.CharacterId)
+                .AsIdColumn(_dbContextPropertyModifier);
+
+            modelBuilder.Entity<PetitionEntry>()
+                .Property(e => e.Type)
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3)
+                .HasDefaultValue((byte)0);
+
+            modelBuilder.Entity<PetitionEntry>()
+                .Property(e => e.MapContextId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+
+            modelBuilder.Entity<PetitionEntry>()
+                .Property(e => e.Status)
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3)
+                .HasDefaultValue((byte)0);
+
+            modelBuilder.Entity<PetitionEntry>()
+                .Property(e => e.Resolution)
+                .HasDefaultValue(string.Empty);
+
+            // created_at carries no SQL default on purpose. The other tables use
+            // CURRENT_TIMESTAMP, which MySQL rejects as a default for a datetime(6) column
+            // unless the fractional precision is spelled out; the timestamp is set in
+            // PetitionEntry's constructor instead, in UTC, like the rest of the server.
         }
 
         private void SetupUserOptionsTable(ModelBuilder modelBuilder)

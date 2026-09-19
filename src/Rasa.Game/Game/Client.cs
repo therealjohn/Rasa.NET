@@ -1,9 +1,13 @@
 ﻿using System;
+using System.Buffers;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Diagnostics;
+using System.Data.Common;
 using System.IO;
 using System.Net.Sockets;
 using System.Text;
+using System.Threading;
+using Microsoft.EntityFrameworkCore;
 
 namespace Rasa.Game
 {
@@ -35,6 +39,16 @@ namespace Rasa.Game
         public ClientCryptData Data { get; private set; }
         public GameAccountEntry AccountEntry { get; private set; }
         public uint LoadingMap { get; set; }
+
+        /// <summary>
+        /// A Wonkavate has gone to this client and the MapLoaded that answers it has not come
+        /// back. The client sends MapLoaded once per load, when its loading screen ends
+        /// (wonkavator.py HandleLoadingScreenEnd), so each Wonkavate allows exactly one. Set by
+        /// everything that sends one - PassClientToMapInstance, ChangeMap, a departing dropship -
+        /// and cleared by MapChannelManager.MapLoaded.
+        /// </summary>
+        internal bool AwaitingMapLoaded { get; set; }
+
         public ClientState State { get; set; }
         public Manifestation Player = new();
         public Movement Movement { get; set; }
@@ -43,9 +57,31 @@ namespace Rasa.Game
         public List<UserOptions> UserOptions = new();
 
         private readonly object _clientLock = new();
+        internal object SyncRoot => _clientLock;
+        internal PlayerTransfer PendingTransfer { get; set; }
         private readonly ClientPacketHandler _handler;
         private readonly PacketQueue _packetQueue = new();
+        private readonly bool[] _receivedSequence = new bool[256];
+
+        // Inbound byte stream. Owned exclusively by the MainLoop thread: it is only ever
+        // touched from Update()/TryDecodeNextPacket() and (after disconnect) Close().
         private readonly NonContiguousMemoryStream _incomingDataQueue = new();
+
+        // Hand-off from socket completion threads to the MainLoop. OnReceive() runs on an
+        // IOCP thread and must not mutate _incomingDataQueue (its backing List<> is not
+        // thread-safe; the MainLoop enumerates and RemoveRange()s it while decoding). It
+        // rents a pooled array, copies the chunk in, and enqueues it here; Update() drains
+        // the queue into the stream on the MainLoop. Receives are serialized per socket,
+        // so there is exactly one producer per client and byte order is preserved.
+        private readonly ConcurrentQueue<(byte[] Buffer, int Length)> _pendingChunks = new();
+        private readonly object _pendingChunksLock = new();
+
+        // Bytes enqueued but not yet drained. Bounded so a client that floods faster than
+        // the MainLoop consumes cannot grow memory without limit. Legitimate traffic is a
+        // few KB/s and a single frame is capped at 8 KB by LengthedSocket, so this only
+        // trips on a misbehaving client or a MainLoop stalled for many seconds.
+        private int _pendingBytes;
+        private const int MaxPendingBytes = 512 * 1024;
 
 
         private static PacketRouter<ClientPacketHandler, GameOpcode> PacketRouter { get; } = new PacketRouter<ClientPacketHandler, GameOpcode>();
@@ -74,6 +110,7 @@ namespace Rasa.Game
             State = ClientState.Connected;
 
             Socket.OnError += OnError;
+            Socket.OnDrop += OnDrop;
             Socket.OnReceive += OnReceive;
             Socket.OnEncrypt += OnEncrypt;
             Socket.OnDecrypt += OnDecrypt;
@@ -88,22 +125,53 @@ namespace Rasa.Game
 
         public void Update(long delta)
         {
-            foreach (var protocolPacket in DecodeIncomingPackets())
+            // Nothing in this method may throw: Update() is driven by the single MainLoop
+            // thread that services every client and every manager. An escaping exception
+            // takes the whole world down, not just this connection.
+            try
             {
-                try
+                DrainPendingChunks();
+
+                foreach (var protocolPacket in DecodeIncomingPackets())
                 {
-                    HandleProtocolPacket(protocolPacket);
-                }
-                catch (InvalidClientMessageException)
-                {
-                    Close();
+                    try
+                    {
+                        HandleProtocolPacket(protocolPacket);
+                    }
+                    catch (InvalidClientMessageException)
+                    {
+                        Close();
+                        return;
+                    }
+                    catch (Exception e)
+                    {
+                        Logger.WriteLog(LogType.Error, $"Error handling {protocolPacket.Type} from {Socket.RemoteAddress}, disconnecting client: {e}");
+                        Close();
+                        return;
+                    }
                 }
             }
+            catch (Exception e)
+            {
+                // DecodeIncomingPackets() can throw while advancing the iterator (desynced
+                // or malformed stream), which the inner try above would never see.
+                Logger.WriteLog(LogType.Error, $"Error decoding packet stream from {Socket.RemoteAddress}, disconnecting client: {e}");
+                Close();
+                return;
+            }
 
-            IBasePacket packet;
+            try
+            {
+                IBasePacket packet;
 
-            while ((packet = _packetQueue.PopOutgoing()) != null)
-                SendPacket(packet);
+                while ((packet = _packetQueue.PopOutgoing()) != null)
+                    SendPacket(packet);
+            }
+            catch (Exception e)
+            {
+                Logger.WriteLog(LogType.Error, $"Error sending queued packets to {Socket.RemoteAddress}, disconnecting client: {e}");
+                Close();
+            }
         }
 
         public void Close(bool sendPacket = true)
@@ -122,9 +190,37 @@ namespace Rasa.Game
 
                 Socket.Close();
 
-                Server.Disconnect(this);
+                Server?.Disconnect(this);
 
-                SaveCharacter();
+                // A dropped connection (Alt+F4, crash, network loss) never runs the /logout
+                // flow, and that flow was the only thing that set RemoveFromMap - so the
+                // character stayed in its map cell as a frozen copy, visible to everyone
+                // including the same player on their next login. Flag it for the
+                // MapChannelWorker instead of calling RemovePlayer here: Close() is also
+                // reached from socket completion threads, and RemovePlayer walks the cell
+                // and entity tables the MainLoop owns. Disconected goes first so the
+                // worker skips handing a dead socket back to character selection, and so
+                // the visibility and trigger passes stop treating the player as present.
+                RestoreTransferOrigin();
+                if (Player != null && Player.MapChannel != null)
+                {
+                    Player.Disconected = true;
+                    Player.RemoveFromMap = true;
+                }
+
+                DiscardPendingChunks();
+
+                try
+                {
+                    SaveCharacterOnDisconnect();
+                }
+                catch (Exception e)
+                {
+                    // Close() is reached from socket completion threads (OnError) as well as
+                    // from the MainLoop. A throw here used to terminate the process on every
+                    // disconnect that happened before a character was loaded.
+                    Logger.WriteLog(LogType.Error, $"Failed to save character on disconnect: {e}");
+                }
             }
         }
 
@@ -149,7 +245,8 @@ namespace Rasa.Game
            var clientList = new List<Client>();
 
             foreach (var cellSeed in client.Player.Cells)
-                clientList.AddRange(client.Player.MapChannel.MapCellInfo.Cells[cellSeed].ClientList);
+                if (client.Player.MapChannel.MapCellInfo.Cells.TryGetValue(cellSeed, out var cell))
+                    clientList.AddRange(cell.ClientList);
 
             foreach (var tempClient in clientList)
                 tempClient.CallMethod(entityId, packet);
@@ -161,7 +258,8 @@ namespace Rasa.Game
             var clientList = new List<Client>();
 
             foreach (var cellSeed in client.Player.Cells)
-                clientList.AddRange(client.Player.MapChannel.MapCellInfo.Cells[cellSeed].ClientList);
+                if (client.Player.MapChannel.MapCellInfo.Cells.TryGetValue(cellSeed, out var cell))
+                    clientList.AddRange(cell.ClientList);
 
             foreach (var tempClient in clientList)
             {
@@ -175,18 +273,9 @@ namespace Rasa.Game
         // Cell send movement
         internal void CellMoveObject(Client client, MoveObjectMessage moveObjectMessage, bool ignoreSelf)
         {
-            var clientList = new List<Client>();
-
-            foreach (var cellSeed in client.Player.Cells)
-                clientList.AddRange(client.Player.MapChannel.MapCellInfo.Cells[cellSeed].ClientList);
-
-            foreach (var tempClient in clientList)
-            {
-                if (tempClient == client && ignoreSelf)
-                    continue;
-
+            foreach (var tempClient in CellManager.Instance.GetClientsInCells(client.Player.MapChannel,
+                         client.Player.Cells, ignoreSelf ? client : null))
                 tempClient.SendMessage(moveObjectMessage, false, 1);
-            }
         }
 
         public void SendMessage(IClientMessage message, bool compress = false, byte channel = 0, bool delay = true)
@@ -199,12 +288,17 @@ namespace Rasa.Game
                 _packetQueue.EnqueueOutgoing(protocolPacket);
         }
 
+        internal IBasePacket DequeueOutgoingPacket()
+        {
+            return _packetQueue.PopOutgoing();
+        }
+
         public void SendPacket(IBasePacket packet)
         {
             var pPacket = packet as ProtocolPacket;
             if (pPacket == null)
             {
-                Debugger.Break();
+                Logger.WriteLog(LogType.Error, $"SendPacket() called with a non-ProtocolPacket ({packet?.GetType().Name ?? "null"}), dropping it.");
                 return;
             }
 
@@ -250,9 +344,11 @@ namespace Rasa.Game
 
                     using (var unitOfWork = _gameUnitOfWorkFactory.CreateChar())
                     {
+                        // A new account is created at level 0, an ordinary player. Logging in used
+                        // to set every account to level 1, which made the GM check in front of the
+                        // dot commands true for everyone who could reach it. Levels are handed out
+                        // from the Game console now: gm <familyName> <level>.
                         unitOfWork.GameAccounts.CreateOrUpdate(loginEntry.Id, loginEntry.Name, loginEntry.Email);
-                        // for now set all account to GM status
-                        unitOfWork.GameAccounts.UpdateAccountLevel(loginEntry.Id, 1);
 
                         if (Server.IsBanned(loginMsg.AccountId))
                         {
@@ -298,25 +394,8 @@ namespace Rasa.Game
                     break;
 
                 case ClientMessageOpcode.Move:
-                    if (Player == null)
-                    {
-                        return;
-                    }
-
                     var moveMessage = GetMessageAs<MoveMessage>(protocolPacket);
-                    if (moveMessage.Movement == null)
-                    {
-                        return;
-                    }
-
-                    Player.Position = moveMessage.Movement.Position;
-                    Player.Rotation = moveMessage.Movement.ViewDirection.X;
-                    Movement = moveMessage.Movement;
-
-                    // send your movement to other players in visibility range
-                    var moveObjectMessage = new MoveObjectMessage(Player.EntityId, moveMessage.Movement);
-                    CellMoveObject(this, moveObjectMessage, true);
-
+                    HandleMovement(moveMessage.Movement);
                     break;
 
                 case ClientMessageOpcode.CallServerMethod:
@@ -328,6 +407,13 @@ namespace Rasa.Game
                         return;
                     }
 
+                    // Nothing that acts on the world runs for a connection that is not in it.
+                    if (!IsExpected(csmPacket.MethodId))
+                        return;
+
+                    // MethodId, not Packet.Opcode: an opcode with no handler leaves Packet null.
+                    ManifestationManager.Instance.NotifyPlayerActivity(this, csmPacket.MethodId);
+
                     PacketRouter.RoutePacket(_handler, csmPacket.Packet);
                     break;
 
@@ -337,6 +423,142 @@ namespace Rasa.Game
                     SendMessage(pingMessage, delay: false);
                     break;
             }
+        }
+
+        internal bool HandleMovement(Movement movement)
+        {
+            lock (_clientLock)
+            {
+                if (State != ClientState.Ingame || Player?.MapChannel == null || Player.Id == 0 ||
+                    PendingTransfer != null || Player.Disconected || Player.RemoveFromMap ||
+                    !CellManager.Instance.IsInWorld(this))
+                {
+                    Logger.WriteLog(LogType.Network, $"Ignored movement outside the active world state: {State}.");
+                    return false;
+                }
+
+                if (movement == null ||
+                    !CellManager.TryGetCellCoordinates(movement.Position, out _, out _) ||
+                    !float.IsFinite(movement.Velocity) || movement.Velocity < 0 ||
+                    !float.IsFinite(movement.ViewDirection.X) || !float.IsFinite(movement.ViewDirection.Y))
+                {
+                    Logger.WriteLog(LogType.Network, "Rejected movement with invalid coordinates or motion values.");
+                    return false;
+                }
+
+                if (!ManifestationManager.Instance.AcceptMove(this, movement))
+                    return false;
+
+                Player.Position = movement.Position;
+                Player.Rotation = movement.ViewDirection.X;
+                Movement = movement;
+                ManifestationManager.Instance.NotifyPlayerActivity(this);
+                CellManager.Instance.UpdateVisibility(this);
+                CellMoveObject(this, new MoveObjectMessage(Player.EntityId, movement), true);
+                return true;
+            }
+        }
+
+        internal void SetWorldPosition(Vector3 position, double rotation)
+        {
+            Player.Position = position;
+            Player.Rotation = rotation;
+            Movement = new Movement(position, new Vector2((float)rotation, 0));
+        }
+
+        internal void RestoreTransferOrigin()
+        {
+            var transfer = PendingTransfer;
+            if (transfer == null || Player == null)
+                return;
+
+            Player.MapChannel = transfer.OriginMap;
+            Player.MapContextId = transfer.OriginMap.MapInfo.MapContextId;
+            SetWorldPosition(transfer.OriginPosition, transfer.OriginRotation);
+            LoadingMap = transfer.OriginMap.MapInfo.MapContextId;
+            AwaitingMapLoaded = false;
+            PendingTransfer = null;
+        }
+
+        /// <summary>
+        /// The character is in the world: registered with the EntityManager, standing in a map's
+        /// cells, and holding inventory lists that name live entities. Teleporting counts - a
+        /// dropship ride keeps the manifestation and everything registered with it - but Loading
+        /// does not, because a map change tears all of that down and MapLoaded builds it again.
+        /// </summary>
+        public bool IsInWorld => State == ClientState.Ingame || State == ClientState.Teleporting;
+
+        /// <summary>
+        /// The methods the real client sends while it is not in the world, taken from the module
+        /// each one is sent from: character creation and selection
+        /// (client/inputstate/charactercreation.py, characterselection.py), the loading screen's
+        /// MapLoaded (wonkavator.py), the ping it keeps up throughout (game.py), and the
+        /// account-wide options it can save from anywhere (clientmethod.py).
+        ///
+        /// Everything else names an entity, a map, a character or a clan, and only means
+        /// anything while the character is in the world. SaveCharacterOptions is deliberately
+        /// absent: it writes rows keyed on the character id, which is 0 until one is chosen.
+        /// </summary>
+        private static readonly HashSet<GameOpcode> WorldlessMethods = new()
+        {
+            GameOpcode.RequestCharacterName,
+            GameOpcode.RequestFamilyName,
+            GameOpcode.RequestCreateCharacterInSlot,
+            GameOpcode.RequestCloneCharacterToSlot,
+            GameOpcode.RequestDeleteCharacterInSlot,
+            GameOpcode.RequestSwitchToCharacterInSlot,
+            GameOpcode.StoreUserClientInformation,
+            GameOpcode.MapLoaded,
+            GameOpcode.Ping,
+            GameOpcode.SaveUserOptions
+        };
+
+        /// <summary>
+        /// Whether this connection may call that method now. There was no such check: every one
+        /// of the handlers was reachable in any state, which is what made the stale inventory
+        /// lists of a logged-out or mid-zone client worth anything to whoever kept them.
+        /// </summary>
+        private bool IsExpected(GameOpcode methodId)
+        {
+            if (IsInWorld || WorldlessMethods.Contains(methodId))
+                return true;
+
+            ReportOutOfState(methodId);
+
+            return false;
+        }
+
+        /// <summary>How long this client's refusals stay quiet after one has been logged.</summary>
+        private const long RefusalLogQuietMs = 5000;
+
+        private bool _refusalLogged;
+        private long _refusalsSinceLog;
+        private long _nextRefusalLogTick;
+
+        /// <summary>
+        /// The first refusal in full, then at most one every RefusalLogQuietMs saying how many
+        /// stood behind it. A client can send these as fast as the wire allows and the log writes
+        /// synchronously on the loop thread, so a line each would be the denial of service the
+        /// refusal is there to prevent. Refusing costs the packet, not the connection: the real
+        /// client has a few of its own to send as it crosses in and out of the world.
+        /// </summary>
+        private void ReportOutOfState(GameOpcode methodId)
+        {
+            _refusalsSinceLog++;
+
+            var now = Environment.TickCount64;
+
+            if (_refusalLogged && now < _nextRefusalLogTick)
+                return;
+
+            var repeat = _refusalsSinceLog > 1 ? $" ({_refusalsSinceLog} refused since the last of these)" : "";
+
+            Logger.WriteLog(LogType.Security,
+                $"Client {Socket.RemoteAddress} sent {methodId} in state {State}; ignored{repeat}.");
+
+            _refusalLogged = true;
+            _refusalsSinceLog = 0;
+            _nextRefusalLogTick = now + RefusalLogQuietMs;
         }
 
         private T GetMessageAs<T>(ProtocolPacket protocolPacket)
@@ -357,32 +579,44 @@ namespace Rasa.Game
         #region Socketing
         private void OnEncrypt(BufferData data, ref int length)
         {
+            // The frame body is one byte of padding count, that many bytes of padding (the
+            // count byte itself is the first of them), then the packet - so the packet moves
+            // right by the count and the cipher runs over the lot. This used to be done through
+            // a second pool buffer per send, which doubled what every send took from a pool the
+            // whole server shares, and dereferenced the null it gets when that pool is empty.
             var paddingCount = (byte) (8 - length % 8);
+            var start = data.BaseOffset + data.Offset;
 
-            var tempArray = BufferManager.RequestBuffer();
+            if (data.Offset + length + paddingCount > data.MaxLength)
+                throw new InvalidOperationException($"A {length} byte packet leaves no room for its {paddingCount} bytes of padding.");
 
-            tempArray[0] = paddingCount;
-
-            BufferData.Copy(data, data.Offset, tempArray, paddingCount, length);
+            Array.Copy(data.Buffer, start, data.Buffer, start + paddingCount, length);
+            Array.Clear(data.Buffer, start, paddingCount);
+            data.Buffer[start] = paddingCount;
 
             length += paddingCount;
 
-            GameCryptManager.Encrypt(tempArray.Buffer, tempArray.BaseOffset, ref length, length, Data);
-
-            BufferData.Copy(tempArray, 0, data, data.Offset, length);
-
-            BufferManager.FreeBuffer(tempArray);
+            GameCryptManager.Encrypt(data.Buffer, start, ref length, length, Data);
         }
 
         private bool OnDecrypt(BufferData data)
         {
-            var result = GameCryptManager.Decrypt(data.Buffer, data.BaseOffset + data.Offset, data.RemainingLength, Data);
+            return DecryptFrame(data, Data);
+        }
+
+        internal static bool DecryptFrame(BufferData data, ClientCryptData cryptData)
+        {
+            var length = data.RemainingLength;
+            if (length < 8 || length % 8 != 0)
+                return false;
+
+            var result = GameCryptManager.Decrypt(data.Buffer, data.BaseOffset + data.Offset, length, cryptData);
             if (!result)
                 return false;
 
             var blowfishPadding = data[data.Offset] & 0xF;
-            if (blowfishPadding > 8)
-                throw new Exception("More than 8 bytes of blowfish padding was added to the packet?");
+            if (blowfishPadding < 1 || blowfishPadding > 8 || blowfishPadding > data.RemainingLength)
+                return false;
 
             data.Offset += blowfishPadding;
 
@@ -393,27 +627,125 @@ namespace Rasa.Game
         {
             Close(false);
         }
+
+        /// <summary>
+        /// The socket has given up on this connection - a full send queue, a stream that stopped
+        /// framing, or no buffers left to serve it. Close without trying to send anything: either
+        /// nothing can reach them, or nothing they send can be read.
+        /// </summary>
+        private void OnDrop(string reason)
+        {
+            Close(false);
+        }
 		
         private void OnReceive(BufferData data)
         {
-            _incomingDataQueue.CopyFromArray(data.Buffer, data.BaseOffset + data.Offset, data.RemainingLength);
+            var count = data.RemainingLength;
+            if (count <= 0)
+                return;
+
+            var chunk = ArrayPool<byte>.Shared.Rent(count);
+            Buffer.BlockCopy(data.Buffer, data.BaseOffset + data.Offset, chunk, 0, count);
+
+            var overflowed = false;
+            var pending = 0;
+
+            lock (_pendingChunksLock)
+            {
+                if (State == ClientState.Disconnected)
+                {
+                    ArrayPool<byte>.Shared.Return(chunk);
+                    return;
+                }
+
+                pending = _pendingBytes + count;
+                if (pending > MaxPendingBytes)
+                {
+                    overflowed = true;
+                    ArrayPool<byte>.Shared.Return(chunk);
+                }
+                else
+                {
+                    _pendingBytes = pending;
+                    _pendingChunks.Enqueue((chunk, count));
+                }
+            }
+
+            if (!overflowed)
+                return;
+
+            Logger.WriteLog(LogType.Security, $"Client {Socket.RemoteAddress} has {pending} bytes of undrained input (limit {MaxPendingBytes}), disconnecting.");
+            Close(false);
+        }
+
+        // MainLoop thread. Moves everything the socket thread has handed off into the
+        // stream. AddSharedPoolArray takes ownership of the pooled array; RemoveBytes
+        // returns it to the pool once it has been consumed, exactly as before.
+        private void DrainPendingChunks()
+        {
+            lock (_pendingChunksLock)
+            {
+                while (_pendingChunks.TryDequeue(out var chunk))
+                {
+                    _pendingBytes -= chunk.Length;
+                    _incomingDataQueue.AddSharedPoolArray(chunk.Buffer, chunk.Length);
+                }
+            }
+        }
+
+        // State is set before this is called. The shared lock makes an OnReceive already in
+        // progress either enqueue before this drain or observe Disconnected and return its rent.
+        private void DiscardPendingChunks()
+        {
+            lock (_pendingChunksLock)
+            {
+                while (_pendingChunks.TryDequeue(out var chunk))
+                {
+                    _pendingBytes -= chunk.Length;
+                    ArrayPool<byte>.Shared.Return(chunk.Buffer);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Hands the inbound stream's pooled arrays back. Anything drained into it but not yet
+        /// decoded - a partial frame, which is what every Alt+F4 leaves behind - is held by
+        /// arrays only Dispose returns, so the shared pool lost a block on each of those
+        /// disconnects. DiscardPendingChunks covers the other half, the chunks not yet drained.
+        ///
+        /// Called by the MainLoop when it finally drops the client, not by Close(): Close() runs
+        /// on socket threads too, and this stream belongs to the MainLoop. Disposing it from
+        /// under a tick that is mid-decode is the same class of bug as the one the hand-off
+        /// queue exists to prevent.
+        /// </summary>
+        internal void ReleaseInboundBuffers()
+        {
+            _incomingDataQueue.Dispose();
         }
 
         private IEnumerable<ProtocolPacket> DecodeIncomingPackets()
         {
-            ProtocolPacket packet;
-
-            while ((packet = DecodeNextPacket()) != null)
-                yield return packet;
-
-            yield break;
+            // A skipped packet (out of order, or the untyped send-timeout check) used to come
+            // back as null too, which read as "no more data" and ended the loop for the tick;
+            // everything queued behind it waited for the next one, 100 ms later, and a stream
+            // with a skipped packet in every tick fell further behind on each. Skips now
+            // continue and only an incomplete frame stops.
+            while (TryDecodeNextPacket(out var packet))
+                if (packet != null)
+                    yield return packet;
         }
 
-        private ProtocolPacket DecodeNextPacket()
+        /// <returns>
+        /// false when the queue holds no complete frame; true otherwise, with the packet, or
+        /// null for a frame that was consumed and dropped.
+        /// </returns>
+        private bool TryDecodeNextPacket(out ProtocolPacket packet)
         {
+            packet = null;
+
             // If there is not enough data to read the packet size at all, then stop processing
             if (_incomingDataQueue.Length < 2)
-                return null;
+                return false;
 
             using var br = new BinaryReader(_incomingDataQueue, Encoding.UTF8, true);
 
@@ -428,7 +760,7 @@ namespace Rasa.Game
 
             // If the packet is fragmented and not all the fragments has arrived yet, then stop processing
             if (packetSize > _incomingDataQueue.Length)
-                return null;
+                return false;
 
             // Construct and the packet
             var rawPacket = new ProtocolPacket();
@@ -442,38 +774,51 @@ namespace Rasa.Game
             // Advance the stream by removing the already processed data
             _incomingDataQueue.RemoveBytes(packetSize);
 
-            // Throw away any packet that came out of order, if it came on a channel
-            if (rawPacket.Channel != 0)
+            if (rawPacket.Channel != 0 && !TryAcceptSequence(rawPacket.Channel, rawPacket.SequenceNumber))
             {
-                // If an out of sequence packet arrived, then throw it away
-                if (rawPacket.SequenceNumber < ReceiveSequence[rawPacket.Channel])
-                {
-                    Debugger.Break(); // todo: test and remove later
-
-                    return null;
-                }
-
-                // AddOrUpdate the receive sequence for the channel
-                ReceiveSequence[rawPacket.Channel] = rawPacket.SequenceNumber;
+                Logger.WriteLog(LogType.Debug,
+                    $"Dropped out-of-order packet on channel {rawPacket.Channel} (seq {rawPacket.SequenceNumber}, last {ReceiveSequence[rawPacket.Channel]}) from {Socket.RemoteAddress}.");
+                return true;
             }
 
             // Some internal send timeout check, skip the packet
             if (rawPacket.Type == ClientMessageOpcode.None)
             {
                 if (rawPacket.Size != 4)
-                    Debugger.Break(); // If it's not send timeout check, let's investigate...
+                    Logger.WriteLog(LogType.Debug, $"Skipped an untyped packet of size {rawPacket.Size} (expected the 4-byte send-timeout check) from {Socket.RemoteAddress}.");
 
-                return null;
+                return true;
             }
-            
-            return rawPacket;
+
+            packet = rawPacket;
+
+            return true;
+        }
+
+        internal bool TryAcceptSequence(byte channel, uint sequence)
+        {
+            if (channel == 0)
+                return true;
+
+            if (_receivedSequence[channel] &&
+                unchecked((int)(sequence - ReceiveSequence[channel])) <= 0)
+                return false;
+
+            _receivedSequence[channel] = true;
+            ReceiveSequence[channel] = sequence;
+            return true;
         }
         #endregion
 
         public void SaveCharacter()
         {
             var player = Player;
-            if (player == null)
+
+            // Player is field-initialized to an empty Manifestation, so a null check alone
+            // never fires. A client that disconnects before entering the world (character
+            // selection, failed login, idle timeout) still has Id == 0, and looking that up
+            // throws EntityNotFoundException.
+            if (player == null || player.Id == 0)
             {
                 return;
             }
@@ -481,6 +826,20 @@ namespace Rasa.Game
             using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
             unitOfWork.Characters.SaveCharacter(player);
             unitOfWork.Complete();
+        }
+
+        internal bool SaveCharacterOnDisconnect()
+        {
+            try
+            {
+                SaveCharacter();
+                return true;
+            }
+            catch (Exception error) when (error is DbUpdateException || error is DbException)
+            {
+                Logger.WriteLog(LogType.Error, $"Unable to save character {Player?.Id} on disconnect: {error.Message}");
+                return false;
+            }
         }
 
         public void ReloadGameAccountEntry()

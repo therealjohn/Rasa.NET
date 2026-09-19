@@ -2,7 +2,8 @@
 {
     public class MissionObjectiveCounter
     {
-        public uint Count { get; set; }
-        public uint MaxCount { get; set; }
+        public uint CounterValue { get; set; }
+        public uint InitialValue { get; set; }
+        public uint TargetValue { get; set; }
     }
 }

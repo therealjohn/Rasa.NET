@@ -29,6 +29,8 @@ namespace Rasa.Managers
         public const long CreatureLocationUpdateTime = 1500;
         public Dictionary<uint, Creature> LoadedCreatures = new();
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
+        private readonly ManifestationManager _manifestationManager;
+        private readonly MissionManager _missionManager;
         public static CreatureManager Instance
         {
             get
@@ -48,8 +50,35 @@ namespace Rasa.Managers
         }
 
         private CreatureManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory)
+            : this(gameUnitOfWorkFactory, new ManifestationManager(gameUnitOfWorkFactory))
+        {
+        }
+
+        internal CreatureManager(
+            IGameUnitOfWorkFactory gameUnitOfWorkFactory,
+            ManifestationManager manifestationManager,
+            MissionManager missionManager = null)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
+            _manifestationManager = manifestationManager;
+            _missionManager = missionManager;
+        }
+
+        /// <summary>
+        /// What this creature is, for CreatureInfo. Flags belong to the entity class, so every
+        /// creature of a species carries the same list and a class with none - anything that is
+        /// not a creature, and the 128 creature classes no species could be matched to - sends
+        /// an empty one, which is what the client got for every creature before.
+        /// </summary>
+        public static List<int> CreatureFlagsOf(Creature creature)
+        {
+            if (creature == null)
+                return new List<int>();
+
+            return EntityClassManager.Instance.LoadedEntityClasses
+                .TryGetValue(creature.EntityClass, out var entityClass) && entityClass != null
+                ? entityClass.CreatureFlags.ConvertAll(f => (int)f)
+                : new List<int>();
         }
 
         // 1 creature to n client's
@@ -125,8 +154,8 @@ namespace Rasa.Managers
             Client client = null;
 
             // get client if it's killed by player
-            foreach (var cellSeed in killedBy.Cells)
-                foreach (var tempClient in mapChannel.MapCellInfo.Cells[cellSeed].ClientList)
+            foreach (var cell in CellManager.CellsIn(mapChannel, killedBy.Cells))
+                foreach (var tempClient in cell.ClientList)
                     if (tempClient.Player == killedBy)
                     {
                         client = tempClient;
@@ -141,46 +170,74 @@ namespace Rasa.Managers
                 experience += (uint)(new Random().Next() % (experienceRange * 2 + 1)) - experienceRange;
 
                 // todo: Depending on level difference reduce experience
-                ManifestationManager.Instance.GainExperience(client, experience);
+                _manifestationManager.GainExperience(client, experience);
+
+                // Adrenaline is earned here and nowhere else: it does not regenerate. See
+                // ManifestationManager.AdrenalinePerKillPercent.
+                _manifestationManager.GainAdrenaline(
+                    client,
+                    _manifestationManager.AdrenalineForKill(client));
             }
+
+            // The corpse is harvestable by whoever earned it, a fixed number of times. Set here
+            // rather than at the first harvest so that a creature that died without a player
+            // behind it - a minion's kill, a fall, a despawn - is left at zero and nobody can
+            // harvest it at all.
+            //
+            // Written on every kill and not only on a claimed one: a spawn pool puts the same
+            // Creature back on its feet, so a claim left over from a previous life would still be
+            // sitting there the next time it died to something that was not a player, and that
+            // player would be handed a corpse they did not earn.
+            creature.HarvestOwnerEntityId = client?.Player.EntityId ?? 0;
+            creature.HarvestAttemptsLeft = client != null ? Harvest.AttemptsPerCorpse : 0;
 
             // spawn loot
             if (killedBy != null && client != null)
+            {
                 LootDispenserManager.Instance.Loot(client, creature);
+                (_missionManager ?? MissionManager.Instance).RecordProgress(
+                    client,
+                    MissionProgressEvent.Creature(creature.DbId));
+            }
         }
 
         public Creature CreateCreature(uint dbId, SpawnPool spawnPool)
         {
             // check is creature in database
-            if (!LoadedCreatures.ContainsKey(dbId))
+            if (!LoadedCreatures.TryGetValue(dbId, out var creatureEntry) || creatureEntry == null)
             {
                 Logger.WriteLog(LogType.Error, $"Creature with dbId={dbId}, isn't in database");
+
+                MapErrorManager.Instance.Record(spawnPool?.MapContextId ?? MapErrorManager.ServerWide,
+                    $"Spawn pool {spawnPool?.DbId.ToString() ?? "?"} wants creature {dbId}, which is not in the database.");
+
                 return null;
             }
 
-            var isCreature = false;
-            // check if classId have creature Augmentation
-            foreach (var aug in EntityClassManager.Instance.LoadedEntityClasses[LoadedCreatures[dbId].EntityClass].Augmentations)
-                if (aug == AugmentationType.Creature)
-                {
-                    isCreature = true;
-                    break;
-                }
+            if (!EntityClassManager.Instance.LoadedEntityClasses.TryGetValue(creatureEntry.EntityClass, out var entityClass) ||
+                entityClass == null)
+            {
+                Logger.WriteLog(LogType.Error, $"Creature with dbId={dbId} references missing entity class {creatureEntry.EntityClass}");
+                return null;
+            }
 
-            if (!isCreature)
+            if (entityClass.Augmentations == null || !entityClass.Augmentations.Contains(AugmentationType.Creature))
             {
                 Logger.WriteLog(LogType.Error, $"Creature with dbId = {dbId}, don't have creature Augmentation");
+
+                MapErrorManager.Instance.Record(spawnPool?.MapContextId ?? MapErrorManager.ServerWide,
+                    $"Creature {dbId} (class {LoadedCreatures[dbId].EntityClass}) has no Creature augmentation, so it cannot be spawned.");
+
                 return null;
             }
 
             // create creature
-            var creatureEntry = LoadedCreatures[dbId];
             var creature = (Creature)creatureEntry.Clone();
 
             creature.SpawnPool = spawnPool;
 
             creature.State = CharacterState.Idle;
-            creature.Name = EntityClassManager.Instance.LoadedEntityClasses[creature.EntityClass].ClassName;
+            creature.Name = entityClass.ClassName;
 
             // set creature stats
             using var unitOfWork = _gameUnitOfWorkFactory.CreateWorld();
@@ -269,7 +326,7 @@ namespace Rasa.Managers
                 new WorldLocationDescriptorPacket(creature.Position, creature.Rotation),
                 new BodyAttributesPacket(creature.Scale, hue, 0, 0, hue2),
                 // Creature augmentation
-                new CreatureInfoPacket(creature.NameId, false, new List<int>()),    // ToDo add creature flags
+                new CreatureInfoPacket(creature.NameId, false, CreatureFlagsOf(creature)),
                 // Actor augmentation
                 new ActorInfoPacket(creature),
                 new AppearanceDataPacket(creature.AppearanceData),
@@ -426,7 +483,12 @@ namespace Rasa.Managers
                     }
                 }
                 else
+                {
                     Logger.WriteLog(LogType.Error, $"LoadNPCPackages: unknown creatureDbId = {package.Id}");
+
+                    MapErrorManager.Instance.Record(
+                        $"NPC package {package.PackageId} names creature {package.Id}, which is not in the database.");
+                }
             }
         }
 

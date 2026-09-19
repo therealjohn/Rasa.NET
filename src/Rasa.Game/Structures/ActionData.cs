@@ -1,4 +1,6 @@
-﻿namespace Rasa.Structures
+using System.Numerics;
+
+namespace Rasa.Structures
 {
     using Data;
 
@@ -9,11 +11,16 @@
         public uint ActionArgId { get; set; }
         public uint Args { get; set; }
         public ulong TargetId { get; set; }
+
+        /// <summary>Where a ground-targeted ability was aimed, when it had no target entity.</summary>
+        public Vector3? TargetLocation { get; set; }
+
         public int ItemId { get; set; }
         public long WaitTime { get; set; }
         public long PassedTime { get; set; }
 
         public bool IsInrerrupted = false;
+        public bool Completed { get; set; }
         public ulong SourceId { get; set; }
 
         public ActionData(Actor actor, ActionId actionId, uint actionArgId, long waitTime)

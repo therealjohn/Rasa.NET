@@ -35,8 +35,46 @@ namespace Rasa.Managers
             }
         }
 
+        /// <summary>
+        /// Furthest a missile may be aimed. Cells are 25.6 units and a client is only ever told
+        /// about the 5x5 cells around it, so nothing past ~64 units is even on its screen; this
+        /// is twice that, which no weapon reaches and no honest client asks for.
+        /// </summary>
+        private const float MaxTargetDistance = 128f;
+
         private MissileManager()
         {
+        }
+
+        /// <summary>
+        /// Entity ids are global, but cells are per map: CellCallMethod indexes this map's cell
+        /// table with the target's cell seeds, and a target on another map throws
+        /// KeyNotFoundException on the main loop. A client keeps its Target across a waypoint
+        /// or summon, so this is reachable by pressing fire before re-targeting.
+        /// </summary>
+        private static bool IsOnMap(MapChannel mapChannel, Actor actor)
+        {
+            return actor != null && actor.MapContextId == mapChannel.MapInfo.MapContextId;
+        }
+
+        /// <summary>
+        /// Marks an actor as being in a fight, if it is a player. Creatures have their own notion
+        /// of it in BehaviorManager and are not touched here.
+        ///
+        /// Looked up through the actor's own map rather than Server.Clients: damage is a hot path
+        /// and one map's client list is a great deal shorter than every client on the server.
+        /// </summary>
+        private static void EnterCombat(Actor actor)
+        {
+            if (!(actor is Manifestation player) || player.MapChannel == null)
+                return;
+
+            foreach (var client in player.MapChannel.ClientList)
+                if (client.Player == player)
+                {
+                    ManifestationManager.Instance.EnterCombat(client);
+                    return;
+                }
         }
 
         private void DoDamageToCreature(MapChannel mapChannel, Missile missile)
@@ -45,6 +83,10 @@ namespace Rasa.Managers
 
             if (creature.State == CharacterState.Dead)
                 return;
+
+            // Shooting something is being in a fight, not only being shot at - otherwise a player
+            // who opens fire and wins never enters combat at all.
+            EnterCombat(missile.Source);
 
             // decrease armor first
             var armorDecrease = Math.Min(missile.DamageA, creature.Attributes[Attributes.Armor].Current);
@@ -81,9 +123,13 @@ namespace Rasa.Managers
         private void DoDamageToPlayer(MapChannel mapChannel, Missile missile)
         {
             var actor = EntityManager.Instance.GetActor(missile.TargetEntityId);
-            
+
             if (actor.State == CharacterState.Dead)
                 return;
+
+            // Both ends: whoever was hit, and whoever hit them if that was a player too.
+            EnterCombat(actor);
+            EnterCombat(missile.Source);
 
             // decrease armor first
             var armorDecrease = Math.Min(missile.DamageA, actor.Attributes[Attributes.Armor].Current);
@@ -160,14 +206,43 @@ namespace Rasa.Managers
                 */
         }
 
+        /// <summary>
+        /// Lands the missiles whose flight time has run out, and only those.
+        ///
+        /// Every queued missile used to be triggered on the pass after it was launched, whatever
+        /// its trigger time said - the distance to the target was measured, written on the
+        /// missile and never read. It rarely showed: the world loop runs every 100 ms and the
+        /// longest shot in range flies for 64, so the tick a missile was due on was almost always
+        /// the tick it got. It is the second half that mattered: the queue was emptied after the
+        /// loop rather than as it was walked, so a missile that threw on the way in took the
+        /// emptying with it, left every queued missile where it was, and threw again on the next
+        /// pass - out of the map worker, which abandons the rest of that tick and every map after
+        /// it, for as long as the server ran. A missile comes off the queue before it is
+        /// triggered now, and a trigger that fails costs only itself.
+        /// </summary>
         public void DoWork(MapChannel mapChannel, long delta)
         {
-            // ToDo: add check for triggerMissile timer
-            foreach (var missile in mapChannel.QueuedMissiles)
-                MissileTrigger(mapChannel, missile);
+            for (var i = mapChannel.QueuedMissiles.Count - 1; i >= 0; i--)
+            {
+                var missile = mapChannel.QueuedMissiles[i];
 
-            // empty List
-            mapChannel.QueuedMissiles.Clear();
+                missile.TriggerTime -= delta;
+
+                if (missile.TriggerTime > 0)
+                    continue;
+
+                mapChannel.QueuedMissiles.RemoveAt(i);
+
+                try
+                {
+                    MissileTrigger(mapChannel, missile);
+                }
+                catch (Exception e)
+                {
+                    Logger.WriteLog(LogType.Error,
+                        $"Missile {missile.ActionId} from {missile.Source?.EntityId} at {missile.TargetEntityId} on map {mapChannel.MapInfo.MapContextId} threw and was dropped: {e}");
+                }
+            }
         }
 
         public void MissileLaunch(MapChannel mapChannel, ActionData action, int damage)
@@ -212,10 +287,23 @@ namespace Rasa.Managers
                         return;
                 };
 
-                if (targetActor.State == CharacterState.Dead)
+                if (targetActor == null || targetActor.State == CharacterState.Dead)
                     return; // actor is dead, cannot be shot at
 
+                if (!IsOnMap(mapChannel, targetActor))
+                {
+                    Logger.WriteLog(LogType.Debug, $"MissileLaunch: {action.Actor.EntityId} aimed at {action.TargetId}, which is on map {targetActor.MapContextId}, not {mapChannel.MapInfo.MapContextId}");
+                    return;
+                }
+
                 var distance = Vector3.Distance(targetActor.Position, action.Actor.Position);
+
+                if (distance > MaxTargetDistance)
+                {
+                    Logger.WriteLog(LogType.Debug, $"MissileLaunch: {action.Actor.EntityId} aimed at {action.TargetId} from {distance:F0} units away");
+                    return;
+                }
+
                 triggerTime = (int)(distance * 0.5f);
             }
             else
@@ -225,30 +313,18 @@ namespace Rasa.Managers
                 triggerTime = 0;
             }
 
-            // is the missile/action an ability that need needs to use Recv_PerformAbility?
-            var isAbility = false;
-            if (action.ActionId == ActionId.AaRecruitLightning) // recruit lighting ability
-                isAbility = true;
-            
+            // Weapons only: abilities resolve in AbilityManager from their own tables, and the
+            // lightning special case that used to fire from here on a hand-typed damage roll
+            // went with them.
             missile.TargetActor = targetActor;
             missile.TriggerTime = triggerTime;
             missile.ActionId = action.ActionId;
             missile.ActionArgId = action.ActionArgId;
-            missile.IsAbility = isAbility;
+            missile.IsAbility = false;
 
-            // send windup and append to queue (only for non-abilities)
-            if (isAbility == false)
-            {
-                CellManager.Instance.CellCallMethod(mapChannel, action.Actor, new PerformWindupPacket(PerformType.ThreeArgs, missile.ActionId, missile.ActionArgId, missile.TargetEntityId));
-                
-                // add to list
-                mapChannel.QueuedMissiles.Add(missile);
-            }
-            else
-            {
-                // abilities get applied directly without delay
-                MissileTrigger(mapChannel, missile);
-            }
+            CellManager.Instance.CellCallMethod(mapChannel, action.Actor, new PerformWindupPacket(PerformType.ThreeArgs, missile.ActionId, missile.ActionArgId, missile.TargetEntityId));
+
+            mapChannel.QueuedMissiles.Add(missile);
         }
 
         public void MissileTrigger(MapChannel mapChannel, Missile missile)
@@ -263,6 +339,11 @@ namespace Rasa.Managers
 
             missile.Args.HitEntities.Add(missile.TargetEntityId);
             missile.Args.HitData.Add(hitData);     // ToDo: add suport for multiple targets
+
+            // Checked again here: the missile was queued a tick ago, and the target can have
+            // left the map (or the world) since.
+            if (missile.TargetEntityId != 0 && !IsOnMap(mapChannel, missile.TargetActor))
+                targetType = 0;
 
             switch (targetType)
             {
@@ -283,12 +364,13 @@ namespace Rasa.Managers
             switch (missile.ActionId)
             {
                 case ActionId.WeaponAttack:
+                // Melee (174) is resolved exactly like a ranged attack: the original server's
+                // missile_ActionRecoveryHandler_WeaponMelee forwarded to the WeaponAttack
+                // handler "until there is better handling for melee weapons", and the recovery
+                // packet is the same shape. It fell through to the default here, which did the
+                // right thing but logged every swing as an unsupported action.
+                case ActionId.WeaponMelee:
                     CellManager.Instance.CellCallMethod(mapChannel, missile.Source, new WeaponAttackRecovery(missile));
-                    break;
-                //else if (missile->actionId == 174)
-                //    missile_ActionRecoveryHandler_WeaponMelee(mapChannel, missile);
-                case ActionId.AaRecruitLightning:
-                    CellManager.Instance.CellCallMethod(mapChannel, missile.Source, new LightningRecovery(missile));
                     break;
                 //else if (missile->actionId == 203)
                 //    missile_ActionHandler_CR_FOREAN_LIGHTNING(mapChannel, missile);

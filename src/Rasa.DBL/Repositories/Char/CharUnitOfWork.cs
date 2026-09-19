@@ -2,10 +2,12 @@
 
 namespace Rasa.Repositories.Char
 {
+    using Auction;
     using Character;
     using CharacterAppearance;
     using Clan;
     using ClanInventory;
+    using ClanLockboxLog;
     using ClanMember;
     using Context.Char;
     using GameAccount;
@@ -15,6 +17,7 @@ namespace Rasa.Repositories.Char
     using CharacterLockbox;
     using CharacterLogos;
     using CharacterMission;
+    using CharacterMissionProgress;
     using CharacterOption;
     using CharacterSkills;
     using CharacterTeleporter;
@@ -22,6 +25,7 @@ namespace Rasa.Repositories.Char
     using Friend;
     using Ignored;
     using Items;
+    using Petition;
     using UserOption;
     using UnitOfWork;
 
@@ -38,16 +42,20 @@ namespace Rasa.Repositories.Char
             ICharacterLockboxRepository characterLockboxes,
             ICharacterLogosRepository characterLogoses,
             ICharacterMissionRepository characterMissions,
+            ICharacterMissionProgressRepository characterMissionProgress,
             ICharacterOptionRepository characterOptions,
             ICharacterSkillsRepository characterSkills,
             ICharacterTeleporterRepository characterTeleporters,
             ICharacterTitleRepository characterTitles,
+            IAuctionRepository auctions,
             IClanRepository clans,
             IClanInventoryRepository clanInventories,
             IClanMemberRepository clanMembers,
+            IClanLockboxLogRepository clanLockboxLogs,
             IFriendRepository friends,
             IIgnoredRepository ignoreds,
             IItemRepository items,
+            IPetitionRepository petitions,
             IUserOptionRepository userOptions
             ) : base(dbContext)
         {
@@ -60,16 +68,20 @@ namespace Rasa.Repositories.Char
             CharacterLockboxes = characterLockboxes;
             CharacterLogoses = characterLogoses;
             CharacterMissions = characterMissions;
+            CharacterMissionProgress = characterMissionProgress;
             CharacterOptions = characterOptions;
             CharacterSkills = characterSkills;
             CharacterTeleporters = characterTeleporters;
             CharacterTitles = characterTitles;
             Clans = clans;
+            Auctions = auctions;
             ClanInventories = clanInventories;
             ClanMembers = clanMembers;
+            ClanLockboxLogs = clanLockboxLogs;
             Friends = friends;
             Ignoreds = ignoreds;
             Items = items;
+            Petitions = petitions;
             UserOptions = userOptions;
         }
 
@@ -81,17 +93,21 @@ namespace Rasa.Repositories.Char
         public ICharacterLockboxRepository CharacterLockboxes { get; }
         public ICharacterLogosRepository CharacterLogoses { get; }
         public ICharacterMissionRepository CharacterMissions { get; }
+        public ICharacterMissionProgressRepository CharacterMissionProgress { get; }
         public ICharacterOptionRepository CharacterOptions { get; }
         public ICharacterSkillsRepository CharacterSkills { get; }
         public ICharacterTeleporterRepository CharacterTeleporters { get; }
         public ICharacterTitleRepository CharacterTitles { get; }
+        public IAuctionRepository Auctions { get; }
         public IClanRepository Clans { get; }
         public IClanInventoryRepository ClanInventories { get; }
         public IClanMemberRepository ClanMembers { get; }
+        public IClanLockboxLogRepository ClanLockboxLogs { get; }
         public IFriendRepository Friends { get; }
         public IGameAccountRepository GameAccounts { get; }
         public IIgnoredRepository Ignoreds { get; }
         public IItemRepository Items { get; }
+        public IPetitionRepository Petitions { get; }
         public IUserOptionRepository UserOptions { get; }
     }
 }
