@@ -626,6 +626,16 @@ namespace Rasa.Test.Missions
                         MissionProgressEvent.ItemConsumed(subject, 1),
                     MissionProgressEventKind.InteractionUsed =>
                         MissionProgressEvent.Interaction(subject),
+                    MissionProgressEventKind.AreaEntered =>
+                        MissionProgressEvent.Area(subject, subject),
+                    MissionProgressEventKind.ItemEquipped =>
+                        MissionProgressEvent.ItemEquipped(subject, subject),
+                    MissionProgressEventKind.AbilityHit =>
+                        MissionProgressEvent.AbilityHit(subject, subject),
+                    MissionProgressEventKind.ScenarioEvent =>
+                        MissionProgressEvent.Scenario(subject, subject, subject),
+                    MissionProgressEventKind.DeadlineElapsed =>
+                        MissionProgressEvent.Deadline(subject, subject),
                     _ => throw new AssertFailedException()
                 };
                 Assert.IsFalse(context.Manager.RecordProgress(context.Client, progress),

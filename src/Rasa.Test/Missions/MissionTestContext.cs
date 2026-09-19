@@ -736,6 +736,11 @@ namespace Rasa.Test.Missions
 
         internal Client CreateCompetingClient()
         {
+            return CreateCompetingClient(Manager);
+        }
+
+        internal Client CreateCompetingClient(MissionManager manager)
+        {
             foreach (var cell in Map.MapCellInfo.Cells.Values)
                 foreach (var npc in _npcs)
                     cell.CreatureList.Remove(npc);
@@ -761,7 +766,7 @@ namespace Rasa.Test.Missions
                 }
             }
             using var unit = CreateChar();
-            Manager.Hydrate(
+            (manager ?? Manager).Hydrate(
                 client.Player,
                 unit.CharacterMissions.Get(client.Player.Id),
                 unit.CharacterMissionProgress.Get(client.Player.Id));

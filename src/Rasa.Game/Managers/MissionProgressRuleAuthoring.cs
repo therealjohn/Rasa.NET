@@ -108,6 +108,53 @@ namespace Rasa.Managers
                 return true;
             }
 
+            if (kind == MissionProgressEventKind.ItemEquipped)
+            {
+                if (hasCounterId || hasInitialValue || hasTargetValue)
+                {
+                    diagnostic = "item equipped progress rules support subject_id only, with optional source_spawn_resolved=true to match item_template_id.";
+                    return false;
+                }
+
+                rule = trigger.SourceSpawnResolved == true
+                    ? MissionProgressRule.CompleteOnItemEquippedTemplate(
+                        trigger.SubjectId.Value)
+                    : MissionProgressRule.CompleteOnItemEquippedClass(
+                        trigger.SubjectId.Value);
+                return true;
+            }
+
+            if (kind == MissionProgressEventKind.AbilityHit)
+            {
+                if (!hasCounterId || trigger.CounterId.Value == 0 ||
+                    hasInitialValue || hasTargetValue || hasSourceSpawnResolved)
+                {
+                    diagnostic = "ability hit progress rules must declare subject_id as action_id and counter_id as target creature_id, without counter ranges or source_spawn_resolved.";
+                    return false;
+                }
+
+                rule = MissionProgressRule.CompleteOnAbilityHit(
+                    trigger.SubjectId.Value,
+                    trigger.CounterId.Value);
+                return true;
+            }
+
+            if (kind == MissionProgressEventKind.ScenarioEvent)
+            {
+                if (!hasCounterId || trigger.CounterId.Value == 0 ||
+                    hasInitialValue || hasTargetValue || hasSourceSpawnResolved)
+                {
+                    diagnostic = "scenario event progress rules must declare subject_id as step_id and counter_id as scenario_id, without counter ranges or source_spawn_resolved.";
+                    return false;
+                }
+
+                rule = MissionProgressRule.CompleteOnScenarioEvent(
+                    trigger.MissionId,
+                    trigger.CounterId.Value,
+                    trigger.SubjectId.Value);
+                return true;
+            }
+
             if (hasCounterId || hasInitialValue || hasTargetValue)
             {
                 if (!hasCounterId || !hasInitialValue || !hasTargetValue || hasSourceSpawnResolved)
@@ -143,9 +190,11 @@ namespace Rasa.Managers
                 return true;
             }
 
-            if (hasSourceSpawnResolved && kind != MissionProgressEventKind.CreatureKilled)
+            if (hasSourceSpawnResolved &&
+                kind != MissionProgressEventKind.CreatureKilled &&
+                kind != MissionProgressEventKind.ItemEquipped)
             {
-                diagnostic = "source_spawn_resolved is only supported for creature kill progress rules.";
+                diagnostic = "source_spawn_resolved is only supported for creature kill rules or item equipped template matching.";
                 return false;
             }
 

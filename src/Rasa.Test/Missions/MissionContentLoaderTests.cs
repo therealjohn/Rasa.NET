@@ -88,6 +88,39 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
+        public void LoaderBuildsAreaAndDeadlineRulesFromSupportedTriggerKinds()
+        {
+            var areaFixture = CreatePureProgressFixture();
+            areaFixture.Triggers[0].Kind = Rasa.Structures.World.MissionTriggerKind.AreaEntered;
+            areaFixture.Triggers[0].EventKind = null;
+            areaFixture.Triggers[0].SubjectId = null;
+            areaFixture.Triggers[0].AreaId = 30;
+
+            var areaSnapshot = new MissionContentLoader().Load(areaFixture.CreateRepository());
+            var areaRule = areaSnapshot.Definitions[321].Mission.Objectives[10].ProgressRule;
+
+            Assert.IsNotNull(areaRule);
+            Assert.AreEqual(Rasa.Data.MissionProgressEventKind.AreaEntered, areaRule.Kind);
+            Assert.AreEqual((uint)321, areaRule.ScopeId);
+            CollectionAssert.AreEqual(new uint[] { 30 }, areaRule.Subjects.ToArray());
+
+            var timerFixture = CreatePureProgressFixture();
+            timerFixture.Triggers[0].Kind = Rasa.Structures.World.MissionTriggerKind.TimerElapsed;
+            timerFixture.Triggers[0].EventKind = null;
+            timerFixture.Triggers[0].SubjectId = null;
+            timerFixture.Triggers[0].DurationSeconds = 5;
+
+            var timerSnapshot = new MissionContentLoader().Load(timerFixture.CreateRepository());
+            var timerRule = timerSnapshot.Definitions[321].Mission.Objectives[10].ProgressRule;
+
+            Assert.IsNotNull(timerRule);
+            Assert.AreEqual(Rasa.Data.MissionProgressEventKind.DeadlineElapsed, timerRule.Kind);
+            Assert.AreEqual((uint)321, timerRule.ScopeId);
+            Assert.AreEqual((uint)10, timerRule.Subjects.Single());
+            Assert.AreEqual((uint)5, timerRule.DurationSeconds);
+        }
+
+        [TestMethod]
         public void LoaderFailsClosedInsteadOfChoosingTheFirstExecutableProgressPath()
         {
             var fixture = CreatePureProgressFixture();

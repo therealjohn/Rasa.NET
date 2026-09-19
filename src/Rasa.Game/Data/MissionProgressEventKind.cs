@@ -8,6 +8,11 @@ namespace Rasa.Data
         MissionCompleted,
         ItemAcquired,
         ItemConsumed,
-        InteractionUsed
+        InteractionUsed,
+        AreaEntered,
+        ItemEquipped,
+        AbilityHit,
+        ScenarioEvent,
+        DeadlineElapsed
     }
 }

@@ -25,6 +25,9 @@ namespace Rasa.Structures
         public uint? InitialValue { get; }
         public uint? TargetValue { get; }
         public bool? SourceSpawnResolved { get; }
+        public uint? ScopeId { get; }
+        public uint? DetailId { get; }
+        public uint? DurationSeconds { get; }
         internal MissionProgressRuleType RuleType { get; }
 
         private MissionProgressRule(
@@ -34,7 +37,10 @@ namespace Rasa.Structures
             uint? counterId = null,
             uint? initialValue = null,
             uint? targetValue = null,
-            bool? sourceSpawnResolved = null)
+            bool? sourceSpawnResolved = null,
+            uint? scopeId = null,
+            uint? detailId = null,
+            uint? durationSeconds = null)
         {
             if (!Enum.IsDefined(typeof(MissionProgressEventKind), kind))
                 throw new ArgumentOutOfRangeException(nameof(kind));
@@ -49,6 +55,9 @@ namespace Rasa.Structures
             InitialValue = initialValue;
             TargetValue = targetValue;
             SourceSpawnResolved = sourceSpawnResolved;
+            ScopeId = scopeId;
+            DetailId = detailId;
+            DurationSeconds = durationSeconds;
         }
 
         public static MissionProgressRule CompleteOnExactSubject(
@@ -71,6 +80,72 @@ namespace Rasa.Structures
                 kind,
                 new[] { subjectId },
                 sourceSpawnResolved: sourceSpawnResolved);
+
+        internal static MissionProgressRule CompleteOnScopedSubject(
+            MissionProgressEventKind kind,
+            uint subjectId,
+            uint? scopeId = null,
+            uint? detailId = null,
+            bool? sourceSpawnResolved = null,
+            uint? durationSeconds = null) =>
+            new(
+                MissionProgressRuleType.CompleteExact,
+                kind,
+                new[] { subjectId },
+                sourceSpawnResolved: sourceSpawnResolved,
+                scopeId: scopeId,
+                detailId: detailId,
+                durationSeconds: durationSeconds);
+
+        internal static MissionProgressRule CompleteOnAreaEntered(
+            uint missionId,
+            uint areaId) =>
+            CompleteOnScopedSubject(
+                MissionProgressEventKind.AreaEntered,
+                areaId,
+                scopeId: missionId);
+
+        internal static MissionProgressRule CompleteOnItemEquippedClass(
+            uint itemClassId) =>
+            CompleteOnScopedSubject(
+                MissionProgressEventKind.ItemEquipped,
+                itemClassId,
+                sourceSpawnResolved: false);
+
+        internal static MissionProgressRule CompleteOnItemEquippedTemplate(
+            uint itemTemplateId) =>
+            CompleteOnScopedSubject(
+                MissionProgressEventKind.ItemEquipped,
+                itemTemplateId,
+                sourceSpawnResolved: true);
+
+        internal static MissionProgressRule CompleteOnAbilityHit(
+            uint actionId,
+            uint targetCreatureId) =>
+            CompleteOnScopedSubject(
+                MissionProgressEventKind.AbilityHit,
+                actionId,
+                detailId: targetCreatureId);
+
+        internal static MissionProgressRule CompleteOnScenarioEvent(
+            uint missionId,
+            uint scenarioId,
+            uint stepId) =>
+            CompleteOnScopedSubject(
+                MissionProgressEventKind.ScenarioEvent,
+                stepId,
+                scopeId: missionId,
+                detailId: scenarioId);
+
+        internal static MissionProgressRule CompleteOnDeadlineElapsed(
+            uint missionId,
+            uint objectiveId,
+            uint durationSeconds) =>
+            CompleteOnScopedSubject(
+                MissionProgressEventKind.DeadlineElapsed,
+                objectiveId,
+                scopeId: missionId,
+                durationSeconds: durationSeconds);
 
         public static MissionProgressRule CompleteWhenAllDistinctSubjectsObserved(
             MissionProgressEventKind kind,
@@ -119,8 +194,22 @@ namespace Rasa.Structures
                 targetValue: targetValue);
         }
 
-        internal bool Matches(MissionProgressEvent progress) =>
-            progress.Kind == Kind && _subjectSet.Contains(progress.SubjectId);
+        internal bool Matches(MissionProgressEvent progress)
+        {
+            if (progress.Kind != Kind)
+                return false;
+            if (ScopeId.HasValue && progress.ScopeId != ScopeId)
+                return false;
+            if (DetailId.HasValue && progress.DetailId != DetailId)
+                return false;
+
+            if (Kind == MissionProgressEventKind.ItemEquipped &&
+                SourceSpawnResolved == true)
+                return progress.DetailId.HasValue &&
+                    _subjectSet.Contains(progress.DetailId.Value);
+
+            return _subjectSet.Contains(progress.SubjectId);
+        }
 
         internal bool IsCompatible(MissionObjectiveDefinition objective)
         {

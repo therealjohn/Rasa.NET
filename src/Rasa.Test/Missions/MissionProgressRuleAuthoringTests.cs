@@ -163,6 +163,116 @@ namespace Rasa.Test.Missions
             Assert.IsNull(diagnostic);
         }
 
+        [DataTestMethod]
+        [DataRow(false, 7000U)]
+        [DataRow(true, 2800U)]
+        public void ItemEquippedRuleAcceptsClassOrTemplateSelection(
+            bool matchTemplateId,
+            uint subjectId)
+        {
+            var success = MissionProgressRuleAuthoring.TryBuild(
+                new[]
+                {
+                    new MissionTriggerDefinition(new MissionTriggerEntry
+                    {
+                        MissionId = 321,
+                        ContentRevision = "deployment_11",
+                        ObjectiveId = 10,
+                        TransitionId = 20,
+                        TriggerId = 1,
+                        Requirement = MissionContentRequirement.Required,
+                        Kind = MissionTriggerKind.ProgressEvent,
+                        Sequence = 1,
+                        EventKind = (byte)MissionProgressEventKind.ItemEquipped,
+                        SubjectId = subjectId,
+                        SourceSpawnResolved = matchTemplateId ? true : null,
+                        Comment = "Equip the configured item"
+                    })
+                },
+                out var rule,
+                out var counters,
+                out var itemCounters,
+                out var diagnostic);
+
+            Assert.IsTrue(success);
+            Assert.IsNotNull(rule);
+            Assert.AreEqual(0, counters.Count);
+            Assert.AreEqual(0, itemCounters.Count);
+            Assert.AreEqual(matchTemplateId, rule.SourceSpawnResolved == true);
+            Assert.IsNull(diagnostic);
+        }
+
+        [TestMethod]
+        public void AbilityHitRuleRequiresTargetCreatureId()
+        {
+            var success = MissionProgressRuleAuthoring.TryBuild(
+                new[]
+                {
+                    new MissionTriggerDefinition(new MissionTriggerEntry
+                    {
+                        MissionId = 321,
+                        ContentRevision = "deployment_11",
+                        ObjectiveId = 10,
+                        TransitionId = 20,
+                        TriggerId = 1,
+                        Requirement = MissionContentRequirement.Required,
+                        Kind = MissionTriggerKind.ProgressEvent,
+                        Sequence = 1,
+                        EventKind = (byte)MissionProgressEventKind.AbilityHit,
+                        SubjectId = 194,
+                        Comment = "Missing target creature"
+                    })
+                },
+                out var rule,
+                out var counters,
+                out var itemCounters,
+                out var diagnostic);
+
+            Assert.IsFalse(success);
+            Assert.IsNull(rule);
+            Assert.AreEqual(0, counters.Count);
+            Assert.AreEqual(0, itemCounters.Count);
+            Assert.AreEqual(
+                "ability hit progress rules must declare subject_id as action_id and counter_id as target creature_id, without counter ranges or source_spawn_resolved.",
+                diagnostic);
+        }
+
+        [TestMethod]
+        public void ScenarioEventRuleCapturesMissionScenarioAndStep()
+        {
+            var success = MissionProgressRuleAuthoring.TryBuild(
+                new[]
+                {
+                    new MissionTriggerDefinition(new MissionTriggerEntry
+                    {
+                        MissionId = 321,
+                        ContentRevision = "deployment_11",
+                        ObjectiveId = 10,
+                        TransitionId = 20,
+                        TriggerId = 1,
+                        Requirement = MissionContentRequirement.Required,
+                        Kind = MissionTriggerKind.ProgressEvent,
+                        Sequence = 1,
+                        EventKind = (byte)MissionProgressEventKind.ScenarioEvent,
+                        SubjectId = 1,
+                        CounterId = 60,
+                        Comment = "Scenario 60 step 1"
+                    })
+                },
+                out var rule,
+                out var counters,
+                out var itemCounters,
+                out var diagnostic);
+
+            Assert.IsTrue(success);
+            Assert.IsNotNull(rule);
+            Assert.AreEqual((uint)321, rule.ScopeId);
+            Assert.AreEqual((uint)60, rule.DetailId);
+            Assert.AreEqual(0, counters.Count);
+            Assert.AreEqual(0, itemCounters.Count);
+            Assert.IsNull(diagnostic);
+        }
+
         private static MissionTriggerDefinition CreateCounterTrigger(
             uint initialValue,
             uint targetValue,

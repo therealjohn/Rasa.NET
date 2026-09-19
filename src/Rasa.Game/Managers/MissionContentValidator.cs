@@ -15,7 +15,9 @@ namespace Rasa.Managers
             new()
             {
                 MissionTriggerKind.Conversation,
-                MissionTriggerKind.ProgressEvent
+                MissionTriggerKind.ProgressEvent,
+                MissionTriggerKind.AreaEntered,
+                MissionTriggerKind.TimerElapsed
             };
 
         private static readonly HashSet<MissionActionKind> SupportedActionKinds =
@@ -141,6 +143,7 @@ namespace Rasa.Managers
             ValidateAreas(definition, references, diagnostics);
             ValidateSpawnGroups(definition, references, diagnostics);
             ValidateScenarios(definition, diagnostics);
+            ValidateProgressReferences(definition, references, diagnostics);
         }
 
         private static void ValidateTransitions(
@@ -660,6 +663,107 @@ namespace Rasa.Managers
                         "reward selection_count must match the presence of selectable reward items.",
                         definition.MissionId,
                         definition.ContentRevision));
+                }
+            }
+        }
+
+        private static void ValidateProgressReferences(
+            MissionContentDefinition definition,
+            MissionContentReferenceSet references,
+            ICollection<MissionValidationDiagnostic> diagnostics)
+        {
+            foreach (var objective in definition.Objectives.Values.OrderBy(objective => objective.ObjectiveId))
+            {
+                var rule = objective.ProgressRule;
+                if (rule == null)
+                    continue;
+
+                foreach (var subjectId in rule.Subjects.OrderBy(value => value))
+                {
+                    switch (rule.Kind)
+                    {
+                        case MissionProgressEventKind.CreatureKilled:
+                            if (!references.CreatureClasses.ContainsKey(subjectId))
+                            {
+                                diagnostics.Add(new MissionValidationDiagnostic(
+                                    "missing-creature",
+                                    $"creature kill progress rule references missing creature {subjectId}.",
+                                    definition.MissionId,
+                                    definition.ContentRevision,
+                                    objective.ObjectiveId));
+                            }
+
+                            break;
+
+                        case MissionProgressEventKind.ItemAcquired:
+                        case MissionProgressEventKind.ItemConsumed:
+                        case MissionProgressEventKind.InteractionUsed:
+                            if (!references.EntityClassIds.Contains(subjectId))
+                            {
+                                diagnostics.Add(new MissionValidationDiagnostic(
+                                    "missing-entity-class",
+                                    $"progress rule references missing entity class {subjectId}.",
+                                    definition.MissionId,
+                                    definition.ContentRevision,
+                                    objective.ObjectiveId));
+                            }
+
+                            break;
+
+                        case MissionProgressEventKind.ItemEquipped:
+                            if (rule.SourceSpawnResolved == true)
+                            {
+                                if (!references.ItemTemplateClasses.ContainsKey(subjectId))
+                                {
+                                    diagnostics.Add(new MissionValidationDiagnostic(
+                                        "missing-item-template",
+                                        $"item equipped progress rule references missing item template {subjectId}.",
+                                        definition.MissionId,
+                                        definition.ContentRevision,
+                                        objective.ObjectiveId));
+                                }
+                            }
+                            else if (!references.EntityClassIds.Contains(subjectId))
+                            {
+                                diagnostics.Add(new MissionValidationDiagnostic(
+                                    "missing-entity-class",
+                                    $"item equipped progress rule references missing entity class {subjectId}.",
+                                    definition.MissionId,
+                                    definition.ContentRevision,
+                                    objective.ObjectiveId));
+                            }
+
+                            break;
+
+                        case MissionProgressEventKind.AbilityHit:
+                            if (!references.CreatureClasses.ContainsKey(rule.DetailId.GetValueOrDefault()))
+                            {
+                                diagnostics.Add(new MissionValidationDiagnostic(
+                                    "missing-creature",
+                                    $"ability hit progress rule references missing creature {rule.DetailId?.ToString() ?? "null"}.",
+                                    definition.MissionId,
+                                    definition.ContentRevision,
+                                    objective.ObjectiveId));
+                            }
+
+                            break;
+
+                        case MissionProgressEventKind.ScenarioEvent:
+                            if (!definition.Scenarios.TryGetValue(
+                                    rule.DetailId.GetValueOrDefault(),
+                                    out var scenario) ||
+                                scenario.Steps.All(step => step.StepId != subjectId))
+                            {
+                                diagnostics.Add(new MissionValidationDiagnostic(
+                                    "missing-scenario-step",
+                                    $"scenario event progress rule references missing scenario {rule.DetailId?.ToString() ?? "null"} step {subjectId}.",
+                                    definition.MissionId,
+                                    definition.ContentRevision,
+                                    objective.ObjectiveId));
+                            }
+
+                            break;
+                    }
                 }
             }
         }

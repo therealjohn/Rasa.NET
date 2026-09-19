@@ -274,9 +274,12 @@ namespace Rasa.Managers
         private readonly IReadOnlyDictionary<uint, Mission> _loadedMissionsView;
         private readonly Dictionary<uint, MissionRewardDefinition> _rewardDefinitions;
         private readonly Dictionary<uint, IReadOnlyList<MissionPrerequisiteDefinition>> _prerequisitesByMission;
+        private readonly Dictionary<uint, IReadOnlyDictionary<uint, MissionAreaDefinition>> _areasByMission;
+        private readonly Dictionary<uint, IReadOnlyDictionary<uint, MissionScenarioDefinition>> _scenariosByMission;
         private readonly ManifestationManager _manifestationManager;
         private readonly Action<Item> _beforeRewardItemPublication;
         private readonly Action<PythonPacket> _beforeMissionPacketPublication;
+        private readonly MissionDeadlineService _deadlineService;
 
         public IReadOnlyDictionary<uint, Mission> LoadedMissions => _loadedMissionsView;
         internal MissionValidationReport LatestValidationReport { get; private set; } =
@@ -308,12 +311,14 @@ namespace Rasa.Managers
 
         public MissionManager(
             IGameUnitOfWorkFactory gameUnitOfWorkFactory,
-            IReadOnlyDictionary<uint, Mission> definitions)
+            IReadOnlyDictionary<uint, Mission> definitions,
+            MissionDeadlineService deadlineService = null)
             : this(
                 gameUnitOfWorkFactory,
                 definitions,
                 new Dictionary<uint, MissionRewardDefinition>(),
-                new ManifestationManager(gameUnitOfWorkFactory))
+                new ManifestationManager(gameUnitOfWorkFactory),
+                deadlineService: deadlineService)
         {
         }
 
@@ -323,7 +328,8 @@ namespace Rasa.Managers
             IReadOnlyDictionary<uint, MissionRewardDefinition> rewardDefinitions,
             ManifestationManager manifestationManager,
             Action<Item> beforeRewardItemPublication = null,
-            Action<PythonPacket> beforeMissionPacketPublication = null)
+            Action<PythonPacket> beforeMissionPacketPublication = null,
+            MissionDeadlineService deadlineService = null)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
             _loadedMissions = definitions.ToDictionary(entry => entry.Key, entry => entry.Value);
@@ -331,9 +337,14 @@ namespace Rasa.Managers
             _rewardDefinitions = new Dictionary<uint, MissionRewardDefinition>(
                 rewardDefinitions ?? new Dictionary<uint, MissionRewardDefinition>());
             _prerequisitesByMission = new Dictionary<uint, IReadOnlyList<MissionPrerequisiteDefinition>>();
+            _areasByMission = new Dictionary<uint, IReadOnlyDictionary<uint, MissionAreaDefinition>>();
+            _scenariosByMission = new Dictionary<uint, IReadOnlyDictionary<uint, MissionScenarioDefinition>>();
             _manifestationManager = manifestationManager;
             _beforeRewardItemPublication = beforeRewardItemPublication;
             _beforeMissionPacketPublication = beforeMissionPacketPublication;
+            _deadlineService = deadlineService ?? new MissionDeadlineService(
+                () => _gameUnitOfWorkFactory,
+                () => this);
         }
 
         internal MissionValidationReport LoadMissions()
@@ -342,6 +353,8 @@ namespace Rasa.Managers
             _loadedMissions.Clear();
             _rewardDefinitions.Clear();
             _prerequisitesByMission.Clear();
+            _areasByMission.Clear();
+            _scenariosByMission.Clear();
 
             if (unitOfWork.MissionContent != null)
             {
@@ -352,7 +365,11 @@ namespace Rasa.Managers
                 foreach (var reward in MissionDefinitionCatalog.CreateRewardDefinitions(snapshot, report))
                     _rewardDefinitions[reward.Key] = reward.Value;
                 foreach (var definition in snapshot.Definitions.Values)
+                {
                     _prerequisitesByMission[definition.MissionId] = definition.Prerequisites;
+                    _areasByMission[definition.MissionId] = definition.Areas;
+                    _scenariosByMission[definition.MissionId] = definition.Scenarios;
+                }
                 LatestValidationReport = report;
                 return report;
             }
@@ -510,6 +527,115 @@ namespace Rasa.Managers
                 "mission status snapshot");
         }
 
+        internal bool TryGetAreaDefinition(
+            uint missionId,
+            uint areaId,
+            out MissionAreaDefinition area)
+        {
+            if (_areasByMission.TryGetValue(missionId, out var areas) &&
+                areas.TryGetValue(areaId, out area))
+                return true;
+
+            area = null;
+            return false;
+        }
+
+        private bool TryGetScenarioStepDefinition(
+            uint missionId,
+            uint scenarioId,
+            uint stepId,
+            out MissionScenarioStepDefinition step)
+        {
+            step = null;
+            if (!_scenariosByMission.TryGetValue(missionId, out var scenarios) ||
+                !scenarios.TryGetValue(scenarioId, out var scenario))
+                return false;
+
+            step = scenario.Steps.SingleOrDefault(candidate => candidate.StepId == stepId);
+            return step != null;
+        }
+
+        internal bool TryRecordScenarioEvent(
+            Client client,
+            uint missionId,
+            uint scenarioId,
+            uint stepId)
+        {
+            if (client == null)
+                return false;
+
+            lock (client.SyncRoot)
+            {
+                if (!IsActivePlayer(client) ||
+                    !TryGetOperationalMission(missionId, out _) ||
+                    !client.Player.Missions.TryGetValue(missionId, out var runtimeMission) ||
+                    runtimeMission.State != MissionState.Active ||
+                    !TryGetScenarioStepDefinition(
+                        missionId,
+                        scenarioId,
+                        stepId,
+                        out _))
+                    return false;
+
+                var progressPlan = MissionProgressPublicationPlan.Empty;
+                var committed = false;
+                try
+                {
+                    using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+                    unitOfWork.ExecuteTransaction(() =>
+                    {
+                        var durableMission =
+                            unitOfWork.CharacterMissions.GetByCharacterAndMission(
+                                client.Player.Id,
+                                missionId);
+                        if (durableMission?.MissionState != (uint)MissionState.Active)
+                            throw new GameplayRejectionException(
+                                "Durable mission is not active.");
+
+                        var stepKey = CreateScenarioStepKey(scenarioId, stepId);
+                        if (unitOfWork.CharacterMissionScenario.HasStep(
+                                client.Player.Id,
+                                missionId,
+                                stepKey))
+                            return;
+
+                        unitOfWork.CharacterMissionScenario.Add(
+                            new CharacterMissionScenarioStepEntry(
+                                client.Player.Id,
+                                missionId,
+                                stepKey));
+                        progressPlan = PlanProgress(
+                            client,
+                            new[]
+                            {
+                                MissionProgressEvent.Scenario(
+                                    missionId,
+                                    scenarioId,
+                                    stepId)
+                            },
+                            unitOfWork);
+                        committed = true;
+                    });
+                }
+                catch (Exception error) when (GameplayRejectionException.IsExpected(error))
+                {
+                    Logger.WriteLog(
+                        LogType.Error,
+                        $"Unable to record scenario step {scenarioId}:{stepId} for mission {missionId}: {error}");
+                    return false;
+                }
+
+                progressPlan.Publish(client);
+                return committed;
+            }
+        }
+
+        internal bool EvaluateDeadlines(Client client) =>
+            _deadlineService.Evaluate(client);
+
+        private static string CreateScenarioStepKey(uint scenarioId, uint stepId) =>
+            $"scenario:{scenarioId}:step:{stepId}";
+
         public bool TryAcceptNpcMission(Client client, ulong npcEntityId, uint missionId)
         {
             if (client == null)
@@ -593,6 +719,16 @@ namespace Rasa.Managers
                                         counter.Value.InitialValue));
                                 return entry;
                             }));
+                        _deadlineService.SynchronizeMission(
+                            unitOfWork,
+                            client.Player.Id,
+                            definition,
+                            unitOfWork.CharacterMissions.GetByCharacterAndMission(
+                                client.Player.Id,
+                                missionId),
+                            unitOfWork.CharacterMissionProgress.GetTracked(
+                                client.Player.Id,
+                                missionId));
                         accepted = true;
                     });
                 }
@@ -670,6 +806,14 @@ namespace Rasa.Managers
 
                         durableMission.MissionState = (uint)MissionState.Success;
                         durableMission.Completeable = false;
+                        _deadlineService.SynchronizeMission(
+                            unitOfWork,
+                            client.Player.Id,
+                            definition,
+                            durableMission,
+                            unitOfWork.CharacterMissionProgress.GetTracked(
+                                client.Player.Id,
+                                missionId));
                         progressPlan = PlanProgress(
                             client,
                             new[] { MissionProgressEvent.Mission(missionId) },
@@ -794,6 +938,14 @@ namespace Rasa.Managers
                                 unitOfWork);
                             mission.MissionState = (uint)MissionState.Completed;
                             mission.Completeable = false;
+                            _deadlineService.SynchronizeMission(
+                                unitOfWork,
+                                client.Player.Id,
+                                definition,
+                                mission,
+                                unitOfWork.CharacterMissionProgress.GetTracked(
+                                    client.Player.Id,
+                                    missionId));
                         });
                     }
                     catch (Exception error) when (GameplayRejectionException.IsExpected(error))
@@ -1030,6 +1182,12 @@ namespace Rasa.Managers
                                 completeable = false;
                         }
                         durableMission.Completeable = completeable;
+                        _deadlineService.SynchronizeMission(
+                            unitOfWork,
+                            client.Player.Id,
+                            definition,
+                            durableMission,
+                            durableObjectives);
                     });
                 }
                 catch (Exception error) when (GameplayRejectionException.IsExpected(error))
@@ -1160,6 +1318,12 @@ namespace Rasa.Managers
                         durableMission.Completeable = completeable;
                         if (failMission)
                             durableMission.MissionState = (uint)MissionState.Failed;
+                        _deadlineService.SynchronizeMission(
+                            unitOfWork,
+                            client.Player.Id,
+                            definition,
+                            durableMission,
+                            durableObjectives);
                         publicationPlan = new MissionFailurePublicationPlan(
                             missionId,
                             objectiveId,
@@ -1207,6 +1371,14 @@ namespace Rasa.Managers
                                 "Durable mission cannot fail from its current state.");
                         durableMission.MissionState = (uint)MissionState.Failed;
                         durableMission.Completeable = false;
+                        _deadlineService.SynchronizeMission(
+                            unitOfWork,
+                            client.Player.Id,
+                            _loadedMissions[missionId],
+                            durableMission,
+                            unitOfWork.CharacterMissionProgress.GetTracked(
+                                client.Player.Id,
+                                missionId));
                     });
                 }
                 catch (Exception error) when (GameplayRejectionException.IsExpected(error))
@@ -1588,6 +1760,12 @@ namespace Rasa.Managers
                 durableMission.Completeable = completeable;
                 if (completeable && !first.RuntimeMission.Completeable)
                     completableMissions.Add(first.Definition.MissionId);
+                _deadlineService.SynchronizeMission(
+                    unitOfWork,
+                    client.Player.Id,
+                    first.Definition,
+                    durableMission,
+                    durableObjectives);
             }
 
             return new MissionProgressPublicationPlan(
@@ -1609,7 +1787,11 @@ namespace Rasa.Managers
 
             var result = new List<MissionProgressEvent>();
             foreach (var group in valid.GroupBy(
-                progress => (progress.Kind, progress.SubjectId)))
+                progress => (
+                    progress.Kind,
+                    progress.SubjectId,
+                    progress.ScopeId,
+                    progress.DetailId)))
             {
                 uint quantity;
                 try
@@ -1633,6 +1815,27 @@ namespace Rasa.Managers
                     MissionProgressEventKind.ItemConsumed =>
                         MissionProgressEvent.ItemConsumed(
                             group.Key.SubjectId, quantity),
+                    MissionProgressEventKind.AreaEntered =>
+                        MissionProgressEvent.Area(
+                            group.Key.ScopeId.GetValueOrDefault(),
+                            group.Key.SubjectId),
+                    MissionProgressEventKind.ItemEquipped =>
+                        MissionProgressEvent.ItemEquipped(
+                            group.Key.SubjectId,
+                            group.Key.DetailId.GetValueOrDefault()),
+                    MissionProgressEventKind.AbilityHit =>
+                        MissionProgressEvent.AbilityHit(
+                            group.Key.SubjectId,
+                            group.Key.DetailId.GetValueOrDefault()),
+                    MissionProgressEventKind.ScenarioEvent =>
+                        MissionProgressEvent.Scenario(
+                            group.Key.ScopeId.GetValueOrDefault(),
+                            group.Key.DetailId.GetValueOrDefault(),
+                            group.Key.SubjectId),
+                    MissionProgressEventKind.DeadlineElapsed =>
+                        MissionProgressEvent.Deadline(
+                            group.Key.ScopeId.GetValueOrDefault(),
+                            group.Key.SubjectId),
                     _ => group.First()
                 });
             }

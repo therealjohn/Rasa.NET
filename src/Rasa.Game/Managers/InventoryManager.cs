@@ -357,6 +357,10 @@ namespace Rasa.Managers
 
             // Send Data to client
             client.CallMethod(client.Player.EntityId, new AttributeInfoPacket(client.Player.Attributes));
+
+            if (itemToEquip != null &&
+                client.Player.Inventory.EquippedInventory[(int)packet.DestSlot] == entityIdInventoryItem)
+                RecordEquippedItemProgress(client, itemToEquip);
         }
 
         public void RequestEquipWeapon(Client client, RequestEquipWeaponPacket packet)
@@ -454,6 +458,10 @@ namespace Rasa.Managers
             ManifestationManager.Instance.NotifyEquipmentUpdate(client);
 
             ManifestationManager.Instance.UpdateAppearance(client);
+
+            if (itemToEquip != null &&
+                client.Player.Inventory.WeaponDrawer[(int)destSlot] == entityIdInventoryItem)
+                RecordEquippedItemProgress(client, itemToEquip);
         }
 
         public void RequestLockboxTabPermissions(Client client)
@@ -2143,6 +2151,20 @@ namespace Rasa.Managers
             (_missionManager ?? MissionManager.Instance).RecordProgress(
                 client,
                 progress);
+        }
+
+        private void RecordEquippedItemProgress(
+            Client client,
+            Item item)
+        {
+            if (item?.ItemTemplate == null)
+                return;
+
+            (_missionManager ?? MissionManager.Instance).RecordProgress(
+                client,
+                MissionProgressEvent.ItemEquipped(
+                    (uint)item.ItemTemplate.Class,
+                    item.ItemTemplate.ItemTemplateId));
         }
 
         public void RemoveItemBySlot(Client client, InventoryType inventoryType, uint slotIndex)

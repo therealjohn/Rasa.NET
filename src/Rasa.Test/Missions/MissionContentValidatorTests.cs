@@ -192,10 +192,7 @@ namespace Rasa.Test.Missions
                 .ToArray();
 
             Assert.IsTrue(report.BlocksReadiness);
-            Assert.AreEqual(2, report.Diagnostics.Count);
-            CollectionAssert.AreEqual(
-                new[] { "invalid-progress-event", "invalid-progress-event" },
-                report.Diagnostics.Select(diagnostic => diagnostic.Code).ToArray());
+            Assert.AreEqual(2, diagnostics.Length);
             CollectionAssert.AreEqual(
                 new[]
                 {
@@ -362,7 +359,7 @@ namespace Rasa.Test.Missions
                 fixture.Triggers[0].NpcPackageId = null;
                 fixture.Triggers[0].PlayerFlagId = null;
                 fixture.Triggers[0].AreaId = 30;
-            }, "unsupported-trigger");
+            }, "unsupported-progress-transition-actions");
 
             yield return Case("unsupported timer trigger runtime", fixture =>
             {
@@ -370,7 +367,7 @@ namespace Rasa.Test.Missions
                 fixture.Triggers[0].NpcPackageId = null;
                 fixture.Triggers[0].PlayerFlagId = null;
                 fixture.Triggers[0].DurationSeconds = 5;
-            }, "unsupported-trigger");
+            }, "unsupported-progress-transition-actions");
 
             yield return Case("unsupported action", fixture =>
             {
@@ -424,6 +421,40 @@ namespace Rasa.Test.Missions
             {
                 fixture.EntityClassIds.Clear();
             }, "missing-entity-class");
+
+            yield return Case("missing equipped item template", fixture =>
+            {
+                ConfigurePureProgressObjective(fixture);
+                fixture.Triggers[0].EventKind = (byte)MissionProgressEventKind.ItemEquipped;
+                fixture.Triggers[0].SubjectId = 28;
+                fixture.Triggers[0].CounterId = null;
+                fixture.Triggers[0].InitialValue = null;
+                fixture.Triggers[0].TargetValue = null;
+                fixture.Triggers[0].SourceSpawnResolved = true;
+                fixture.ItemTemplateClasses.Clear();
+            }, "missing-item-template");
+
+            yield return Case("missing ability target creature", fixture =>
+            {
+                ConfigurePureProgressObjective(fixture);
+                fixture.Triggers[0].EventKind = (byte)MissionProgressEventKind.AbilityHit;
+                fixture.Triggers[0].SubjectId = 194;
+                fixture.Triggers[0].CounterId = 999;
+                fixture.Triggers[0].InitialValue = null;
+                fixture.Triggers[0].TargetValue = null;
+                fixture.Triggers[0].SourceSpawnResolved = null;
+            }, "missing-creature");
+
+            yield return Case("missing scenario step", fixture =>
+            {
+                ConfigurePureProgressObjective(fixture);
+                fixture.Triggers[0].EventKind = (byte)MissionProgressEventKind.ScenarioEvent;
+                fixture.Triggers[0].SubjectId = 999;
+                fixture.Triggers[0].CounterId = 60;
+                fixture.Triggers[0].InitialValue = null;
+                fixture.Triggers[0].TargetValue = null;
+                fixture.Triggers[0].SourceSpawnResolved = null;
+            }, "missing-scenario-step");
 
             yield return Case("missing map context", fixture =>
             {

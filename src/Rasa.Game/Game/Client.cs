@@ -55,6 +55,7 @@ namespace Rasa.Game
         public uint[] SendSequence { get; } = new uint[256];
         public uint[] ReceiveSequence { get; } = new uint[256];
         public List<UserOptions> UserOptions = new();
+        internal MissionAreaService MissionAreaService { get; set; } = MissionAreaService.Instance;
 
         private readonly object _clientLock = new();
         internal object SyncRoot => _clientLock;
@@ -449,9 +450,14 @@ namespace Rasa.Game
                 if (!ManifestationManager.Instance.AcceptMove(this, movement))
                     return false;
 
+                var previousPosition = Player.Position;
                 Player.Position = movement.Position;
                 Player.Rotation = movement.ViewDirection.X;
                 Movement = movement;
+                MissionAreaService?.RecordAcceptedMovement(
+                    this,
+                    previousPosition,
+                    movement.Position);
                 ManifestationManager.Instance.NotifyPlayerActivity(this);
                 CellManager.Instance.UpdateVisibility(this);
                 CellMoveObject(this, new MoveObjectMessage(Player.EntityId, movement), true);

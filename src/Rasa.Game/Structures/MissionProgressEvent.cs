@@ -7,15 +7,21 @@ namespace Rasa.Structures
         public MissionProgressEventKind Kind { get; }
         public uint SubjectId { get; }
         public uint Quantity { get; }
+        public uint? ScopeId { get; }
+        public uint? DetailId { get; }
 
         private MissionProgressEvent(
             MissionProgressEventKind kind,
             uint subjectId,
-            uint quantity = 1)
+            uint quantity = 1,
+            uint? scopeId = null,
+            uint? detailId = null)
         {
             Kind = kind;
             SubjectId = subjectId;
             Quantity = quantity;
+            ScopeId = scopeId;
+            DetailId = detailId;
         }
 
         public static MissionProgressEvent Waypoint(uint waypointId) =>
@@ -42,5 +48,45 @@ namespace Rasa.Structures
 
         public static MissionProgressEvent Interaction(uint entityClassId) =>
             new(MissionProgressEventKind.InteractionUsed, entityClassId);
+
+        public static MissionProgressEvent Area(uint missionId, uint areaId) =>
+            new(
+                MissionProgressEventKind.AreaEntered,
+                areaId,
+                scopeId: missionId);
+
+        public static MissionProgressEvent ItemEquipped(
+            uint itemClassId,
+            uint itemTemplateId) =>
+            new(
+                MissionProgressEventKind.ItemEquipped,
+                itemClassId,
+                detailId: itemTemplateId);
+
+        public static MissionProgressEvent AbilityHit(
+            uint actionId,
+            uint targetCreatureId) =>
+            new(
+                MissionProgressEventKind.AbilityHit,
+                actionId,
+                detailId: targetCreatureId);
+
+        public static MissionProgressEvent Scenario(
+            uint missionId,
+            uint scenarioId,
+            uint stepId) =>
+            new(
+                MissionProgressEventKind.ScenarioEvent,
+                stepId,
+                scopeId: missionId,
+                detailId: scenarioId);
+
+        public static MissionProgressEvent Deadline(
+            uint missionId,
+            uint objectiveId) =>
+            new(
+                MissionProgressEventKind.DeadlineElapsed,
+                objectiveId,
+                scopeId: missionId);
     }
 }

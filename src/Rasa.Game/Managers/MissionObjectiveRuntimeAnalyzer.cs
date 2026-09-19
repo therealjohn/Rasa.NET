@@ -43,17 +43,23 @@ namespace Rasa.Managers
                     selectedConversationTransition ??= transition;
                 }
 
-                var progressTriggers = transition.Triggers
-                    .Where(trigger => trigger.Kind == MissionTriggerKind.ProgressEvent)
-                    .ToArray();
-                if (progressTriggers.Length == 0 ||
-                    !MissionProgressRuleAuthoring.TryBuild(
-                        progressTriggers,
+                if (!TryBuildEventRule(
+                        transition,
                         out var progressRule,
                         out var counters,
                         out var itemCounters,
-                        out _))
+                        out var diagnostic))
+                {
+                    if (!string.IsNullOrWhiteSpace(diagnostic))
+                    {
+                        diagnostics.Add(new MissionObjectiveRuntimeDiagnostic(
+                            "invalid-trigger-shape",
+                            diagnostic,
+                            transition.TransitionId));
+                    }
+
                     continue;
+                }
 
                 executablePaths.Add($"progress transition {transition.TransitionId}");
                 selectedProgressTransition ??= transition;
@@ -144,6 +150,78 @@ namespace Rasa.Managers
                 null,
                 new Dictionary<uint, MissionObjectiveCounterDefinition>(),
                 new Dictionary<uint, MissionObjectiveItemCounterDefinition>());
+        }
+
+        private static bool TryBuildEventRule(
+            MissionObjectiveTransitionDefinition transition,
+            out MissionProgressRule rule,
+            out IReadOnlyDictionary<uint, MissionObjectiveCounterDefinition> counters,
+            out IReadOnlyDictionary<uint, MissionObjectiveItemCounterDefinition> itemCounters,
+            out string diagnostic)
+        {
+            rule = null;
+            counters = new Dictionary<uint, MissionObjectiveCounterDefinition>();
+            itemCounters = new Dictionary<uint, MissionObjectiveItemCounterDefinition>();
+            diagnostic = null;
+
+            var progressTriggers = transition.Triggers
+                .Where(trigger => trigger.Kind == MissionTriggerKind.ProgressEvent)
+                .ToArray();
+            if (progressTriggers.Length > 0)
+            {
+                if (progressTriggers.Length != transition.Triggers.Count)
+                {
+                    diagnostic = $"transition {transition.TransitionId} mixes progress-event triggers with other trigger kinds; author one executable trigger shape per transition.";
+                    return false;
+                }
+
+                return MissionProgressRuleAuthoring.TryBuild(
+                    progressTriggers,
+                    out rule,
+                    out counters,
+                    out itemCounters,
+                    out diagnostic);
+            }
+
+            var areaTriggers = transition.Triggers
+                .Where(trigger => trigger.Kind == MissionTriggerKind.AreaEntered)
+                .ToArray();
+            if (areaTriggers.Length > 0)
+            {
+                if (areaTriggers.Length != 1 || transition.Triggers.Count != 1 ||
+                    !areaTriggers[0].AreaId.HasValue || areaTriggers[0].AreaId.Value == 0)
+                {
+                    diagnostic = $"transition {transition.TransitionId} must use exactly one area trigger with a non-zero area_id.";
+                    return false;
+                }
+
+                rule = MissionProgressRule.CompleteOnAreaEntered(
+                    transition.MissionId,
+                    areaTriggers[0].AreaId.Value);
+                return true;
+            }
+
+            var timerTriggers = transition.Triggers
+                .Where(trigger => trigger.Kind == MissionTriggerKind.TimerElapsed)
+                .ToArray();
+            if (timerTriggers.Length > 0)
+            {
+                if (timerTriggers.Length != 1 || transition.Triggers.Count != 1 ||
+                    !timerTriggers[0].DurationSeconds.HasValue ||
+                    timerTriggers[0].DurationSeconds.Value == 0)
+                {
+                    diagnostic = $"transition {transition.TransitionId} must use exactly one timer trigger with a positive duration_seconds value.";
+                    return false;
+                }
+
+                rule = MissionProgressRule.CompleteOnDeadlineElapsed(
+                    transition.MissionId,
+                    transition.ObjectiveId,
+                    timerTriggers[0].DurationSeconds.Value);
+                return true;
+            }
+
+            return false;
         }
     }
 

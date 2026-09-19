@@ -33,6 +33,7 @@ namespace Rasa.Managers
         private readonly Action<Client> _assignPlayer;
         private readonly Action<Client> _enterMapChannels;
         private readonly PrivateMapInstanceService _privateInstances;
+        private readonly MissionDeadlineService _missionDeadlineService;
         public static MapChannelManager Instance
         {
             get
@@ -54,7 +55,8 @@ namespace Rasa.Managers
             Func<long> clock = null, Action<Client, CharacterUpdate, object> updateCharacter = null,
             Action<Client> disconnect = null, Action<Client, bool> refreshStats = null,
             Action<Client> assignPlayer = null, Action<Client> enterMapChannels = null,
-            PrivateMapInstanceService privateInstances = null)
+            PrivateMapInstanceService privateInstances = null,
+            MissionDeadlineService missionDeadlineService = null)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
             _clock = clock ?? (() => Environment.TickCount64);
@@ -66,6 +68,7 @@ namespace Rasa.Managers
             _assignPlayer = assignPlayer ?? ManifestationManager.Instance.AssignPlayer;
             _enterMapChannels = enterMapChannels ?? CommunicatorManager.Instance.PlayerEnterMap;
             _privateInstances = privateInstances ?? PrivateMapInstanceService.Instance;
+            _missionDeadlineService = missionDeadlineService ?? MissionDeadlineService.Instance;
         }
 
         /// <summary>
@@ -217,6 +220,7 @@ namespace Rasa.Managers
             Timer.Add("CellUpdateVisibility", 1000, true, null);
             Timer.Add("CheckForCreatures", 1000, true, null);
             Timer.Add("CheckForMapTriggers", 1000, true, null);
+            Timer.Add("MissionDeadlineUpdate", 1000, true, null);
             Timer.Add("Regenerate", 1000, true, null);
         }
 
@@ -294,6 +298,10 @@ namespace Rasa.Managers
                     // a second's health, armour, power and chi for everyone here
                     if (Timer.IsTriggered("Regenerate"))
                         ActorManager.Instance.Regenerate(mapChannel);
+
+                    if (Timer.IsTriggered("MissionDeadlineUpdate"))
+                        foreach (var client in mapChannel.ClientList.ToArray())
+                            _missionDeadlineService.Evaluate(client);
 
                     // warn idle players and flag long-idle ones for removal below
                     ManifestationManager.Instance.CheckInactivity(mapChannel);

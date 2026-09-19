@@ -45,6 +45,7 @@ namespace Rasa.Managers
         private static readonly object InstanceLock = new object();
 
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
+        private readonly MissionManager _missionManager;
         private readonly Dictionary<ActionId, ActionInfo> _actions = new Dictionary<ActionId, ActionInfo>();
         private readonly Dictionary<uint, (ActionId ActionId, uint Level)> _itemTemplateActions = new Dictionary<uint, (ActionId, uint)>();
         private readonly HashSet<ActionId> _reportedUnsupported = new HashSet<ActionId>();
@@ -98,8 +99,16 @@ namespace Rasa.Managers
         }
 
         private AbilityManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory)
+            : this(gameUnitOfWorkFactory, null)
+        {
+        }
+
+        private AbilityManager(
+            IGameUnitOfWorkFactory gameUnitOfWorkFactory,
+            MissionManager missionManager)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
+            _missionManager = missionManager;
         }
 
         public int Count => _actions.Count;
@@ -780,6 +789,13 @@ namespace Rasa.Managers
                         hit);
 
                 recovery.Hits.Add(hit);
+                if (taken > 0 &&
+                    target.DbId != 0)
+                    (_missionManager ?? MissionManager.Instance).RecordProgress(
+                        client,
+                        MissionProgressEvent.AbilityHit(
+                            (uint)action.ActionId,
+                            target.DbId));
             }
 
             CellManager.Instance.CellCallMethod(mapChannel, player, recovery);
