@@ -189,6 +189,104 @@ namespace Rasa.Test.Gameplay
         }
 
         [TestMethod]
+        [DataRow(CharacterStartingExperienceState.Completed)]
+        [DataRow(CharacterStartingExperienceState.Skipped)]
+        public void StartedBootcampGraduateIgnoresSkipPromptAndUsesStoredAliaState(
+            CharacterStartingExperienceState state)
+        {
+            using var context = new BootcampSelectionTestContext();
+            context.SeedAccount(431, canSkipBootcamp: true);
+            var characterId = context.SeedCharacter(
+                431,
+                1,
+                "Graduate",
+                mapContextId: WildernessMapContextId,
+                x: 884.11,
+                y: 305.8,
+                z: 347.81,
+                rotation: 1.5613,
+                experience: 24000,
+                level: 4);
+            context.SeedStartingExperience(characterId, state);
+            var client = context.CreateSelectionClient(431);
+
+            context.Characters.RequestSwitchToCharacterInSlot(
+                client,
+                new Packets.Game.Client.RequestSwitchToCharacterInSlotPacket
+                {
+                    SlotNum = 1,
+                    SkipBootcamp = true
+                });
+
+            Assert.AreEqual(RasaGame::Rasa.Data.ClientState.Loading, client.State);
+            Assert.AreEqual(WildernessMapContextId, client.Player.MapContextId);
+            Assert.IsFalse(client.Player.MapChannel.IsPrivateInstance);
+            Assert.IsNull(context.Maps.FindOwnedPrivateInstance(BootcampMapContextId, characterId));
+            using var verify = context.OpenChar();
+            var durableCharacter = new CharacterRepository(verify).Get(characterId);
+            Assert.AreEqual(WildernessMapContextId, durableCharacter.MapContextId);
+            Assert.AreEqual(884.11d, durableCharacter.CoordX, 0.001d);
+            Assert.AreEqual(305.8d, durableCharacter.CoordY, 0.001d);
+            Assert.AreEqual(347.81d, durableCharacter.CoordZ, 0.001d);
+            Assert.AreEqual(
+                state,
+                new CharacterStartingExperienceRepository(verify).Get(characterId).State);
+            Assert.IsNull(
+                new CharacterMissionRepository(verify)
+                    .GetByCharacterAndMission(characterId, MissionInitiation));
+        }
+
+        [TestMethod]
+        [DataRow(CharacterStartingExperienceState.Completed)]
+        [DataRow(CharacterStartingExperienceState.Skipped)]
+        public void TamperedBootcampReturnForStartedGraduateIsRepairedToAliaInsteadOfReEnteringBootcamp(
+            CharacterStartingExperienceState state)
+        {
+            using var context = new BootcampSelectionTestContext();
+            context.SeedAccount(432, canSkipBootcamp: true);
+            var characterId = context.SeedCharacter(
+                432,
+                1,
+                "TamperedReturn",
+                mapContextId: BootcampMapContextId,
+                x: 357.90054,
+                y: 120.32544,
+                z: 156.5188,
+                rotation: 0,
+                experience: 24000,
+                level: 4);
+            context.SeedStartingExperience(characterId, state);
+            var client = context.CreateSelectionClient(432);
+
+            context.Characters.RequestSwitchToCharacterInSlot(
+                client,
+                new Packets.Game.Client.RequestSwitchToCharacterInSlotPacket
+                {
+                    SlotNum = 1,
+                    SkipBootcamp = true
+                });
+
+            Assert.AreEqual(RasaGame::Rasa.Data.ClientState.Loading, client.State);
+            Assert.AreEqual(WildernessMapContextId, client.Player.MapContextId);
+            Assert.IsFalse(client.Player.MapChannel.IsPrivateInstance);
+            Assert.IsNull(context.Maps.FindOwnedPrivateInstance(BootcampMapContextId, characterId));
+            using var verify = context.OpenChar();
+            var durableCharacter = new CharacterRepository(verify).Get(characterId);
+            Assert.AreEqual(WildernessMapContextId, durableCharacter.MapContextId);
+            Assert.AreEqual(884.11d, durableCharacter.CoordX, 0.001d);
+            Assert.AreEqual(305.8d, durableCharacter.CoordY, 0.001d);
+            Assert.AreEqual(347.81d, durableCharacter.CoordZ, 0.001d);
+            Assert.AreEqual(
+                state,
+                new CharacterStartingExperienceRepository(verify).Get(characterId).State);
+            Assert.AreEqual(
+                0,
+                verify.CharacterMissionEntries.Count(entry =>
+                    entry.CharacterId == characterId &&
+                    entry.MissionId == MissionInitiation));
+        }
+
+        [TestMethod]
         public void FailedBootcampEntryTransactionLeavesSelectionStatePending()
         {
             using var context = new BootcampSelectionTestContext();
@@ -504,6 +602,62 @@ namespace Rasa.Test.Gameplay
                           inventory.InventoryType == (uint)InventoryType.Personal
                     orderby inventory.SlotId
                     select item.ItemTemplateId).ToArray();
+        }
+
+        internal long ReadExperienceForLevel(uint level) =>
+            _worldContext.ExperienceForLevelEntries
+                .Single(entry => entry.Level == level)
+                .Experience;
+
+        internal void SeedLightningGrant(uint characterId)
+        {
+            using var context = OpenChar();
+            context.CharacterSkillsEntries.Add(
+                new CharacterSkillsEntry(
+                    characterId,
+                    (uint)SkillId.Lightning,
+                    (int)ActionId.AaRecruitLightning,
+                    1));
+            context.CharacterAbilityDrawerEntries.Add(
+                new CharacterAbilityDrawerEntry(
+                    characterId,
+                    0,
+                    (int)ActionId.AaRecruitLightning,
+                    1));
+            context.SaveChanges();
+        }
+
+        internal void SeedPersonalInventory(uint accountId, uint characterId, params uint[] templateIds)
+        {
+            using var context = OpenChar();
+            var nextItemId = context.ItemEntries.Any()
+                ? context.ItemEntries.Max(entry => entry.ItemId) + 1
+                : 1U;
+            for (var index = 0; index < templateIds.Length; index++)
+            {
+                var templateId = templateIds[index];
+                var itemId = nextItemId++;
+                context.ItemEntries.Add(new ItemEntry
+                {
+                    ItemId = itemId,
+                    ItemTemplateId = templateId,
+                    StackSize = templateId == 28 ? 20U : 1U,
+                    CurrentHitPoints = 100,
+                    AmmoCount = templateId == 28 ? 20U : 0U,
+                    Color = 0,
+                    CrafterName = string.Empty,
+                    CreatedAt = DateTime.UtcNow
+                });
+                context.CharacterInventoryEntries.Add(
+                    new CharacterInventoryEntry(
+                        accountId,
+                        characterId,
+                        (uint)InventoryType.Personal,
+                        (uint)index,
+                        itemId));
+            }
+
+            context.SaveChanges();
         }
 
         public void Dispose()

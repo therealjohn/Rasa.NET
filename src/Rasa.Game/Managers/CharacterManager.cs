@@ -40,8 +40,7 @@ namespace Rasa.Managers
         private const uint BootcampInitiationMissionId = 1990;
         private const uint BootcampFinaleMissionId = 1995;
         private const uint BootcampRetryFinaleMissionId = 2005;
-        private const uint BootcampParityExperience = 43000;
-        private const byte BootcampParityLevel = 5;
+        private const byte BootcampParityLevel = 4;
         private const uint BootcampSkipAmmoTemplateId = 28;
         private const uint BootcampSkipAmmoQuantity = 20;
         private const uint BootcampAliaWaypointId = 57;
@@ -847,6 +846,11 @@ namespace Rasa.Managers
                         startingExperience =
                             unitOfWork.CharacterStartingExperience.Get(character.Id);
                     }
+                    else
+                    {
+                        RepairInvalidBootcampReturn(unitOfWork, character, startingExperience?.State);
+                        character = unitOfWork.Characters.Get(character.Id);
+                    }
 
                     startingState = startingExperience?.State;
                     client.AccountEntry.SelectedSlot = packet.SlotNum;
@@ -938,16 +942,7 @@ namespace Rasa.Managers
                         throw new GameplayRejectionException(
                             "Bootcamp departure is not ready.");
 
-                    unitOfWork.Characters.ReconcileBootcampCharacter(
-                        client.Player.Id,
-                        BootcampParityExperience,
-                        BootcampParityLevel,
-                        (uint)CharacterClass.Recruit,
-                        BootcampArrivalCoordX,
-                        BootcampArrivalCoordY,
-                        BootcampArrivalCoordZ,
-                        BootcampArrivalRotation,
-                        BootcampArrivalMapContextId);
+                    ReconcileBootcampParityProgression(unitOfWork, client.Player.Id);
                     EnsureQualification(
                         unitOfWork,
                         client.Player.Id,
@@ -977,7 +972,7 @@ namespace Rasa.Managers
                 return false;
 
             client.Player.Class = (uint)CharacterClass.Recruit;
-            client.Player.Experience = BootcampParityExperience;
+            client.Player.Experience = ResolveBootcampParityExperience();
             client.Player.Level = BootcampParityLevel;
             client.AccountEntry.CanSkipBootcamp = true;
 
@@ -997,16 +992,7 @@ namespace Rasa.Managers
             uint accountId,
             uint characterId)
         {
-            unitOfWork.Characters.ReconcileBootcampCharacter(
-                characterId,
-                BootcampParityExperience,
-                BootcampParityLevel,
-                (uint)CharacterClass.Recruit,
-                BootcampArrivalCoordX,
-                BootcampArrivalCoordY,
-                BootcampArrivalCoordZ,
-                BootcampArrivalRotation,
-                BootcampArrivalMapContextId);
+            ReconcileBootcampParityProgression(unitOfWork, characterId);
             EnsureQualification(
                 unitOfWork,
                 characterId,
@@ -1100,6 +1086,52 @@ namespace Rasa.Managers
                     itemId);
                 usedSlots.Add(slot);
             }
+        }
+
+        private static uint ResolveBootcampParityExperience()
+        {
+            if (BootcampParityLevel < 1 || BootcampParityLevel > ExpPerLevel.ExpRequred.Count)
+                throw new InvalidOperationException(
+                    $"Bootcamp parity level {BootcampParityLevel} is outside the experience table.");
+
+            return checked((uint)ExpPerLevel.ExpRequred[BootcampParityLevel - 1]);
+        }
+
+        private static void RepairInvalidBootcampReturn(
+            ICharUnitOfWork unitOfWork,
+            CharacterEntry character,
+            CharacterStartingExperienceState? startingState)
+        {
+            if (character?.MapContextId != BootcampPrivateMapContextId)
+                return;
+
+            if (startingState != CharacterStartingExperienceState.Completed &&
+                startingState != CharacterStartingExperienceState.Skipped)
+                return;
+
+            unitOfWork.Characters.UpdateCharacterPosition(
+                character.Id,
+                BootcampArrivalCoordX,
+                BootcampArrivalCoordY,
+                BootcampArrivalCoordZ,
+                BootcampArrivalRotation,
+                BootcampArrivalMapContextId);
+        }
+
+        private static void ReconcileBootcampParityProgression(
+            ICharUnitOfWork unitOfWork,
+            uint characterId)
+        {
+            unitOfWork.Characters.ReconcileBootcampCharacter(
+                characterId,
+                ResolveBootcampParityExperience(),
+                BootcampParityLevel,
+                (uint)CharacterClass.Recruit,
+                BootcampArrivalCoordX,
+                BootcampArrivalCoordY,
+                BootcampArrivalCoordZ,
+                BootcampArrivalRotation,
+                BootcampArrivalMapContextId);
         }
 
         private void EnsureMissionActivated(

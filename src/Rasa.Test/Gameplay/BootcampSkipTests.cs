@@ -10,6 +10,7 @@ namespace Rasa.Test.Gameplay
 {
     using Data;
     using Game;
+    using Managers;
     using Packets.Game.Client;
     using Repositories.Char.Character;
     using Repositories.Char.CharacterAbilityDrawer;
@@ -52,11 +53,14 @@ namespace Rasa.Test.Gameplay
             var waypointRepository = new CharacterTeleporterRepository(verify);
             var skillRepository = new CharacterSkillsRepository(verify);
             var drawerRepository = new CharacterAbilityDrawerRepository(verify);
+            var levelFourExperience = context.ReadExperienceForLevel(4);
 
             Assert.AreEqual(CharacterStartingExperienceState.Skipped, durableStart.State);
             Assert.AreEqual((uint)CharacterClass.Recruit, durableCharacter.Class);
-            Assert.AreEqual((byte)5, durableCharacter.Level);
-            Assert.AreEqual(43000U, durableCharacter.Experience);
+            Assert.AreEqual(24000L, levelFourExperience);
+            Assert.AreEqual(ExpPerLevel.ExpRequred[3], levelFourExperience);
+            Assert.AreEqual((byte)4, durableCharacter.Level);
+            Assert.AreEqual(24000U, durableCharacter.Experience);
             Assert.AreEqual(BootcampSelectionTestContext.WildernessMapContextId, durableCharacter.MapContextId);
             Assert.AreEqual(884.11d, durableCharacter.CoordX, 0.001d);
             Assert.AreEqual(305.8d, durableCharacter.CoordY, 0.001d);
@@ -87,6 +91,10 @@ namespace Rasa.Test.Gameplay
             Assert.IsNull(missionRepository.GetByCharacterAndMission(characterId, 1994));
             Assert.IsNull(missionRepository.GetByCharacterAndMission(characterId, BootcampSelectionTestContext.MissionFinale));
             Assert.IsNull(missionRepository.GetByCharacterAndMission(characterId, BootcampSelectionTestContext.MissionRetryFinale));
+
+            var manifestation = new ManifestationManager(context);
+            Assert.AreEqual(9, manifestation.GetAvailableAttributePoints(client.Player));
+            Assert.AreEqual(10, manifestation.GetSkillPointsAvailable(client.Player));
         }
 
         [TestMethod]
@@ -164,8 +172,8 @@ namespace Rasa.Test.Gameplay
                 x: 884.11,
                 y: 305.8,
                 z: 347.81,
-                experience: 43000,
-                level: 5);
+                experience: 24000,
+                level: 4);
             context.SeedStartingExperience(characterId, CharacterStartingExperienceState.Skipped);
             context.SeedWaypoint(characterId, BootcampSelectionTestContext.AliaDasWaypointId, WaypointType.Waypoint);
             context.SeedWaypoint(characterId, BootcampSelectionTestContext.AliaDasHospitalId, WaypointType.Hospital);
