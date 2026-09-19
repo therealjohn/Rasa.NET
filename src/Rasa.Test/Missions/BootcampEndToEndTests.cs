@@ -187,6 +187,62 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
+        public void FreshNormalDepartureMatchesSkipParityForTravelLoadoutAndWaypoints()
+        {
+            using var normal = CreateFreshBootcampHarness();
+            var youngblood = AdvanceFreshCharacterToMission1995(normal);
+            CompleteCallingForReinforcements(normal, youngblood);
+            DepartToAliaDas(normal);
+
+            using var normalStorage = normal.Context.Open();
+            using var normalVerify = normal.Context.CreateChar();
+            var normalTemplates =
+                (from inventory in normalStorage.CharacterInventoryEntries
+                 join item in normalStorage.ItemEntries on inventory.ItemId equals item.ItemId
+                 where inventory.AccountId == normal.Client.AccountEntry.Id &&
+                       inventory.CharacterId == normal.Client.Player.Id &&
+                       inventory.InventoryType == (uint)InventoryType.Personal
+                 orderby inventory.SlotId
+                 select item.ItemTemplateId).ToArray();
+            var normalWaypoints = normalVerify.CharacterTeleporters.Get(normal.Client.Player.Id)
+                .Select(entry => entry.WaypointId)
+                .OrderBy(id => id)
+                .ToArray();
+
+            using var skip = new BootcampSelectionTestContext();
+            skip.SeedAccount(1901, canSkipBootcamp: true);
+            var skippedCharacterId = skip.SeedCharacter(1901, 1, "Skipped");
+            skip.SeedStartingExperience(skippedCharacterId, CharacterStartingExperienceState.Pending);
+            var skippedClient = skip.CreateSelectionClient(1901);
+            skip.Characters.RequestSwitchToCharacterInSlot(
+                skippedClient,
+                new Rasa.Packets.Game.Client.RequestSwitchToCharacterInSlotPacket
+                {
+                    SlotNum = 1,
+                    SkipBootcamp = true
+                });
+
+            using var skipVerify = skip.OpenChar();
+            var skippedTemplates = skip.ReadInventoryTemplates(1901, skippedCharacterId);
+            var skippedWaypoints = new CharacterTeleporterRepository(skipVerify).Get(skippedCharacterId)
+                .Select(entry => entry.WaypointId)
+                .OrderBy(id => id)
+                .ToArray();
+
+            CollectionAssert.AreEqual(skippedTemplates, normalTemplates);
+            CollectionAssert.AreEqual(skippedWaypoints, normalWaypoints);
+            CollectionAssert.AreEqual(
+                new[]
+                {
+                    BootcampSelectionTestContext.AliaDasWaypointId,
+                    BootcampSelectionTestContext.AliaDasHospitalId
+                },
+                skippedWaypoints);
+            Assert.AreEqual(BootcampSelectionTestContext.WildernessMapContextId, normal.Client.Player.MapContextId);
+            Assert.AreEqual(BootcampSelectionTestContext.WildernessMapContextId, skippedClient.Player.MapContextId);
+        }
+
+        [TestMethod]
         public void TwoSimultaneousBootcampCharactersReceiveDistinctPrivateInstancesAndDurableMissionState()
         {
             using var context = new BootcampSelectionTestContext();
@@ -621,6 +677,15 @@ namespace Rasa.Test.Missions
                 harness.Client.Player.Id,
                 CharacterQualificationKey.BootcampComplete));
             Assert.IsTrue(verify.GameAccounts.Get(harness.Client.AccountEntry.Id).CanSkipBootcamp);
+            CollectionAssert.AreEquivalent(
+                new[]
+                {
+                    BootcampSelectionTestContext.AliaDasWaypointId,
+                    BootcampSelectionTestContext.AliaDasHospitalId
+                },
+                verify.CharacterTeleporters.Get(harness.Client.Player.Id)
+                    .Select(entry => entry.WaypointId)
+                    .ToArray());
 
             var departureMission = verify.CharacterMissions.GetByCharacterAndMission(
                 harness.Client.Player.Id,

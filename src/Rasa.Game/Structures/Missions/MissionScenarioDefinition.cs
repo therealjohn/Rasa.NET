@@ -15,6 +15,7 @@ namespace Rasa.Structures.Missions
         public string ContentRevision { get; }
         public uint ScenarioId { get; }
         public MissionContentRequirement Requirement { get; }
+        public MissionScenarioStartPolicy StartPolicy { get; }
         public string Name { get; }
         public string Comment { get; }
         public IReadOnlyList<MissionScenarioStepDefinition> Steps { get; }
@@ -27,6 +28,7 @@ namespace Rasa.Structures.Missions
             ContentRevision = entry.ContentRevision;
             ScenarioId = entry.ScenarioId;
             Requirement = entry.Requirement;
+            StartPolicy = entry.StartPolicy;
             Name = entry.Name;
             Comment = entry.Comment;
             Steps = new ReadOnlyCollection<MissionScenarioStepDefinition>(

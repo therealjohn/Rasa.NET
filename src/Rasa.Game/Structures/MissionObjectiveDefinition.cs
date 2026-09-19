@@ -7,6 +7,7 @@ namespace Rasa.Structures
 {
     using Data;
     using Missions;
+    using World;
 
     public readonly struct MissionObjectiveCounterDefinition
     {
@@ -101,6 +102,7 @@ namespace Rasa.Structures
         public uint? ClientBodyTextId { get; }
         public IReadOnlyList<uint?> ClientCounterTextIds { get; }
         public uint? Ordinal { get; }
+        public MissionContentRequirement Requirement { get; }
         public MissionObjectiveState? InitialState { get; }
         public bool? IsRequired { get; }
         public IReadOnlyDictionary<uint, MissionObjectiveCounterDefinition> Counters { get; }
@@ -128,7 +130,8 @@ namespace Rasa.Structures
             IEnumerable<uint> activatedObjectiveIds = null,
             IEnumerable<MissionIndicator> indicators = null,
             MissionProgressRule progressRule = null,
-            IEnumerable<MissionObjectiveExecutableTransition> executableTransitions = null)
+            IEnumerable<MissionObjectiveExecutableTransition> executableTransitions = null,
+            MissionContentRequirement requirement = MissionContentRequirement.Required)
         {
             ObjectiveId = objectiveId;
             ClientNameTextId = clientNameTextId;
@@ -136,6 +139,7 @@ namespace Rasa.Structures
             ClientCounterTextIds = Array.AsReadOnly(
                 (clientCounterTextIds ?? Array.Empty<uint?>()).ToArray());
             Ordinal = ordinal;
+            Requirement = requirement;
             InitialState = initialState;
             IsRequired = isRequired;
             Counters = new ReadOnlyDictionary<uint, MissionObjectiveCounterDefinition>(

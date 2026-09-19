@@ -29,6 +29,30 @@ namespace Rasa.Services.Preloader
             "respawn_seconds",
             "comment"
         };
+        internal static readonly string[] LegacyMissionDefinitionColumns =
+        {
+            "mission_id",
+            "content_revision",
+            "requirement",
+            "client_name_text_id",
+            "giver_id",
+            "receiver_id",
+            "level",
+            "group_type",
+            "category_id",
+            "shareable",
+            "radio_completeable",
+            "comment"
+        };
+        internal static readonly string[] LegacyMissionScenarioColumns =
+        {
+            "mission_id",
+            "content_revision",
+            "scenario_id",
+            "requirement",
+            "name",
+            "comment"
+        };
 
         internal const uint MajorMcAllisterCreatureId = 510203;
         internal const uint CaptainDelessioCreatureId = 510204;
@@ -1188,7 +1212,7 @@ namespace Rasa.Services.Preloader
 
     public sealed class BootcampMissionContentDefinitionPreloader : PreloaderBase, IPreloader
     {
-        public void Preload(MigrationBuilder migrationBuilder) => BootcampWorldContentSeedData.Insert(migrationBuilder, MissionContentDefinitionEntry.TableName, typeof(MissionContentDefinitionEntry), GetRows());
+        public void Preload(MigrationBuilder migrationBuilder) => BootcampWorldContentSeedData.Insert(migrationBuilder, MissionContentDefinitionEntry.TableName, BootcampWorldContentSeedData.LegacyMissionDefinitionColumns, GetRows());
         protected override IEnumerable<object[]> GetRows() => BootcampWorldContentSeedData.MissionDefinitions();
     }
 
@@ -1264,7 +1288,7 @@ namespace Rasa.Services.Preloader
 
     public sealed class BootcampMissionScenarioPreloader : PreloaderBase, IPreloader
     {
-        public void Preload(MigrationBuilder migrationBuilder) => BootcampWorldContentSeedData.Insert(migrationBuilder, MissionScenarioEntry.TableName, typeof(MissionScenarioEntry), GetRows());
+        public void Preload(MigrationBuilder migrationBuilder) => BootcampWorldContentSeedData.Insert(migrationBuilder, MissionScenarioEntry.TableName, BootcampWorldContentSeedData.LegacyMissionScenarioColumns, GetRows());
         protected override IEnumerable<object[]> GetRows() => BootcampWorldContentSeedData.MissionScenarios();
     }
 

@@ -52,6 +52,7 @@ namespace Rasa.Test.Missions
                     MissionId = 321,
                     ContentRevision = "deployment_11",
                     Requirement = MissionContentRequirement.Required,
+                    AbandonmentPolicy = MissionAbandonmentPolicy.Allowed,
                     ClientNameTextId = 2001,
                     GiverId = 101,
                     ReceiverId = 102,
@@ -67,6 +68,7 @@ namespace Rasa.Test.Missions
                     MissionId = 321,
                     ContentRevision = "legacy",
                     Requirement = MissionContentRequirement.Optional,
+                    AbandonmentPolicy = MissionAbandonmentPolicy.Allowed,
                     ClientNameTextId = 0,
                     GiverId = 101,
                     ReceiverId = 102,
@@ -294,6 +296,7 @@ namespace Rasa.Test.Missions
                 ContentRevision = "deployment_11",
                 ScenarioId = 60,
                 Requirement = MissionContentRequirement.Required,
+                StartPolicy = MissionScenarioStartPolicy.Automatic,
                 Name = "Scenario",
                 Comment = "Scenario"
             });
@@ -570,6 +573,7 @@ namespace Rasa.Test.Missions
                 MissionId = entry.MissionId,
                 ContentRevision = entry.ContentRevision,
                 Requirement = entry.Requirement,
+                AbandonmentPolicy = entry.AbandonmentPolicy,
                 ClientNameTextId = entry.ClientNameTextId,
                 GiverId = entry.GiverId,
                 ReceiverId = entry.ReceiverId,
@@ -775,6 +779,7 @@ namespace Rasa.Test.Missions
                 ContentRevision = entry.ContentRevision,
                 ScenarioId = entry.ScenarioId,
                 Requirement = entry.Requirement,
+                StartPolicy = entry.StartPolicy,
                 Name = entry.Name,
                 Comment = entry.Comment
             };

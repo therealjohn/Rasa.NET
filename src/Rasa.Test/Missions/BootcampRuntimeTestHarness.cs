@@ -254,11 +254,41 @@ namespace Rasa.Test.Missions
 
         private static void PrepareBootcampRewardTemplates(MissionTestContext context)
         {
+            context.AddRewardTemplate(28, 3147);
             ConfigureRewardTemplate(context, 13066, 15542, (EquipmentData)2);
             ConfigureRewardTemplate(context, 13096, 15572, (EquipmentData)3);
             ConfigureRewardTemplate(context, 13156, 15632, (EquipmentData)16);
             ConfigureRewardTemplate(context, 13186, 15662, (EquipmentData)15);
             ConfigureRewardTemplate(context, 13713, 27220, (EquipmentData)13);
+            var weaponClass = EntityClassManager.Instance.LoadedEntityClasses[(EntityClasses)27220];
+            weaponClass.WeaponClassInfo = new WeaponClassInfo(new WeaponClassEntry
+            {
+                Id = 27220,
+                WeaponTemplatId = 13713,
+                AttackActionId = 1,
+                AttackActionArgId = 133,
+                DrawActionId = 1,
+                StowActionId = 1,
+                ReloadActionId = 1,
+                AmmoClassId = 3147,
+                ClipSize = 20,
+                MinDamage = 55,
+                MaxDamage = 55,
+                DamageType = 1,
+                WeaponAnimConditionCode = 1
+            });
+            weaponClass.ItemTemplates[13713].WeaponInfo = new WeaponInfo(new ItemTemplateWeaponEntry
+            {
+                Id = 13713,
+                AmmoPerShot = 1,
+                Refire = 800,
+                ReloadTime = 1500,
+                Windup = 800,
+                Recovery = 1,
+                Range = 80,
+                ToolType = 15,
+                AttackType = 2
+            });
         }
 
         private static void ConfigureRewardTemplate(

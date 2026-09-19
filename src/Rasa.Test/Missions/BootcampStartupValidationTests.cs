@@ -97,6 +97,51 @@ namespace Rasa.Test.Missions
             });
         }
 
+        [TestMethod]
+        public void MissingRequiredBootcampRetryConversationPackageLogsTheExactOperatorDiagnosticAndBlocksReadyState()
+        {
+            const string expected = "Mission 2005@deployment_11 objective 4 transition 1 trigger 1: " +
+                                    "conversation trigger references missing npc_package.package_id 999999; " +
+                                    "restore npc_package.package_id 999999 or update mission_trigger.npc_package_id to a valid package.";
+
+            WithDisposableSqliteWorld(context =>
+            {
+                context.Database.Migrate();
+
+                var trigger = context.MissionTriggerEntries.Single(entry =>
+                    entry.MissionId == 2005 &&
+                    entry.ContentRevision == "deployment_11" &&
+                    entry.ObjectiveId == 4 &&
+                    entry.TransitionId == 1 &&
+                    entry.TriggerId == 1);
+                trigger.NpcPackageId = 999999;
+                context.SaveChanges();
+
+                var snapshot = LoadSnapshot(context);
+                var report = Validate(snapshot, context);
+                var diagnostic = report.Diagnostics.Single(entry =>
+                    entry.Code == "missing-npc-package" &&
+                    entry.MissionId == 2005 &&
+                    entry.ObjectiveId == 4 &&
+                    entry.TransitionId == 1 &&
+                    entry.TriggerId == 1);
+
+                Assert.IsTrue(report.BlocksReadiness);
+                Assert.AreEqual(expected, diagnostic.ToOperatorMessage());
+
+                var output = CaptureLogs(() =>
+                {
+                    Assert.IsFalse(Server.LogMissionValidationAndCheckReadiness(report));
+                });
+
+                StringAssert.Contains(output, expected);
+                StringAssert.Contains(
+                    output,
+                    "Mission content validation failed for required content; the Game server will not report ready.");
+                Assert.IsFalse(output.Contains("Server ready!", StringComparison.Ordinal));
+            });
+        }
+
         public static IEnumerable<object[]> RequiredContentFailureCases() =>
             MissionContentValidatorTests.GetFailureCases();
 

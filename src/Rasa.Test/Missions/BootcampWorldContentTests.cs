@@ -33,7 +33,7 @@ namespace Rasa.Test.Missions
         private const string BootcampRevision = "deployment_11";
         private const string SqliteMigrationId = "20260919110000_BootcampMissionContent";
         private const string MySqlMigrationId = "20260919110000_BootcampMissionContent";
-        private static readonly uint[] RequiredMissionIds = { 1990, 1992, 1994, 1995 };
+        private static readonly uint[] RequiredMissionIds = { 1990, 1992, 1994, 1995, 2005 };
         private static readonly uint[] AllMissionIds = { 1990, 1992, 1994, 1995, 2005 };
         private static readonly uint[] BootcampNpcIds =
         {
@@ -68,6 +68,40 @@ namespace Rasa.Test.Missions
                 Assert.AreEqual(200U, snapshot.Definitions[1992].Rewards[1].Credits);
                 Assert.AreEqual(5000U, snapshot.Definitions[1994].Rewards[1].Experience);
                 Assert.AreEqual(0U, snapshot.Definitions[1994].Rewards[1].Credits);
+                Assert.AreEqual(MissionContentRequirement.Required, snapshot.Definitions[2005].Requirement);
+            });
+        }
+
+        [TestMethod]
+        public void BootcampMissionContentMarksTheRetryAsRequiredAndDefersDepartureThroughNormalizedMetadata()
+        {
+            WithDisposableSqliteWorld((context, _) =>
+            {
+                context.Database.Migrate();
+
+                var snapshot = LoadSnapshot(context);
+                var initiation = snapshot.Definitions[1990];
+                var gearingUp = snapshot.Definitions[1992];
+                var finalMission = snapshot.Definitions[1995];
+                var retryMission = snapshot.Definitions[2005];
+
+                Assert.AreEqual(MissionAbandonmentPolicy.Prohibited, initiation.AbandonmentPolicy);
+                Assert.AreEqual(MissionContentRequirement.Required, retryMission.Requirement);
+                Assert.AreEqual(MissionContentRequirement.Required, retryMission.Prerequisites.Single().Requirement);
+                Assert.IsTrue(retryMission.Objectives.Values.All(objective =>
+                    objective.Requirement == MissionContentRequirement.Required));
+                Assert.IsTrue(retryMission.Transitions.Values.All(transition =>
+                    transition.Requirement == MissionContentRequirement.Required &&
+                    transition.Triggers.All(trigger => trigger.Requirement == MissionContentRequirement.Required) &&
+                    transition.Actions.All(action => action.Requirement == MissionContentRequirement.Required)));
+                Assert.IsTrue(retryMission.Scenarios.Values.All(scenario =>
+                    scenario.Requirement == MissionContentRequirement.Required &&
+                    scenario.Steps.All(step => step.Requirement == MissionContentRequirement.Required)));
+                Assert.AreEqual(MissionScenarioStartPolicy.PlayerTriggered, finalMission.Scenarios[6].StartPolicy);
+                Assert.AreEqual(MissionScenarioStartPolicy.PlayerTriggered, retryMission.Scenarios[5].StartPolicy);
+                CollectionAssert.Contains(
+                    gearingUp.Rewards[58].FixedItems.Select(item => item.ItemTemplateId).ToArray(),
+                    28U);
             });
         }
 

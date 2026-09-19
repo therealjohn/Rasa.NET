@@ -27,7 +27,6 @@ namespace Rasa.Managers
 
     internal sealed class MissionScenarioService : IMissionScenarioService
     {
-        private const uint BootcampPrivateMapContextId = 1985;
         private readonly Func<IGameUnitOfWorkFactory> _gameUnitOfWorkFactory;
         private readonly Func<MissionManager> _missionManager;
         private readonly ManifestationManager _manifestationManager;
@@ -1338,9 +1337,7 @@ namespace Rasa.Managers
                 currentMap.OwnerCharacterId == player.Id)
                 return true;
 
-            return contextId == BootcampPrivateMapContextId &&
-                   unitOfWork?.CharacterStartingExperience.Get(player.Id)?.State ==
-                   CharacterStartingExperienceState.Bootcamp;
+            return _maps().FindOwnedPrivateInstance(contextId, player.Id) != null;
         }
 
         private RuntimeRegistry GetRegistry(MapChannel mapChannel)

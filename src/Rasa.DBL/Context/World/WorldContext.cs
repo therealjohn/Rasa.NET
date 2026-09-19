@@ -344,6 +344,10 @@ namespace Rasa.Context.World
                 .HasConversion<byte>()
                 .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
             modelBuilder.Entity<MissionContentDefinitionEntry>()
+                .Property(entry => entry.AbandonmentPolicy)
+                .HasConversion<byte>()
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionContentDefinitionEntry>()
                 .Property(entry => entry.ClientNameTextId)
                 .AsUnsignedInt(_dbContextPropertyModifier, 11);
             modelBuilder.Entity<MissionContentDefinitionEntry>()
@@ -875,6 +879,10 @@ namespace Rasa.Context.World
                 .AsUnsignedInt(_dbContextPropertyModifier, 11);
             modelBuilder.Entity<MissionScenarioEntry>()
                 .Property(entry => entry.Requirement)
+                .HasConversion<byte>()
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionScenarioEntry>()
+                .Property(entry => entry.StartPolicy)
                 .HasConversion<byte>()
                 .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
 

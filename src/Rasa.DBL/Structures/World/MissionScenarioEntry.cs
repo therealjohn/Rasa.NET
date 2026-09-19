@@ -4,6 +4,12 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace Rasa.Structures.World
 {
+    public enum MissionScenarioStartPolicy : byte
+    {
+        Automatic = 1,
+        PlayerTriggered = 2
+    }
+
     [Table(TableName)]
     public class MissionScenarioEntry
     {
@@ -25,6 +31,11 @@ namespace Rasa.Structures.World
         [Required]
         public MissionContentRequirement Requirement { get; set; } =
             MissionContentRequirement.Required;
+
+        [Column("start_policy")]
+        [Required]
+        public MissionScenarioStartPolicy StartPolicy { get; set; } =
+            MissionScenarioStartPolicy.Automatic;
 
         [Column("name", TypeName = "varchar(64)")]
         [Required]

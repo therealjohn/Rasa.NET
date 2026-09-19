@@ -230,7 +230,7 @@ namespace Rasa.Test.Missions
                 using var context = CreateContext(contextType, "unused");
                 Assert.IsFalse(context.Database.HasPendingModelChanges(), contextType.Name);
                 Assert.IsTrue(context.Database.GetMigrations().Last().Contains(
-                    "MissionContent",
+                    "BootcampFinalReviewFixes",
                     StringComparison.Ordinal), contextType.Name);
             }
         }
@@ -923,10 +923,19 @@ namespace Rasa.Test.Missions
                     "VALUES (900429, 201, 202, 12, 4, 5, 0, 1, 'Legacy final assault')");
 
                 context.GetService<IMigrator>().Migrate("20260919034933_MissionContentReviewFixes");
-                Assert.AreEqual(0, context.MissionContentDefinitionEntries.Count(
-                    entry => entry.MissionId == 900321 || entry.MissionId == 900429));
+                using (var command = context.Database.GetDbConnection().CreateCommand())
+                {
+                    if (command.Connection.State != System.Data.ConnectionState.Open)
+                        command.Connection.Open();
+                    command.CommandText =
+                        "SELECT COUNT(*) FROM mission_content_definition WHERE mission_id IN (900321, 900429)";
+                    Assert.AreEqual(0L, (long)(command.ExecuteScalar() ?? 0L));
+                }
 
                 context.GetService<IMigrator>().Migrate(dataMigrationId);
+                var schemaMigrationId = context.Database.GetMigrations().Single(id =>
+                    id.EndsWith("_MissionContentPolicies", StringComparison.Ordinal));
+                context.GetService<IMigrator>().Migrate(schemaMigrationId);
 
                 var backfilled = context.MissionContentDefinitionEntries
                     .Where(entry => entry.MissionId == 900321 || entry.MissionId == 900429)

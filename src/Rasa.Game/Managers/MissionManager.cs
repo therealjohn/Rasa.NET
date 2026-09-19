@@ -288,7 +288,6 @@ namespace Rasa.Managers
     public class MissionManager
     {
         private const int MissionLogCapacity = 30;
-        private const uint InitiationMissionId = 1990;
         private static MissionManager _instance;
         private static readonly object InstanceLock = new();
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
@@ -296,6 +295,7 @@ namespace Rasa.Managers
         private readonly IReadOnlyDictionary<uint, Mission> _loadedMissionsView;
         private readonly Dictionary<uint, MissionRewardDefinition> _rewardDefinitions;
         private readonly Dictionary<uint, IReadOnlyDictionary<uint, MissionRewardDefinition>> _rewardPackagesByMission;
+        private readonly Dictionary<uint, MissionAbandonmentPolicy> _abandonmentPoliciesByMission;
         private readonly Dictionary<uint, IReadOnlyList<MissionPrerequisiteDefinition>> _prerequisitesByMission;
         private readonly Dictionary<uint, IReadOnlyDictionary<uint, MissionAreaDefinition>> _areasByMission;
         private readonly Dictionary<uint, IReadOnlyDictionary<uint, MissionSpawnGroupDefinition>> _spawnGroupsByMission;
@@ -367,6 +367,7 @@ namespace Rasa.Managers
             _rewardDefinitions = new Dictionary<uint, MissionRewardDefinition>(
                 rewardDefinitions ?? new Dictionary<uint, MissionRewardDefinition>());
             _rewardPackagesByMission = new Dictionary<uint, IReadOnlyDictionary<uint, MissionRewardDefinition>>();
+            _abandonmentPoliciesByMission = new Dictionary<uint, MissionAbandonmentPolicy>();
             _prerequisitesByMission = new Dictionary<uint, IReadOnlyList<MissionPrerequisiteDefinition>>();
             _areasByMission = new Dictionary<uint, IReadOnlyDictionary<uint, MissionAreaDefinition>>();
             _spawnGroupsByMission = new Dictionary<uint, IReadOnlyDictionary<uint, MissionSpawnGroupDefinition>>();
@@ -391,6 +392,7 @@ namespace Rasa.Managers
             _loadedMissions.Clear();
             _rewardDefinitions.Clear();
             _rewardPackagesByMission.Clear();
+            _abandonmentPoliciesByMission.Clear();
             _prerequisitesByMission.Clear();
             _areasByMission.Clear();
             _spawnGroupsByMission.Clear();
@@ -408,6 +410,7 @@ namespace Rasa.Managers
                     _rewardPackagesByMission[rewardPackages.Key] = rewardPackages.Value;
                 foreach (var definition in snapshot.Definitions.Values)
                 {
+                    _abandonmentPoliciesByMission[definition.MissionId] = definition.AbandonmentPolicy;
                     _prerequisitesByMission[definition.MissionId] = definition.Prerequisites;
                     _areasByMission[definition.MissionId] = definition.Areas;
                     _spawnGroupsByMission[definition.MissionId] = definition.SpawnGroups;
@@ -842,15 +845,11 @@ namespace Rasa.Managers
         internal bool TickScenarios(Client client) =>
             _scenarioService.Tick(client);
 
-        private static bool ShouldDeferBootcampDepartureScenario(
-            Client client,
-            uint missionId,
-            uint scenarioId) =>
-            client?.Player?.MapContextId == CharacterManager.BootcampPrivateMapContextId &&
-            ((missionId == 1995 && scenarioId == 6) ||
-             (missionId == 2005 && scenarioId == 5));
+        private bool ShouldStartScenarioAutomatically(uint missionId, uint scenarioId) =>
+            TryGetScenarioDefinition(missionId, scenarioId, out var scenario) &&
+            scenario.StartPolicy != MissionScenarioStartPolicy.PlayerTriggered;
 
-        private static void PublishStartedScenarios(
+        private void PublishStartedScenarios(
             Client client,
             uint missionId,
             IEnumerable<uint> scenarioIds,
@@ -858,7 +857,7 @@ namespace Rasa.Managers
         {
             foreach (var scenarioId in scenarioIds ?? Array.Empty<uint>())
             {
-                if (ShouldDeferBootcampDepartureScenario(client, missionId, scenarioId))
+                if (!ShouldStartScenarioAutomatically(missionId, scenarioId))
                     continue;
                 TryPublish(
                     () => startScenario?.Invoke(client, missionId, scenarioId),
@@ -1464,7 +1463,7 @@ namespace Rasa.Managers
                     client.CallMethod(client.Player.EntityId,
                         new MissionCompleteablePacket(missionId, true));
                 foreach (var scenarioId in actionApplication.StartScenarioIds)
-                    if (!ShouldDeferBootcampDepartureScenario(client, missionId, scenarioId))
+                    if (ShouldStartScenarioAutomatically(missionId, scenarioId))
                         _scenarioService.TryExecute(client, missionId, scenarioId);
                 return true;
             }
@@ -1930,7 +1929,9 @@ namespace Rasa.Managers
                     !TryGetOperationalMission(missionId, out var definition) ||
                     !client.Player.Missions.TryGetValue(missionId, out var log) ||
                     log.State != MissionState.Active ||
-                    missionId == InitiationMissionId)
+                    _abandonmentPoliciesByMission.GetValueOrDefault(
+                        missionId,
+                        MissionAbandonmentPolicy.Allowed) == MissionAbandonmentPolicy.Prohibited)
                     return false;
 
                 var authoredFailurePlan = MissionFailurePublicationPlan.Empty;
@@ -2005,11 +2006,6 @@ namespace Rasa.Managers
             var deadline = unitOfWork.CharacterMissionDeadlines.Get(
                 client.Player.Id,
                 definition.MissionId);
-            if (deadline?.State is not
-                (CharacterMissionDeadlineState.Active or
-                 CharacterMissionDeadlineState.Satisfied or
-                 CharacterMissionDeadlineState.Cancelled))
-                return false;
 
             var authoredFailure = definition.Objectives.Values
                 .OrderBy(objective => objective.Ordinal)
@@ -2055,10 +2051,13 @@ namespace Rasa.Managers
                 definition,
                 durableMission,
                 durableObjectives);
-            unitOfWork.CharacterMissionDeadlines.SetState(
-                client.Player.Id,
-                definition.MissionId,
-                CharacterMissionDeadlineState.Cancelled);
+            if (deadline != null)
+            {
+                unitOfWork.CharacterMissionDeadlines.SetState(
+                    client.Player.Id,
+                    definition.MissionId,
+                    CharacterMissionDeadlineState.Cancelled);
+            }
             publicationPlan = new MissionFailurePublicationPlan(
                 definition.MissionId,
                 authoredFailure.Objective.ObjectiveId,
@@ -2068,6 +2067,11 @@ namespace Rasa.Managers
                 failureActions.StartScenarioIds);
             return true;
         }
+
+        internal bool HasPlayerTriggeredScenario(uint missionId) =>
+            _scenariosByMission.TryGetValue(missionId, out var scenarios) &&
+            scenarios.Values.Any(scenario =>
+                scenario.StartPolicy == MissionScenarioStartPolicy.PlayerTriggered);
 
         private bool MissionOutputsAlreadySatisfied(
             Client client,
@@ -3110,7 +3114,7 @@ namespace Rasa.Managers
                         _missionId,
                         $"mission {_missionId} status after deadline change");
 
-                MissionManager.PublishStartedScenarios(
+                manager.PublishStartedScenarios(
                     client,
                     _missionId,
                     StartScenarioIds,
@@ -3293,7 +3297,7 @@ namespace Rasa.Managers
                         _startFailureScenario);
 
                 foreach (var publication in _publications)
-                    MissionManager.PublishStartedScenarios(
+                    _manager.PublishStartedScenarios(
                         client,
                         publication.MissionId,
                         publication.StartScenarioIds,

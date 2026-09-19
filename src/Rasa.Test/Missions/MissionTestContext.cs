@@ -884,7 +884,7 @@ namespace Rasa.Test.Missions
         public IWorldUnitOfWork CreateWorld() =>
             throw new InvalidOperationException("Unexpected world database access.");
 
-        private SqliteCharContext Open() =>
+        internal SqliteCharContext Open() =>
             new(
                 Options.Create(new DatabaseConfiguration
                 {

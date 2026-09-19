@@ -33,6 +33,7 @@ namespace Rasa.Structures.Missions
         public uint MissionId { get; }
         public string ContentRevision { get; }
         public MissionContentRequirement Requirement { get; }
+        public MissionAbandonmentPolicy AbandonmentPolicy { get; }
         public Mission Mission { get; }
         public IReadOnlyDictionary<uint, MissionObjectiveDefinition> Objectives => Mission.Objectives;
         public IReadOnlyList<uint> DuplicateObjectiveIds { get; }
@@ -54,11 +55,13 @@ namespace Rasa.Structures.Missions
             IReadOnlyDictionary<uint, MissionAuthoringRewardDefinition> rewards,
             IReadOnlyDictionary<uint, MissionAreaDefinition> areas,
             IReadOnlyDictionary<uint, MissionSpawnGroupDefinition> spawnGroups,
-            IReadOnlyDictionary<uint, MissionScenarioDefinition> scenarios)
+            IReadOnlyDictionary<uint, MissionScenarioDefinition> scenarios,
+            MissionAbandonmentPolicy abandonmentPolicy = MissionAbandonmentPolicy.Allowed)
         {
             MissionId = missionId;
             ContentRevision = contentRevision;
             Requirement = requirement;
+            AbandonmentPolicy = abandonmentPolicy;
             Mission = mission;
             DuplicateObjectiveIds = Array.AsReadOnly(
                 (duplicateObjectiveIds ?? Array.Empty<uint>())

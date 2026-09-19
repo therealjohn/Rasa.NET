@@ -203,6 +203,83 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
+        public void AbandoningBeforeScoutAreaFailsTheMissionAndMakesRetryAvailableWithoutLeavingStaleActors()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create();
+            var youngblood = harness.AddNpc(
+                BootcampRuntimeTestHarness.CaptainYoungbloodCreatureId,
+                2561);
+
+            harness.SeedMission(1, 1994, (uint)MissionState.Completed, completeable: true);
+            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+                harness.Client,
+                youngblood.EntityId,
+                1995));
+
+            using (var unit = harness.Context.CreateChar())
+                Assert.IsNull(unit.CharacterMissionDeadlines.Get(harness.Client.Player.Id, 1995));
+
+            Assert.IsTrue(harness.Manager.TryAbandon(harness.Client, 1995));
+
+            Assert.AreEqual(MissionState.Failed, harness.Client.Player.Missions[1995].State);
+            Assert.AreEqual(
+                MissionObjectiveState.Failed,
+                harness.Client.Player.Missions[1995].Objectives[1].State);
+            Assert.IsNull(BootcampRuntimeTestHarness.FindNpcByPackage(
+                harness.BootcampMap,
+                BootcampRuntimeTestHarness.WoundedSurvivorPackageId));
+            Assert.IsNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-conrad-corpse"));
+            Assert.IsNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-dropship-debris"));
+            Assert.IsNull(BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, 39));
+            Assert.IsNull(BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, 50));
+            Assert.IsNull(BootcampRuntimeTestHarness.FindNpcByPackage(
+                harness.BootcampMap,
+                BootcampRuntimeTestHarness.CorporalVanValkenbergPackageId));
+            AssertResetScenarioRecordedOnce(harness, 1995, 5, stepCount: 4);
+
+            var classification = harness.Manager.ClassifyNpcConversation(harness.Client.Player, youngblood);
+            Assert.IsTrue(classification.TryGetStatus(out _, out var missionIds));
+            CollectionAssert.Contains(missionIds, 2005U);
+        }
+
+        [TestMethod]
+        public void AbandoningAfterSurvivorConversationFailsTheMissionBeforeAnyDeadlineRowExists()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create();
+            var youngblood = StartCrashSiteScene(harness);
+            var dropship = FindScenarioObject(harness, "bootcamp-dropship-debris");
+
+            using (var unit = harness.Context.CreateChar())
+                Assert.IsNull(unit.CharacterMissionDeadlines.Get(harness.Client.Player.Id, 1995));
+
+            Assert.IsTrue(harness.Manager.TryAbandon(harness.Client, 1995));
+
+            Assert.AreEqual(MissionState.Failed, harness.Client.Player.Missions[1995].State);
+            Assert.AreEqual(
+                MissionObjectiveState.Failed,
+                harness.Client.Player.Missions[1995].Objectives[1].State);
+            using (var unit = harness.Context.CreateChar())
+                Assert.IsNull(unit.CharacterMissionDeadlines.Get(harness.Client.Player.Id, 1995));
+            Assert.IsTrue(dropship.IsEnabled);
+            Assert.IsNotNull(BootcampRuntimeTestHarness.FindScenarioObject(
+                harness.BootcampMap,
+                "bootcamp-conrad-corpse"));
+            Assert.IsNotNull(BootcampRuntimeTestHarness.FindScenarioObject(
+                harness.BootcampMap,
+                "bootcamp-dropship-debris"));
+            Assert.IsNull(BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, 39));
+            Assert.IsNull(BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, 50));
+            Assert.IsNull(BootcampRuntimeTestHarness.FindNpcByPackage(
+                harness.BootcampMap,
+                BootcampRuntimeTestHarness.CorporalVanValkenbergPackageId));
+            AssertResetScenarioRecordedOnce(harness, 1995, 5, stepCount: 4);
+
+            var classification = harness.Manager.ClassifyNpcConversation(harness.Client.Player, youngblood);
+            Assert.IsTrue(classification.TryGetStatus(out _, out var missionIds));
+            CollectionAssert.Contains(missionIds, 2005U);
+        }
+
+        [TestMethod]
         public void AbandoningDuringActiveDeadlineFailsAndResetsMission1995OnceWhileUnlockingRetry()
         {
             using var harness = BootcampRuntimeTestHarness.Create();

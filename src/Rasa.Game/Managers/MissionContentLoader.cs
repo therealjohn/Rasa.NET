@@ -147,7 +147,8 @@ namespace Rasa.Managers
                             .GroupBy(entry => entry.AreaId)
                             .ToDictionary(group => group.Key, group => new MissionAreaDefinition(group.First())),
                         BuildSpawnGroups(definition.MissionId, selectedRevision, spawnGroups, spawns),
-                        BuildScenarios(definition.MissionId, selectedRevision, scenarios, scenarioSteps)));
+                        BuildScenarios(definition.MissionId, selectedRevision, scenarios, scenarioSteps),
+                        definition.AbandonmentPolicy));
             }
 
             return new MissionContentSnapshot(selectedDefinitions, revisionsByMission);
@@ -240,7 +241,8 @@ namespace Rasa.Managers
                             ? indicatorList
                             : Array.Empty<MissionIndicator>(),
                         runtime.ProgressRule,
-                        runtime.ExecutableTransitions));
+                        runtime.ExecutableTransitions,
+                        objectiveEntry.Requirement));
             }
 
             return objectiveDefinitions;

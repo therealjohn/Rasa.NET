@@ -38,8 +38,6 @@ namespace Rasa.Managers
         internal const uint BootcampPrivateMapContextId = 1985;
         internal const uint BootcampExitPadWaypointId = 60;
         private const uint BootcampInitiationMissionId = 1990;
-        private const uint BootcampFinaleMissionId = 1995;
-        private const uint BootcampRetryFinaleMissionId = 2005;
         private const byte BootcampParityLevel = 4;
         private const uint BootcampSkipAmmoTemplateId = 28;
         private const uint BootcampSkipAmmoQuantity = 20;
@@ -936,13 +934,23 @@ namespace Rasa.Managers
                             CharacterStartingExperienceState.Completed))
                         return;
 
-                    if (ResolveBootcampDepartureMissionId(
+                    if (!HasPlayerTriggeredDepartureMission(
                             unitOfWork,
-                            client.Player.Id) == null)
+                            client.Player.Id))
                         throw new GameplayRejectionException(
                             "Bootcamp departure is not ready.");
 
                     ReconcileBootcampParityProgression(unitOfWork, client.Player.Id);
+                    EnsureWaypoint(
+                        unitOfWork,
+                        client.Player.Id,
+                        BootcampAliaWaypointId,
+                        WaypointType.Waypoint);
+                    EnsureWaypoint(
+                        unitOfWork,
+                        client.Player.Id,
+                        BootcampAliaHospitalId,
+                        WaypointType.Hospital);
                     EnsureQualification(
                         unitOfWork,
                         client.Player.Id,
@@ -1189,25 +1197,16 @@ namespace Rasa.Managers
                 }));
         }
 
-        private static uint? ResolveBootcampDepartureMissionId(
+        private bool HasPlayerTriggeredDepartureMission(
             ICharUnitOfWork unitOfWork,
             uint characterId)
         {
-            foreach (var missionId in new[]
-                     {
-                         BootcampRetryFinaleMissionId,
-                         BootcampFinaleMissionId
-                     })
-            {
-                var mission = unitOfWork.CharacterMissions.GetByCharacterAndMission(
-                    characterId,
-                    missionId);
-                if (mission?.MissionState == (uint)MissionState.Active &&
-                    mission.Completeable)
-                    return missionId;
-            }
-
-            return null;
+            var manager = _missionManager ?? MissionManager.Instance;
+            return unitOfWork.CharacterMissions.Get(characterId)
+                .Any(mission =>
+                    mission.MissionState == (uint)MissionState.Active &&
+                    mission.Completeable &&
+                    manager.HasPlayerTriggeredScenario(mission.MissionId));
         }
 
         private static void EnsureQualification(

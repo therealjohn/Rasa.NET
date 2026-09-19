@@ -1275,6 +1275,10 @@ namespace Rasa.Migrations.SqliteWorld
                         .HasColumnType("varchar(32)")
                         .HasColumnName("content_revision");
 
+                    b.Property<byte>("AbandonmentPolicy")
+                        .HasColumnType("tinyint(3)")
+                        .HasColumnName("abandonment_policy");
+
                     b.Property<byte>("CategoryId")
                         .HasColumnType("tinyint(3)")
                         .HasColumnName("category_id");
@@ -1694,6 +1698,10 @@ namespace Rasa.Migrations.SqliteWorld
                     b.Property<byte>("Requirement")
                         .HasColumnType("tinyint(3)")
                         .HasColumnName("requirement");
+
+                    b.Property<byte>("StartPolicy")
+                        .HasColumnType("tinyint(3)")
+                        .HasColumnName("start_policy");
 
                     b.HasKey("MissionId", "ContentRevision", "ScenarioId");
 

@@ -12,6 +12,12 @@ namespace Rasa.Structures.World
         Optional = 2
     }
 
+    public enum MissionAbandonmentPolicy : byte
+    {
+        Allowed = 1,
+        Prohibited = 2
+    }
+
     [Table(TableName)]
     [Index(nameof(ContentRevision), Name = "mission_content_definition_index_content_revision")]
     public class MissionContentDefinitionEntry
@@ -30,6 +36,11 @@ namespace Rasa.Structures.World
         [Required]
         public MissionContentRequirement Requirement { get; set; } =
             MissionContentRequirement.Required;
+
+        [Column("abandonment_policy")]
+        [Required]
+        public MissionAbandonmentPolicy AbandonmentPolicy { get; set; } =
+            MissionAbandonmentPolicy.Allowed;
 
         [Column("client_name_text_id")]
         [Required]

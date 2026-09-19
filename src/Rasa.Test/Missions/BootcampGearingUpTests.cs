@@ -20,7 +20,7 @@ namespace Rasa.Test.Missions
     [DoNotParallelize]
     public class BootcampGearingUpTests
     {
-        private static readonly uint[] CrateTemplateIds = { 13066, 13096, 13156, 13186, 13713 };
+        private static readonly uint[] CrateTemplateIds = { 13066, 13096, 13156, 13186, 13713, 28 };
 
         [TestMethod]
         [DynamicData(nameof(ReconnectBoundaries))]
@@ -388,6 +388,68 @@ namespace Rasa.Test.Missions
             var finalReward = harness.Context.ReadRewardTotals();
             Assert.AreEqual(afterReward.Experience, finalReward.Experience);
             Assert.AreEqual(afterReward.Credits, finalReward.Credits);
+        }
+
+        [TestMethod]
+        public void CrateLoadoutIncludesCompatibleAmmoAndCanReloadThenFireTheGrantedRifle()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create();
+            var mcAllister = harness.AddNpc(BootcampRuntimeTestHarness.MajorMcAllisterCreatureId);
+            var delessio = harness.AddNpc(
+                BootcampRuntimeTestHarness.CaptainDelessioCreatureId,
+                BootcampRuntimeTestHarness.CaptainDelessioPackageId);
+
+            harness.SeedMission(
+                harness.Client.Player.Id,
+                BootcampRuntimeTestHarness.MissionInitiation,
+                (uint)MissionState.Completed,
+                false);
+
+            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+                harness.Client,
+                mcAllister.EntityId,
+                BootcampRuntimeTestHarness.MissionGearingUp));
+            harness.Drain();
+
+            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+                harness.Client,
+                delessio.EntityId,
+                BootcampRuntimeTestHarness.MissionGearingUp,
+                4,
+                1));
+            Assert.IsTrue(harness.Manager.RecordProgress(
+                harness.Client,
+                MissionProgressEvent.Interaction(7862)));
+
+            AssertItemTemplatesPresent(harness, 13066, 13096, 13156, 13186, 13713, 28);
+
+            PrepareEquipping(harness);
+            while (harness.Client.Player.Inventory.WeaponDrawer.Count < 5)
+                harness.Client.Player.Inventory.WeaponDrawer.Add(0);
+            while (harness.Client.Player.Inventory.EquippedInventory.Count < 17)
+                harness.Client.Player.Inventory.EquippedInventory.Add(0);
+            var rifleSlot = FindPersonalSlotByTemplate(harness.Client, 13713);
+            var rifleEntityId = harness.Client.Player.Inventory.PersonalInventory[(int)rifleSlot];
+            harness.Client.Player.Inventory.PersonalInventory[(int)rifleSlot] = 0;
+            harness.Client.Player.Inventory.WeaponDrawer[0] = rifleEntityId;
+
+            var manifestation = new ManifestationManager(harness.Context);
+            var weapon = EntityManager.Instance.GetItem(harness.Client.Player.Inventory.WeaponDrawer[0]);
+            Assert.IsNotNull(weapon);
+            harness.Client.Player.ActiveWeapon = 0;
+            harness.Client.Player.Inventory.EquippedInventory[13] = weapon.EntityId;
+            manifestation.WeaponReady(harness.Client, true);
+            Assert.AreEqual(0U, weapon.CurrentAmmo);
+            Assert.IsFalse(manifestation.PlayerTryFireWeapon(harness.Client));
+            var reload = harness.BootcampMap.PerformRecovery.Single(action => action.ActionId == ActionId.WeaponReload);
+            manifestation.WeaponReload(reload);
+            harness.BootcampMap.PerformRecovery.Remove(reload);
+            manifestation.WeaponReady(harness.Client, true);
+
+            Assert.IsTrue(manifestation.PlayerTryFireWeapon(harness.Client));
+            Assert.AreEqual(19U, weapon.CurrentAmmo);
+            using var unit = harness.Context.CreateChar();
+            Assert.AreEqual(19U, unit.Items.GetItem(weapon.Id).AmmoCount);
         }
 
         private static void AssertMissionOrder(

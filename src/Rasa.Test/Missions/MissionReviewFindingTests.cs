@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -30,6 +32,29 @@ namespace Rasa.Test.Missions
     [DoNotParallelize]
     public class MissionReviewFindingTests
     {
+        [TestMethod]
+        public void GenericMissionRuntimeFilesDoNotContainBootcampMissionIdSwitches()
+        {
+            var repositoryRoot = FindRepositoryRoot();
+            foreach (var relativePath in new[]
+                     {
+                         @"src\Rasa.Game\Managers\MissionManager.cs",
+                         @"src\Rasa.Game\Managers\MissionScenarioService.cs"
+                     })
+            {
+                var path = Path.Combine(repositoryRoot, relativePath);
+                var contents = File.ReadAllText(path);
+                Assert.IsFalse(
+                    Regex.IsMatch(contents, @"\b(1990|1995|2005)\b"),
+                    $"{relativePath} still contains a Bootcamp mission id switch.");
+                Assert.IsFalse(
+                    Regex.IsMatch(
+                        contents,
+                        @"ShouldDeferBootcampDepartureScenario|ResolveBootcampDepartureMissionId|BootcampPrivateMapContextId"),
+                    $"{relativePath} still contains Bootcamp-specific branching.");
+            }
+        }
+
         [TestMethod]
         public void DatabaseMissionLoadsInactiveDuringLegacyTransition()
         {
@@ -1254,6 +1279,21 @@ namespace Rasa.Test.Missions
                 if (predicate(packets[index]))
                     return index;
             return -1;
+        }
+
+        private static string FindRepositoryRoot()
+        {
+            var directory = new DirectoryInfo(AppContext.BaseDirectory);
+            while (directory != null &&
+                   !directory.GetFiles("Rasa.NET.sln").Any())
+            {
+                directory = directory.Parent;
+            }
+
+            if (directory == null)
+                throw new DirectoryNotFoundException("Could not find repository root from test output.");
+
+            return directory.FullName;
         }
 
         private sealed class MissionLoadingFactory : IGameUnitOfWorkFactory
