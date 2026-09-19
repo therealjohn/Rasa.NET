@@ -953,6 +953,49 @@ namespace Rasa.Managers
 
                     return;
 
+                case MissionScenarioStepKind.SpawnDynamicObject:
+                    if (string.IsNullOrWhiteSpace(step.DynamicObjectKey) ||
+                        !step.EntityClassId.HasValue ||
+                        !step.PosX.HasValue ||
+                        !step.PosY.HasValue ||
+                        !step.PosZ.HasValue ||
+                        !step.Orientation.HasValue)
+                    {
+                        AddInvalidScenarioStepShape(
+                            definition,
+                            scenarioId,
+                            step,
+                            "spawn dynamic object steps require dynamic_object_key, entity_class_id, pos_x, pos_y, pos_z, and orientation.",
+                            diagnostics);
+                        return;
+                    }
+
+                    if (!references.EntityClassIds.Contains(step.EntityClassId.Value))
+                    {
+                        diagnostics.Add(new MissionValidationDiagnostic(
+                            "missing-entity-class",
+                            $"dynamic object step references missing entity class {step.EntityClassId.Value}.",
+                            definition.MissionId,
+                            definition.ContentRevision,
+                            scenarioId: scenarioId,
+                            stepId: step.StepId));
+                    }
+
+                    return;
+
+                case MissionScenarioStepKind.DespawnDynamicObject:
+                    if (string.IsNullOrWhiteSpace(step.DynamicObjectKey))
+                    {
+                        AddInvalidScenarioStepShape(
+                            definition,
+                            scenarioId,
+                            step,
+                            "despawn dynamic object steps require dynamic_object_key.",
+                            diagnostics);
+                    }
+
+                    return;
+
                 case MissionScenarioStepKind.EnableInteraction:
                 case MissionScenarioStepKind.DisableInteraction:
                     if (step.EntityClassId.HasValue)
@@ -1295,13 +1338,24 @@ namespace Rasa.Managers
                         return;
                     }
 
-                    if (!step.TryGetQualificationKey(out var qualificationKey) ||
-                        qualificationKey != CharacterQualificationKey.BootcampComplete ||
+                    if (!step.TryGetQualificationKey(out _))
+                    {
+                        diagnostics.Add(new MissionValidationDiagnostic(
+                            "invalid-qualification",
+                            "qualification step requires a defined CharacterQualificationKey.",
+                            definition.MissionId,
+                            definition.ContentRevision,
+                            scenarioId: scenarioId,
+                            stepId: step.StepId));
+                        return;
+                    }
+
+                    if (step.QualificationValue.Value != MissionScenarioStepEntry.RemovedQualificationValue &&
                         step.QualificationValue.Value != MissionScenarioStepEntry.GrantedQualificationValue)
                     {
                         diagnostics.Add(new MissionValidationDiagnostic(
                             "invalid-qualification",
-                            $"qualification step requires the approved pair BootcampComplete={MissionScenarioStepEntry.GrantedQualificationValue}.",
+                            $"qualification step requires qualification_value {MissionScenarioStepEntry.RemovedQualificationValue} (remove) or {MissionScenarioStepEntry.GrantedQualificationValue} (set).",
                             definition.MissionId,
                             definition.ContentRevision,
                             scenarioId: scenarioId,

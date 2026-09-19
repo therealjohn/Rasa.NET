@@ -50,6 +50,7 @@ namespace Rasa.Structures.Missions
         public uint? RewardId { get; }
         public uint? SpawnGroupId { get; }
         public uint? SpawnId { get; }
+        public string DynamicObjectKey { get; }
         public uint? EntityClassId { get; }
         public uint? TargetScenarioId { get; }
         public uint? DelayMilliseconds { get; }
@@ -66,6 +67,7 @@ namespace Rasa.Structures.Missions
         public double? PosY { get; }
         public double? PosZ { get; }
         public double? Orientation { get; }
+        public bool? InitialInteractionEnabled { get; }
         public CharacterQualificationKey? QualificationKey { get; }
         public byte? QualificationValue { get; }
         public bool? AccountSkipEntitlement { get; }
@@ -84,6 +86,7 @@ namespace Rasa.Structures.Missions
             RewardId = entry.RewardId;
             SpawnGroupId = entry.SpawnGroupId;
             SpawnId = entry.SpawnId;
+            DynamicObjectKey = entry.DynamicObjectKey;
             EntityClassId = entry.EntityClassId;
             TargetScenarioId = entry.TargetScenarioId;
             DelayMilliseconds = entry.DelayMilliseconds;
@@ -100,6 +103,7 @@ namespace Rasa.Structures.Missions
             PosY = entry.PosY;
             PosZ = entry.PosZ;
             Orientation = entry.Orientation;
+            InitialInteractionEnabled = entry.InitialInteractionEnabled;
             QualificationKey = entry.QualificationKey;
             QualificationValue = entry.QualificationValue;
             AccountSkipEntitlement = entry.AccountSkipEntitlement;

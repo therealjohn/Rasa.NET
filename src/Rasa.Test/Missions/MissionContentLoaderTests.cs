@@ -57,41 +57,51 @@ namespace Rasa.Test.Missions
             var snapshot = new MissionContentLoader().Load(fixture.CreateRepository());
             var steps = snapshot.Definitions[321].Scenarios[60].Steps;
 
-            Assert.AreEqual(20, steps.Count);
+            Assert.AreEqual(22, steps.Count);
             Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.SpawnGroup, steps[0].Kind);
             Assert.AreEqual(50U, steps[0].SpawnGroupId);
-            Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.EnableInteraction, steps[2].Kind);
+            Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.SpawnDynamicObject, steps[2].Kind);
+            Assert.AreEqual("bootcamp-crate", steps[2].DynamicObjectKey);
             Assert.AreEqual(3147U, steps[2].EntityClassId);
-            Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.DisableInteraction, steps[3].Kind);
-            Assert.AreEqual(1U, steps[3].SpawnId);
-            Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.StartDeadline, steps[8].Kind);
-            Assert.AreEqual(30000U, steps[8].DelayMilliseconds);
-            Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.GrantSkillAbility, steps[11].Kind);
-            Assert.AreEqual(901U, steps[11].SkillId);
-            Assert.AreEqual(194U, steps[11].AbilityId);
-            Assert.AreEqual((byte)2, steps[11].SkillLevel);
-            Assert.AreEqual((byte)3, steps[11].AbilitySlot);
-            Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.PlayTutorial, steps[12].Kind);
-            Assert.AreEqual((uint)Rasa.Data.TutorialId.Tutmissiongiver, steps[12].TutorialId);
-            Assert.AreEqual(88U, steps[12].AudioSetId);
-            Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.ScheduleScenario, steps[13].Kind);
-            Assert.AreEqual(60U, steps[13].TargetScenarioId);
-            Assert.AreEqual(5000U, steps[13].DelayMilliseconds);
-            Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.ResetAttempt, steps[14].Kind);
-            Assert.AreEqual("bootcamp-scout", steps[14].AttemptKey);
-            Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.ResetAttempt, steps[15].Kind);
+            Assert.AreEqual(8D, steps[2].PosX);
+            Assert.AreEqual(9D, steps[2].PosY);
+            Assert.AreEqual(10D, steps[2].PosZ);
+            Assert.AreEqual(0.5D, steps[2].Orientation);
+            Assert.AreEqual(false, steps[2].InitialInteractionEnabled);
+            Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.DespawnDynamicObject, steps[3].Kind);
+            Assert.AreEqual("bootcamp-crate", steps[3].DynamicObjectKey);
+            Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.EnableInteraction, steps[4].Kind);
+            Assert.AreEqual(3147U, steps[4].EntityClassId);
+            Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.DisableInteraction, steps[5].Kind);
+            Assert.AreEqual(1U, steps[5].SpawnId);
+            Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.StartDeadline, steps[10].Kind);
+            Assert.AreEqual(30000U, steps[10].DelayMilliseconds);
+            Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.GrantSkillAbility, steps[13].Kind);
+            Assert.AreEqual(901U, steps[13].SkillId);
+            Assert.AreEqual(194U, steps[13].AbilityId);
+            Assert.AreEqual((byte)2, steps[13].SkillLevel);
+            Assert.AreEqual((byte)3, steps[13].AbilitySlot);
+            Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.PlayTutorial, steps[14].Kind);
+            Assert.AreEqual((uint)Rasa.Data.TutorialId.Tutmissiongiver, steps[14].TutorialId);
+            Assert.AreEqual(88U, steps[14].AudioSetId);
+            Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.ScheduleScenario, steps[15].Kind);
             Assert.AreEqual(60U, steps[15].TargetScenarioId);
-            Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.TransferPlayer, steps[17].Kind);
-            Assert.AreEqual(1220U, steps[17].MapContextId);
-            Assert.AreEqual(1D, steps[17].PosX);
-            Assert.AreEqual(2D, steps[17].PosY);
-            Assert.AreEqual(3D, steps[17].PosZ);
-            Assert.AreEqual(1.5D, steps[17].Orientation);
-            Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.SetQualification, steps[18].Kind);
-            Assert.AreEqual(Rasa.Structures.Char.CharacterQualificationKey.BootcampComplete, steps[18].QualificationKey);
-            Assert.AreEqual((byte)1, steps[18].QualificationValue);
-            Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.SetAccountSkipEntitlement, steps[19].Kind);
-            Assert.AreEqual(true, steps[19].AccountSkipEntitlement);
+            Assert.AreEqual(5000U, steps[15].DelayMilliseconds);
+            Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.ResetAttempt, steps[16].Kind);
+            Assert.AreEqual("bootcamp-scout", steps[16].AttemptKey);
+            Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.ResetAttempt, steps[17].Kind);
+            Assert.AreEqual(60U, steps[17].TargetScenarioId);
+            Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.TransferPlayer, steps[19].Kind);
+            Assert.AreEqual(1220U, steps[19].MapContextId);
+            Assert.AreEqual(1D, steps[19].PosX);
+            Assert.AreEqual(2D, steps[19].PosY);
+            Assert.AreEqual(3D, steps[19].PosZ);
+            Assert.AreEqual(1.5D, steps[19].Orientation);
+            Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.SetQualification, steps[20].Kind);
+            Assert.AreEqual(Rasa.Structures.Char.CharacterQualificationKey.BootcampComplete, steps[20].QualificationKey);
+            Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepEntry.RemovedQualificationValue, steps[20].QualificationValue);
+            Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.SetAccountSkipEntitlement, steps[21].Kind);
+            Assert.AreEqual(true, steps[21].AccountSkipEntitlement);
 
             fixture.ScenarioSteps[0].SpawnGroupId = 999;
             Assert.AreEqual(50U, steps[0].SpawnGroupId);
@@ -428,10 +438,16 @@ namespace Rasa.Test.Missions
                     ScenarioId = 60,
                     StepId = 3,
                     Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
-                    Kind = Rasa.Structures.World.MissionScenarioStepKind.EnableInteraction,
+                    Kind = Rasa.Structures.World.MissionScenarioStepKind.SpawnDynamicObject,
                     Sequence = 3,
+                    DynamicObjectKey = "bootcamp-crate",
                     EntityClassId = 3147,
-                    Comment = "Enable interaction on the stable world object"
+                    PosX = 8,
+                    PosY = 9,
+                    PosZ = 10,
+                    Orientation = 0.5,
+                    InitialInteractionEnabled = false,
+                    Comment = "Spawn a tracked dynamic object"
                 },
                 new Rasa.Structures.World.MissionScenarioStepEntry
                 {
@@ -440,8 +456,32 @@ namespace Rasa.Test.Missions
                     ScenarioId = 60,
                     StepId = 4,
                     Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
-                    Kind = Rasa.Structures.World.MissionScenarioStepKind.DisableInteraction,
+                    Kind = Rasa.Structures.World.MissionScenarioStepKind.DespawnDynamicObject,
                     Sequence = 4,
+                    DynamicObjectKey = "bootcamp-crate",
+                    Comment = "Despawn the tracked dynamic object"
+                },
+                new Rasa.Structures.World.MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 5,
+                    Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
+                    Kind = Rasa.Structures.World.MissionScenarioStepKind.EnableInteraction,
+                    Sequence = 5,
+                    EntityClassId = 3147,
+                    Comment = "Enable interaction on the stable world object"
+                },
+                new Rasa.Structures.World.MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 6,
+                    Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
+                    Kind = Rasa.Structures.World.MissionScenarioStepKind.DisableInteraction,
+                    Sequence = 6,
                     SpawnGroupId = 50,
                     SpawnId = 1,
                     Comment = "Disable interaction on the spawned actor"
@@ -451,10 +491,10 @@ namespace Rasa.Test.Missions
                     MissionId = 321,
                     ContentRevision = "deployment_11",
                     ScenarioId = 60,
-                    StepId = 5,
+                    StepId = 7,
                     Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
                     Kind = Rasa.Structures.World.MissionScenarioStepKind.RevealObjective,
-                    Sequence = 5,
+                    Sequence = 7,
                     TargetObjectiveId = 11,
                     Comment = "Reveal follow-up objective"
                 },
@@ -463,10 +503,10 @@ namespace Rasa.Test.Missions
                     MissionId = 321,
                     ContentRevision = "deployment_11",
                     ScenarioId = 60,
-                    StepId = 6,
+                    StepId = 8,
                     Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
                     Kind = Rasa.Structures.World.MissionScenarioStepKind.ActivateObjective,
-                    Sequence = 6,
+                    Sequence = 8,
                     TargetObjectiveId = 11,
                     Comment = "Activate follow-up objective"
                 },
@@ -475,10 +515,10 @@ namespace Rasa.Test.Missions
                     MissionId = 321,
                     ContentRevision = "deployment_11",
                     ScenarioId = 60,
-                    StepId = 7,
+                    StepId = 9,
                     Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
                     Kind = Rasa.Structures.World.MissionScenarioStepKind.CompleteObjective,
-                    Sequence = 7,
+                    Sequence = 9,
                     TargetObjectiveId = 10,
                     Comment = "Complete current objective"
                 },
@@ -487,10 +527,10 @@ namespace Rasa.Test.Missions
                     MissionId = 321,
                     ContentRevision = "deployment_11",
                     ScenarioId = 60,
-                    StepId = 8,
+                    StepId = 10,
                     Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
                     Kind = Rasa.Structures.World.MissionScenarioStepKind.FailObjective,
-                    Sequence = 8,
+                    Sequence = 10,
                     TargetObjectiveId = 11,
                     Comment = "Fail follow-up objective"
                 },
@@ -499,10 +539,10 @@ namespace Rasa.Test.Missions
                     MissionId = 321,
                     ContentRevision = "deployment_11",
                     ScenarioId = 60,
-                    StepId = 9,
+                    StepId = 11,
                     Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
                     Kind = Rasa.Structures.World.MissionScenarioStepKind.StartDeadline,
-                    Sequence = 9,
+                    Sequence = 11,
                     DelayMilliseconds = 30000,
                     Comment = "Start a 30 second deadline"
                 },
@@ -511,10 +551,10 @@ namespace Rasa.Test.Missions
                     MissionId = 321,
                     ContentRevision = "deployment_11",
                     ScenarioId = 60,
-                    StepId = 10,
+                    StepId = 12,
                     Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
                     Kind = Rasa.Structures.World.MissionScenarioStepKind.CancelDeadline,
-                    Sequence = 10,
+                    Sequence = 12,
                     Comment = "Cancel active deadline"
                 },
                 new Rasa.Structures.World.MissionScenarioStepEntry
@@ -522,10 +562,10 @@ namespace Rasa.Test.Missions
                     MissionId = 321,
                     ContentRevision = "deployment_11",
                     ScenarioId = 60,
-                    StepId = 11,
+                    StepId = 13,
                     Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
                     Kind = Rasa.Structures.World.MissionScenarioStepKind.GrantRewardPackage,
-                    Sequence = 11,
+                    Sequence = 13,
                     RewardId = 40,
                     Comment = "Grant the authored reward package"
                 },
@@ -534,10 +574,10 @@ namespace Rasa.Test.Missions
                     MissionId = 321,
                     ContentRevision = "deployment_11",
                     ScenarioId = 60,
-                    StepId = 12,
+                    StepId = 14,
                     Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
                     Kind = Rasa.Structures.World.MissionScenarioStepKind.GrantSkillAbility,
-                    Sequence = 12,
+                    Sequence = 14,
                     SkillId = 901,
                     AbilityId = 194,
                     SkillLevel = 2,
@@ -549,10 +589,10 @@ namespace Rasa.Test.Missions
                     MissionId = 321,
                     ContentRevision = "deployment_11",
                     ScenarioId = 60,
-                    StepId = 13,
+                    StepId = 15,
                     Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
                     Kind = Rasa.Structures.World.MissionScenarioStepKind.PlayTutorial,
-                    Sequence = 13,
+                    Sequence = 15,
                     TutorialId = (uint)Rasa.Data.TutorialId.Tutmissiongiver,
                     AudioSetId = 88,
                     Comment = "Play the mission giver tutorial"
@@ -562,10 +602,10 @@ namespace Rasa.Test.Missions
                     MissionId = 321,
                     ContentRevision = "deployment_11",
                     ScenarioId = 60,
-                    StepId = 14,
+                    StepId = 16,
                     Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
                     Kind = Rasa.Structures.World.MissionScenarioStepKind.ScheduleScenario,
-                    Sequence = 14,
+                    Sequence = 16,
                     TargetScenarioId = 60,
                     DelayMilliseconds = 5000,
                     Comment = "Schedule the follow-up scenario"
@@ -575,10 +615,10 @@ namespace Rasa.Test.Missions
                     MissionId = 321,
                     ContentRevision = "deployment_11",
                     ScenarioId = 60,
-                    StepId = 15,
+                    StepId = 17,
                     Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
                     Kind = Rasa.Structures.World.MissionScenarioStepKind.ResetAttempt,
-                    Sequence = 15,
+                    Sequence = 17,
                     AttemptKey = "bootcamp-scout",
                     Comment = "Reset by attempt key"
                 },
@@ -587,10 +627,10 @@ namespace Rasa.Test.Missions
                     MissionId = 321,
                     ContentRevision = "deployment_11",
                     ScenarioId = 60,
-                    StepId = 16,
+                    StepId = 18,
                     Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
                     Kind = Rasa.Structures.World.MissionScenarioStepKind.ResetAttempt,
-                    Sequence = 16,
+                    Sequence = 18,
                     TargetScenarioId = 60,
                     Comment = "Reset by scenario id"
                 },
@@ -599,10 +639,10 @@ namespace Rasa.Test.Missions
                     MissionId = 321,
                     ContentRevision = "deployment_11",
                     ScenarioId = 60,
-                    StepId = 17,
+                    StepId = 19,
                     Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
                     Kind = Rasa.Structures.World.MissionScenarioStepKind.EmitScenarioEvent,
-                    Sequence = 17,
+                    Sequence = 19,
                     ScenarioEventId = 7,
                     Comment = "Emit a scenario event"
                 },
@@ -611,10 +651,10 @@ namespace Rasa.Test.Missions
                     MissionId = 321,
                     ContentRevision = "deployment_11",
                     ScenarioId = 60,
-                    StepId = 18,
+                    StepId = 20,
                     Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
                     Kind = Rasa.Structures.World.MissionScenarioStepKind.TransferPlayer,
-                    Sequence = 18,
+                    Sequence = 20,
                     MapContextId = 1220,
                     PosX = 1,
                     PosY = 2,
@@ -627,23 +667,23 @@ namespace Rasa.Test.Missions
                     MissionId = 321,
                     ContentRevision = "deployment_11",
                     ScenarioId = 60,
-                    StepId = 19,
+                    StepId = 21,
                     Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
                     Kind = Rasa.Structures.World.MissionScenarioStepKind.SetQualification,
-                    Sequence = 19,
+                    Sequence = 21,
                     QualificationKey = Rasa.Structures.Char.CharacterQualificationKey.BootcampComplete,
-                    QualificationValue = 1,
-                    Comment = "Mark bootcamp complete"
+                    QualificationValue = Rasa.Structures.World.MissionScenarioStepEntry.RemovedQualificationValue,
+                    Comment = "Clear the qualification"
                 },
                 new Rasa.Structures.World.MissionScenarioStepEntry
                 {
                     MissionId = 321,
                     ContentRevision = "deployment_11",
                     ScenarioId = 60,
-                    StepId = 20,
+                    StepId = 22,
                     Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
                     Kind = Rasa.Structures.World.MissionScenarioStepKind.SetAccountSkipEntitlement,
-                    Sequence = 20,
+                    Sequence = 22,
                     AccountSkipEntitlement = true,
                     Comment = "Grant the account skip entitlement"
                 }});

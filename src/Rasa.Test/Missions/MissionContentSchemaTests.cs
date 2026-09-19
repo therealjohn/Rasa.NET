@@ -197,6 +197,7 @@ namespace Rasa.Test.Missions
             Assert.AreEqual("reward_id", scenarioStep.FindProperty("RewardId")?.GetColumnName());
             Assert.AreEqual("spawn_group_id", scenarioStep.FindProperty("SpawnGroupId")?.GetColumnName());
             Assert.AreEqual("spawn_id", scenarioStep.FindProperty("SpawnId")?.GetColumnName());
+            Assert.AreEqual("dynamic_object_key", scenarioStep.FindProperty("DynamicObjectKey")?.GetColumnName());
             Assert.AreEqual("entity_class_id", scenarioStep.FindProperty("EntityClassId")?.GetColumnName());
             Assert.AreEqual("target_scenario_id", scenarioStep.FindProperty("TargetScenarioId")?.GetColumnName());
             Assert.AreEqual("delay_milliseconds", scenarioStep.FindProperty("DelayMilliseconds")?.GetColumnName());
@@ -213,6 +214,7 @@ namespace Rasa.Test.Missions
             Assert.AreEqual("pos_y", scenarioStep.FindProperty("PosY")?.GetColumnName());
             Assert.AreEqual("pos_z", scenarioStep.FindProperty("PosZ")?.GetColumnName());
             Assert.AreEqual("orientation", scenarioStep.FindProperty("Orientation")?.GetColumnName());
+            Assert.AreEqual("initial_interaction_enabled", scenarioStep.FindProperty("InitialInteractionEnabled")?.GetColumnName());
             Assert.AreEqual("qualification_key", scenarioStep.FindProperty("QualificationKey")?.GetColumnName());
             Assert.AreEqual("qualification_value", scenarioStep.FindProperty("QualificationValue")?.GetColumnName());
             Assert.AreEqual("account_skip_entitlement", scenarioStep.FindProperty("AccountSkipEntitlement")?.GetColumnName());
@@ -275,12 +277,18 @@ namespace Rasa.Test.Missions
             StringAssert.Contains(sql, "constraint ck_mission_scenario_step_numeric_bounds check");
             StringAssert.Contains(sql, "kind in (1, 2, 3, 4, 5)");
             StringAssert.Contains(sql, "kind in (1, 2, 3, 4, 5, 6, 7, 8)");
-            StringAssert.Contains(sql, "kind in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19)");
+            StringAssert.Contains(sql, "kind in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21)");
             StringAssert.Contains(sql, "selection_count in (0, 1)");
             StringAssert.Contains(sql, "kind in (1, 2)");
             StringAssert.Contains(sql, "delay_milliseconds >= 1 and delay_milliseconds <= 86400000");
             StringAssert.Contains(sql, "skill_level >= 1 and skill_level <= 5");
             StringAssert.Contains(sql, "ability_slot is null or ability_slot <= 24");
+            StringAssert.Contains(sql, "dynamic_object_key");
+            StringAssert.Contains(sql, "initial_interaction_enabled");
+            StringAssert.Contains(sql, "kind <> 20 or (dynamic_object_key is not null and dynamic_object_key <> '' and entity_class_id is not null and pos_x is not null and pos_y is not null and pos_z is not null and orientation is not null");
+            StringAssert.Contains(sql, "kind <> 21 or (dynamic_object_key is not null and dynamic_object_key <> ''");
+            StringAssert.Contains(sql, "qualification_key is null or (qualification_key >= 1 and qualification_key <= 255)");
+            StringAssert.Contains(sql, "qualification_value is null or (qualification_value >= 0 and qualification_value <= 1)");
             StringAssert.Contains(sql, "source_uri is not null or local_client_path is not null");
             StringAssert.Contains(sql, "client_counter_0_text_id");
             StringAssert.Contains(sql, "client_counter_1_text_id");

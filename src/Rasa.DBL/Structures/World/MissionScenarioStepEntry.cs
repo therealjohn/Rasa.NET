@@ -25,7 +25,9 @@ namespace Rasa.Structures.World
         EmitScenarioEvent = 16,
         TransferPlayer = 17,
         SetQualification = 18,
-        SetAccountSkipEntitlement = 19
+        SetAccountSkipEntitlement = 19,
+        SpawnDynamicObject = 20,
+        DespawnDynamicObject = 21
     }
 
     [Table(TableName)]
@@ -36,6 +38,9 @@ namespace Rasa.Structures.World
         public const uint MaxAbilityId = int.MaxValue;
         public const byte MaxSkillLevel = 5;
         public const byte MaxAbilitySlot = 24;
+        public const byte MinimumQualificationKey = 1;
+        public const byte MaximumQualificationKey = byte.MaxValue;
+        public const byte RemovedQualificationValue = 0;
         public const byte GrantedQualificationValue = 1;
 
         [Column("mission_id")]
@@ -78,6 +83,9 @@ namespace Rasa.Structures.World
 
         [Column("spawn_id")]
         public uint? SpawnId { get; set; }
+
+        [Column("dynamic_object_key", TypeName = "varchar(64)")]
+        public string DynamicObjectKey { get; set; }
 
         [Column("entity_class_id")]
         public uint? EntityClassId { get; set; }
@@ -126,6 +134,9 @@ namespace Rasa.Structures.World
 
         [Column("orientation")]
         public double? Orientation { get; set; }
+
+        [Column("initial_interaction_enabled", TypeName = "bit")]
+        public bool? InitialInteractionEnabled { get; set; }
 
         [Column("qualification_key")]
         public CharacterQualificationKey? QualificationKey { get; set; }

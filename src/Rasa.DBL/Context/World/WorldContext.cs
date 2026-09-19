@@ -241,6 +241,7 @@ namespace Rasa.Context.World
                     "reward_id",
                     "spawn_group_id",
                     "spawn_id",
+                    "dynamic_object_key",
                     "entity_class_id",
                     "target_scenario_id",
                     "delay_milliseconds",
@@ -257,6 +258,7 @@ namespace Rasa.Context.World
                     "pos_y",
                     "pos_z",
                     "orientation",
+                    "initial_interaction_enabled",
                     "qualification_key",
                     "qualification_value",
                     "account_skip_entitlement"
@@ -269,7 +271,7 @@ namespace Rasa.Context.World
             }
 
             var scenarioStepParameterSetConstraint =
-                "(kind IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19)) " +
+                "(kind IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21)) " +
                 $"AND (kind <> 1 OR (spawn_group_id IS NOT NULL AND {ScenarioStepNullColumns("spawn_group_id")})) " +
                 $"AND (kind <> 2 OR (spawn_group_id IS NOT NULL AND {ScenarioStepNullColumns("spawn_group_id")})) " +
                 $"AND (kind <> 3 OR ((((entity_class_id IS NOT NULL AND spawn_group_id IS NULL AND spawn_id IS NULL) " +
@@ -299,10 +301,14 @@ namespace Rasa.Context.World
                     $"AND pos_z IS NOT NULL AND orientation IS NOT NULL " +
                     $"AND {ScenarioStepNullColumns("map_context_id", "pos_x", "pos_y", "pos_z", "orientation")})) " +
                 $"AND (kind <> 18 OR (qualification_key IS NOT NULL AND qualification_value IS NOT NULL " +
-                    $"AND qualification_key IN (1) AND qualification_value IN ({MissionScenarioStepEntry.GrantedQualificationValue}) " +
                     $"AND {ScenarioStepNullColumns("qualification_key", "qualification_value")})) " +
                 $"AND (kind <> 19 OR (account_skip_entitlement IS NOT NULL " +
-                    $"AND {ScenarioStepNullColumns("account_skip_entitlement")}))";
+                    $"AND {ScenarioStepNullColumns("account_skip_entitlement")})) " +
+                $"AND (kind <> 20 OR (dynamic_object_key IS NOT NULL AND dynamic_object_key <> '' " +
+                    $"AND entity_class_id IS NOT NULL AND pos_x IS NOT NULL AND pos_y IS NOT NULL AND pos_z IS NOT NULL AND orientation IS NOT NULL " +
+                    $"AND {ScenarioStepNullColumns("dynamic_object_key", "entity_class_id", "pos_x", "pos_y", "pos_z", "orientation", "initial_interaction_enabled")})) " +
+                $"AND (kind <> 21 OR (dynamic_object_key IS NOT NULL AND dynamic_object_key <> '' " +
+                    $"AND {ScenarioStepNullColumns("dynamic_object_key")}))";
 
             var scenarioStepNumericBoundsConstraint =
                 "(target_objective_id IS NULL OR target_objective_id > 0) " +
@@ -319,8 +325,11 @@ namespace Rasa.Context.World
                 "AND (tutorial_id IS NULL OR tutorial_id > 0) " +
                 "AND (audio_set_id IS NULL OR audio_set_id > 0) " +
                 "AND (attempt_key IS NULL OR attempt_key <> '') " +
+                "AND (dynamic_object_key IS NULL OR dynamic_object_key <> '') " +
                 "AND (scenario_event_id IS NULL OR scenario_event_id > 0) " +
-                "AND (map_context_id IS NULL OR map_context_id > 0)";
+                "AND (map_context_id IS NULL OR map_context_id > 0) " +
+                $"AND (qualification_key IS NULL OR (qualification_key >= {MissionScenarioStepEntry.MinimumQualificationKey} AND qualification_key <= {MissionScenarioStepEntry.MaximumQualificationKey})) " +
+                $"AND (qualification_value IS NULL OR (qualification_value >= {MissionScenarioStepEntry.RemovedQualificationValue} AND qualification_value <= {MissionScenarioStepEntry.GrantedQualificationValue}))";
 
             modelBuilder.Entity<MissionContentDefinitionEntry>()
                 .HasKey(entry => new { entry.MissionId, entry.ContentRevision });
@@ -930,6 +939,9 @@ namespace Rasa.Context.World
             modelBuilder.Entity<MissionScenarioStepEntry>()
                 .Property(entry => entry.SpawnId)
                 .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .Property(entry => entry.DynamicObjectKey)
+                .HasMaxLength(64);
             modelBuilder.Entity<MissionScenarioStepEntry>()
                 .Property(entry => entry.EntityClassId)
                 .AsUnsignedInt(_dbContextPropertyModifier, 11);
