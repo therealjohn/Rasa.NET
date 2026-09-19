@@ -33,6 +33,8 @@ namespace Rasa.Managers
         private readonly object _createLock = new();
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
         private readonly MissionManager _missionManager;
+        private const string Deployment11StartingExperienceRevision = "deployment_11";
+        private const string LegacyStartingExperienceRevision = "legacy";
 
         public const ulong SelectionPodStartEntityId = 100;
         public const byte MaxSelectionPods = 16;
@@ -186,14 +188,14 @@ namespace Rasa.Managers
 
             lock (_createLock)
             {
-                var createdCharacterId = InternalClone(client, packet, unitOfWork);
-
-                if (createdCharacterId == null)
+                if (!TryPersistCharacterCreation(
+                        client,
+                        unitOfWork,
+                        () => InternalClone(client, packet, unitOfWork),
+                        out characterId))
                 {
                     return;
                 }
-
-                characterId = createdCharacterId.Value;
             }
 
             CopyProgressToClone(unitOfWork, source, characterId);
@@ -251,7 +253,16 @@ namespace Rasa.Managers
                 return null;
             }
 
-            unitOfWork.CharacterAppearances.Add(characterEntry, CreateCharacterAppearanceEntries(packet.AppearanceData));
+            if (!unitOfWork.CharacterAppearances.Add(characterEntry, CreateCharacterAppearanceEntries(packet.AppearanceData)))
+            {
+                SendCharacterCreateFailed(client, CreateCharacterResult.TechnicalDifficulty);
+                return null;
+            }
+
+            unitOfWork.CharacterStartingExperience.Add(new CharacterStartingExperienceEntry(
+                characterEntry.Id,
+                LegacyStartingExperienceRevision,
+                CharacterStartingExperienceState.Legacy));
 
             return characterEntry.Id;
         }
@@ -333,14 +344,14 @@ namespace Rasa.Managers
             // TODO to remove this lock, the family name check and update must be redesigned to be thread safe
             lock (_createLock)
             {
-                var createdCharacterId = InternalCreate(client, packet, unitOfWork);
-
-                if (createdCharacterId == null)
+                if (!TryPersistCharacterCreation(
+                        client,
+                        unitOfWork,
+                        () => InternalCreate(client, packet, unitOfWork),
+                        out characterId))
                 {
                     return;
                 }
-
-                characterId = createdCharacterId.Value;
             }
 
             // give basic items
@@ -576,7 +587,16 @@ namespace Rasa.Managers
             }
 
             var appearances = CreateCharacterAppearanceEntries(packet.AppearanceData);
-            unitOfWork.CharacterAppearances.Add(characterEntry, appearances);
+            if (!unitOfWork.CharacterAppearances.Add(characterEntry, appearances))
+            {
+                SendCharacterCreateFailed(client, CreateCharacterResult.TechnicalDifficulty);
+                return null;
+            }
+
+            unitOfWork.CharacterStartingExperience.Add(new CharacterStartingExperienceEntry(
+                characterEntry.Id,
+                Deployment11StartingExperienceRevision,
+                CharacterStartingExperienceState.Pending));
 
             if (string.IsNullOrWhiteSpace(client.AccountEntry.FamilyName) || changeFamilyName)
             {
@@ -584,6 +604,32 @@ namespace Rasa.Managers
             }
 
             return characterEntry.Id;
+        }
+
+        private bool TryPersistCharacterCreation(
+            Client client,
+            ICharUnitOfWork unitOfWork,
+            Func<uint?> createOperation,
+            out uint characterId)
+        {
+            characterId = 0;
+            try
+            {
+                uint? createdCharacterId = null;
+                unitOfWork.ExecuteTransaction(() => createdCharacterId = createOperation());
+
+                if (createdCharacterId == null)
+                    return false;
+
+                characterId = createdCharacterId.Value;
+                return true;
+            }
+            catch (Exception error) when (error is DbUpdateException or DbException)
+            {
+                Logger.WriteLog(LogType.Error, $"Character creation failed: {error}");
+                SendCharacterCreateFailed(client, CreateCharacterResult.TechnicalDifficulty);
+                return false;
+            }
         }
 
         private IEnumerable<CharacterAppearanceEntry> CreateCharacterAppearanceEntries(
