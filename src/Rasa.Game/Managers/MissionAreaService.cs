@@ -62,25 +62,31 @@ namespace Rasa.Managers
                 foreach (var objective in definition.Objectives.Values
                              .OrderBy(objective => objective.ObjectiveId))
                 {
-                    if (objective.ProgressRule?.Kind != Data.MissionProgressEventKind.AreaEntered ||
-                        objective.ProgressRule.ScopeId != missionLog.MissionId ||
-                        !missionLog.Objectives.TryGetValue(
+                    if (!missionLog.Objectives.TryGetValue(
                             objective.ObjectiveId,
                             out var runtimeObjective) ||
                         runtimeObjective.State != Data.MissionObjectiveState.Incomplete)
                         continue;
 
-                    var areaId = objective.ProgressRule.Subjects.Single();
-                    if (!missionManager.TryGetAreaDefinition(
-                            missionLog.MissionId,
-                            areaId,
-                            out var area) ||
-                        area.MapContextId != client.Player.MapChannel.MapInfo.MapContextId)
-                        continue;
+                    foreach (var transition in objective.GetExecutableTransitionsOrLegacyDefault()
+                                 .Where(transition =>
+                                     transition.ProgressRule?.Kind == Data.MissionProgressEventKind.AreaEntered &&
+                                     transition.ProgressRule.ScopeId == missionLog.MissionId)
+                                 .OrderBy(transition => transition.Sequence)
+                                 .ThenBy(transition => transition.TransitionId))
+                    {
+                        var areaId = transition.ProgressRule.Subjects.Single();
+                        if (!missionManager.TryGetAreaDefinition(
+                                missionLog.MissionId,
+                                areaId,
+                                out var area) ||
+                            area.MapContextId != client.Player.MapChannel.MapInfo.MapContextId)
+                            continue;
 
-                    if (!Contains(area, previousPosition) &&
-                        Contains(area, currentPosition))
-                        events.Add((missionLog.MissionId, areaId));
+                        if (!Contains(area, previousPosition) &&
+                            Contains(area, currentPosition))
+                            events.Add((missionLog.MissionId, areaId));
+                    }
                 }
             }
 

@@ -17,6 +17,7 @@ namespace Rasa.Test.Missions
     using Configuration.ContextSetup;
     using Context;
     using Context.World;
+    using Rasa.Data;
     using Microsoft.Data.Sqlite;
     using Rasa.Navigation;
     using Repositories.World;
@@ -179,6 +180,90 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
+        public void BootcampMissionContentSeedsOnlyEntryObjectivesAsInitiallyIncomplete()
+        {
+            WithDisposableSqliteWorld((context, _) =>
+            {
+                context.Database.Migrate();
+
+                var snapshot = LoadSnapshot(context);
+
+                AssertObjectiveStates(snapshot, 1990, (1U, MissionObjectiveState.Incomplete), (2U, MissionObjectiveState.Inactive));
+                AssertObjectiveStates(snapshot, 1992,
+                    (4U, MissionObjectiveState.Incomplete),
+                    (1U, MissionObjectiveState.Inactive),
+                    (2U, MissionObjectiveState.Inactive),
+                    (5U, MissionObjectiveState.Inactive),
+                    (6U, MissionObjectiveState.Inactive),
+                    (3U, MissionObjectiveState.Inactive),
+                    (9U, MissionObjectiveState.Inactive),
+                    (8U, MissionObjectiveState.Inactive),
+                    (7U, MissionObjectiveState.Inactive));
+                AssertObjectiveStates(snapshot, 1994,
+                    (4U, MissionObjectiveState.Incomplete),
+                    (2U, MissionObjectiveState.Inactive),
+                    (1U, MissionObjectiveState.Inactive),
+                    (3U, MissionObjectiveState.Inactive));
+                AssertObjectiveStates(snapshot, 1995,
+                    (2U, MissionObjectiveState.Incomplete),
+                    (3U, MissionObjectiveState.Inactive),
+                    (1U, MissionObjectiveState.Inactive),
+                    (4U, MissionObjectiveState.Inactive));
+                AssertObjectiveStates(snapshot, 2005,
+                    (1U, MissionObjectiveState.Incomplete),
+                    (4U, MissionObjectiveState.Inactive));
+            });
+        }
+
+        [TestMethod]
+        public void BootcampMissionContentAuthorsReachableScenariosAndRetryFailurePrerequisite()
+        {
+            WithDisposableSqliteWorld((context, _) =>
+            {
+                context.Database.Migrate();
+
+                var snapshot = LoadSnapshot(context);
+
+                foreach (var missionId in new uint[] { 1992, 1994, 1995, 2005 })
+                {
+                    var definition = snapshot.Definitions[missionId];
+                    var rootScenarioIds = definition.Transitions.Values
+                        .SelectMany(transition => transition.Actions)
+                        .Where(action => action.Kind == MissionActionKind.StartScenario && action.ScenarioId.HasValue)
+                        .Select(action => action.ScenarioId!.Value)
+                        .Distinct()
+                        .OrderBy(id => id)
+                        .ToArray();
+                    Assert.IsTrue(rootScenarioIds.Length > 0, $"Mission {missionId} is missing a StartScenario root.");
+
+                    var reachableScenarioIds = new HashSet<uint>(rootScenarioIds);
+                    var pending = new Queue<uint>(rootScenarioIds);
+                    while (pending.Count > 0)
+                    {
+                        var scenarioId = pending.Dequeue();
+                        foreach (var targetScenarioId in definition.Scenarios[scenarioId].Steps
+                                     .Where(step => step.Kind == MissionScenarioStepKind.ScheduleScenario && step.TargetScenarioId.HasValue)
+                                     .Select(step => step.TargetScenarioId!.Value))
+                        {
+                            if (reachableScenarioIds.Add(targetScenarioId))
+                                pending.Enqueue(targetScenarioId);
+                        }
+                    }
+
+                    CollectionAssert.AreEquivalent(
+                        definition.Scenarios.Keys.OrderBy(id => id).ToArray(),
+                        reachableScenarioIds.OrderBy(id => id).ToArray(),
+                        $"Mission {missionId} contains unreachable scenarios.");
+                }
+
+                var retryPrerequisite = snapshot.Definitions[2005].Prerequisites.Single();
+                Assert.AreEqual(MissionPrerequisiteKind.MissionAccepted, retryPrerequisite.Kind);
+                Assert.AreEqual(1995U, retryPrerequisite.RequiredMissionId);
+                Assert.AreEqual((byte)MissionState.Failed, retryPrerequisite.RequiredMissionStateValue);
+            });
+        }
+
+        [TestMethod]
         [DataRow(typeof(SqliteWorldContext), SqliteMigrationId)]
         [DataRow(typeof(MySqlWorldContext), MySqlMigrationId)]
         public void BootcampMissionContentMigrationIsRegisteredForBothProviders(
@@ -195,6 +280,58 @@ namespace Rasa.Test.Missions
             StringAssert.Contains(sql, "1994");
             StringAssert.Contains(sql, "1995");
             StringAssert.Contains(sql, "2005");
+        }
+
+        [TestMethod]
+        public void BootcampMissionContentMySqlScriptMatchesSqliteSeededRowCounts()
+        {
+            WithDisposableSqliteWorld((context, _) =>
+            {
+                context.Database.Migrate();
+
+                var sqliteCounts = new Dictionary<string, int>
+                {
+                    ["mission_content_definition"] = context.MissionContentDefinitionEntries.Count(entry =>
+                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
+                    ["mission_prerequisite"] = context.MissionPrerequisiteEntries.Count(entry =>
+                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
+                    ["mission_objective_definition"] = context.MissionObjectiveDefinitionEntries.Count(entry =>
+                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
+                    ["mission_objective_transition"] = context.MissionObjectiveTransitionEntries.Count(entry =>
+                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
+                    ["mission_trigger"] = context.MissionTriggerEntries.Count(entry =>
+                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
+                    ["mission_action"] = context.MissionActionEntries.Count(entry =>
+                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
+                    ["mission_reward_definition"] = context.MissionRewardDefinitionEntries.Count(entry =>
+                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
+                    ["mission_reward_item"] = context.MissionRewardItemEntries.Count(entry =>
+                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
+                    ["mission_indicator"] = context.MissionIndicatorEntries.Count(entry =>
+                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
+                    ["mission_area"] = context.MissionAreaEntries.Count(entry =>
+                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
+                    ["mission_spawn_group"] = context.MissionSpawnGroupEntries.Count(entry =>
+                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
+                    ["mission_spawn"] = context.MissionSpawnEntries.Count(entry =>
+                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
+                    ["mission_scenario"] = context.MissionScenarioEntries.Count(entry =>
+                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
+                    ["mission_scenario_step"] = context.MissionScenarioStepEntries.Count(entry =>
+                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
+                    ["mission_evidence"] = context.MissionEvidenceEntries.Count(entry =>
+                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision)
+                };
+
+                using var mysqlContext = CreateContext(typeof(MySqlWorldContext), "unused");
+                var sql = NormalizeSql(mysqlContext.GetService<IMigrator>().GenerateScript());
+
+                foreach (var (table, expectedCount) in sqliteCounts)
+                    Assert.AreEqual(
+                        expectedCount,
+                        CountBootcampRevisionInsertStatements(sql, table),
+                        $"Generated MySQL script does not match SQLite seeded row count for {table}.");
+            });
         }
 
         private static MissionContentSnapshot LoadSnapshot(SqliteWorldContext context)
@@ -223,6 +360,18 @@ namespace Rasa.Test.Missions
                 $"{label} is off navmesh at ({x}, {y}, {z}).");
         }
 
+        private static void AssertObjectiveStates(
+            MissionContentSnapshot snapshot,
+            uint missionId,
+            params (uint ObjectiveId, MissionObjectiveState State)[] expected)
+        {
+            var actual = snapshot.Definitions[missionId].Mission.Objectives.Values
+                .OrderBy(objective => objective.Ordinal)
+                .Select(objective => (objective.ObjectiveId, objective.InitialState!.Value))
+                .ToArray();
+            CollectionAssert.AreEqual(expected, actual);
+        }
+
         private static NavMeshQuery ResolveNav(
             uint mapContextId,
             NavMeshQuery bootcamp,
@@ -242,6 +391,12 @@ namespace Rasa.Test.Missions
                 .Replace("\t", " ");
             return System.Text.RegularExpressions.Regex.Replace(sql, "\\s+", " ").Trim();
         }
+
+        private static int CountBootcampRevisionInsertStatements(string sql, string tableName) =>
+            System.Text.RegularExpressions.Regex.Matches(
+                    sql.ToLowerInvariant(),
+                    $@"insert into {System.Text.RegularExpressions.Regex.Escape(tableName.ToLowerInvariant())} \([^)]*\) values \((1990|1992|1994|1995|2005), 'deployment_11',")
+                .Count;
 
         private static string FindRepositoryRoot()
         {

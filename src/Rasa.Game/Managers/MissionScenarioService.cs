@@ -118,7 +118,9 @@ namespace Rasa.Managers
 
             using var unitOfWork = _gameUnitOfWorkFactory().CreateChar();
             var missions = unitOfWork.CharacterMissions.Get(characterId)
-                .Where(mission => mission.MissionState == (uint)MissionState.Active)
+                .Where(mission =>
+                    mission.MissionState == (uint)MissionState.Active ||
+                    mission.MissionState == (uint)MissionState.Failed)
                 .OrderBy(mission => mission.MissionId)
                 .ToArray();
             foreach (var durableMission in missions)

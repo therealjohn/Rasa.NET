@@ -103,7 +103,8 @@ namespace Rasa.Managers
             if (unitOfWork == null || definition == null || durableMission == null)
                 return;
             if (!definition.Objectives.Values.Any(objective =>
-                    objective.ProgressRule?.Kind == MissionProgressEventKind.DeadlineElapsed))
+                    objective.GetExecutableTransitionsOrLegacyDefault().Any(transition =>
+                        transition.ProgressRule?.Kind == MissionProgressEventKind.DeadlineElapsed)))
                 return;
 
             var activeDeadline = GetActiveDeadlineObjective(
@@ -133,7 +134,8 @@ namespace Rasa.Managers
                 return;
 
             var completedDeadlineObjective = definition.Objectives.Values.Any(objective =>
-                objective.ProgressRule?.Kind == MissionProgressEventKind.DeadlineElapsed &&
+                objective.GetExecutableTransitionsOrLegacyDefault().Any(transition =>
+                    transition.ProgressRule?.Kind == MissionProgressEventKind.DeadlineElapsed) &&
                 durableObjectives.TryGetValue(objective.ObjectiveId, out var durableObjective) &&
                 durableObjective.ObjectiveState == (byte)MissionObjectiveState.Completed);
             unitOfWork.CharacterMissionDeadlines.SetState(
@@ -250,10 +252,18 @@ namespace Rasa.Managers
 
             var active = definition.Objectives.Values
                 .Where(objective =>
-                    objective.ProgressRule?.Kind == MissionProgressEventKind.DeadlineElapsed &&
+                    objective.GetExecutableTransitionsOrLegacyDefault().Any(transition =>
+                        transition.ProgressRule?.Kind == MissionProgressEventKind.DeadlineElapsed) &&
                     durableObjectives.TryGetValue(objective.ObjectiveId, out var durableObjective) &&
                     durableObjective.ObjectiveState == (byte)MissionObjectiveState.Incomplete)
-                .Select(objective => (objective.ObjectiveId, objective.ProgressRule))
+                .Select(objective => (
+                    objective.ObjectiveId,
+                    objective.GetExecutableTransitionsOrLegacyDefault()
+                        .Where(transition => transition.ProgressRule?.Kind == MissionProgressEventKind.DeadlineElapsed)
+                        .OrderBy(transition => transition.Sequence)
+                        .ThenBy(transition => transition.TransitionId)
+                        .Select(transition => transition.ProgressRule)
+                        .First()))
                 .ToArray();
             if (active.Length == 0)
                 return null;

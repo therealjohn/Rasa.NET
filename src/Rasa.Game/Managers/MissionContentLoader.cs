@@ -239,7 +239,8 @@ namespace Rasa.Managers
                         indicators.TryGetValue(objectiveEntry.ObjectiveId, out var indicatorList)
                             ? indicatorList
                             : Array.Empty<MissionIndicator>(),
-                        runtime.ProgressRule));
+                        runtime.ProgressRule,
+                        runtime.ExecutableTransitions));
             }
 
             return objectiveDefinitions;

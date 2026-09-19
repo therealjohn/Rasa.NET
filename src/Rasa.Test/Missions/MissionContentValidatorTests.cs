@@ -135,7 +135,7 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
-        public void ValidatorRejectsObjectivesWithMultipleExecutableProgressPaths()
+        public void ValidatorAcceptsObjectivesWithMultipleExecutableProgressPaths()
         {
             var fixture = CreatePureProgressFixture();
             AddProgressTransition(
@@ -149,17 +149,15 @@ namespace Rasa.Test.Missions
             var report = new MissionContentValidator().Validate(
                 snapshot,
                 fixture.CreateWorldUnitOfWork());
-            var diagnostic = report.Diagnostics.Single(
-                entry => entry.Code == "multiple-executable-transition-paths");
 
-            Assert.AreEqual(321U, diagnostic.MissionId);
-            Assert.AreEqual(10U, diagnostic.ObjectiveId);
-            StringAssert.Contains(diagnostic.Message, "progress transition 20");
-            StringAssert.Contains(diagnostic.Message, "progress transition 21");
+            Assert.IsFalse(report.BlocksReadiness);
+            CollectionAssert.DoesNotContain(
+                report.Diagnostics.Select(diagnostic => diagnostic.Code).ToArray(),
+                "multiple-executable-transition-paths");
         }
 
         [TestMethod]
-        public void ValidatorRejectsConversationAndProgressBranchCombination()
+        public void ValidatorAcceptsConversationAndProgressBranchCombination()
         {
             var fixture = MissionContentFixture.CreateValid();
             AddProgressTransition(
@@ -173,12 +171,11 @@ namespace Rasa.Test.Missions
             var report = new MissionContentValidator().Validate(
                 snapshot,
                 fixture.CreateWorldUnitOfWork());
-            var diagnostic = report.Diagnostics.Single(
-                entry => entry.Code == "multiple-executable-transition-paths");
 
-            Assert.AreEqual(10U, diagnostic.ObjectiveId);
-            StringAssert.Contains(diagnostic.Message, "conversation transition 20");
-            StringAssert.Contains(diagnostic.Message, "progress transition 21");
+            Assert.IsFalse(report.BlocksReadiness);
+            CollectionAssert.DoesNotContain(
+                report.Diagnostics.Select(diagnostic => diagnostic.Code).ToArray(),
+                "multiple-executable-transition-paths");
         }
 
         [TestMethod]
@@ -387,33 +384,9 @@ namespace Rasa.Test.Missions
                 fixture.Triggers[0].Kind = (MissionTriggerKind)99;
             }, "unsupported-trigger");
 
-            yield return Case("unsupported area trigger runtime", fixture =>
-            {
-                fixture.Triggers[0].Kind = MissionTriggerKind.AreaEntered;
-                fixture.Triggers[0].NpcPackageId = null;
-                fixture.Triggers[0].PlayerFlagId = null;
-                fixture.Triggers[0].AreaId = 30;
-            }, "unsupported-progress-transition-actions");
-
-            yield return Case("unsupported timer trigger runtime", fixture =>
-            {
-                fixture.Triggers[0].Kind = MissionTriggerKind.TimerElapsed;
-                fixture.Triggers[0].NpcPackageId = null;
-                fixture.Triggers[0].PlayerFlagId = null;
-                fixture.Triggers[0].DurationSeconds = 5;
-            }, "unsupported-progress-transition-actions");
-
             yield return Case("unsupported action", fixture =>
             {
                 fixture.Actions[0].Kind = (MissionActionKind)99;
-            }, "unsupported-action");
-
-            yield return Case("unsupported scenario action runtime", fixture =>
-            {
-                fixture.Actions[0].Kind = MissionActionKind.StartScenario;
-                fixture.Actions[0].TargetObjectiveId = null;
-                fixture.Actions[0].ObjectiveState = null;
-                fixture.Actions[0].ScenarioId = 60;
             }, "unsupported-action");
 
             yield return Case("unsupported spawn action runtime", fixture =>
@@ -790,29 +763,6 @@ namespace Rasa.Test.Missions
                 });
             }, "required-chain-inactive");
 
-            yield return Case("multiple executable transition paths", fixture =>
-            {
-                ConfigurePureProgressObjective(fixture);
-                AddProgressTransition(
-                    fixture,
-                    objectiveId: 10,
-                    transitionId: 21,
-                    triggerId: 2,
-                    subjectId: 502);
-            }, "multiple-executable-transition-paths");
-
-            yield return Case("unsupported progress transition actions", fixture =>
-            {
-                fixture.Triggers[0].Kind = MissionTriggerKind.ProgressEvent;
-                fixture.Triggers[0].NpcPackageId = null;
-                fixture.Triggers[0].PlayerFlagId = null;
-                fixture.Triggers[0].EventKind = (byte)MissionProgressEventKind.CreatureKilled;
-                fixture.Triggers[0].SubjectId = 501;
-                fixture.Triggers[0].CounterId = null;
-                fixture.Triggers[0].InitialValue = null;
-                fixture.Triggers[0].TargetValue = null;
-                fixture.Triggers[0].SourceSpawnResolved = null;
-            }, "unsupported-progress-transition-actions");
         }
 
         private static object[] Case(

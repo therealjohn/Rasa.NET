@@ -184,7 +184,7 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
-        public void LoaderFailsClosedInsteadOfChoosingTheFirstExecutableProgressPath()
+        public void LoaderBuildsMultipleExecutableProgressPathsInSequenceOrder()
         {
             var fixture = CreatePureProgressFixture();
             AddProgressTransition(
@@ -198,14 +198,11 @@ namespace Rasa.Test.Missions
             var mission = snapshot.Definitions[321].Mission;
             var objective = mission.Objectives[10];
 
-            Assert.IsFalse(mission.IsOperational);
-            StringAssert.Contains(
-                mission.OperationalDiagnostic,
-                "objective 10 has multiple executable transition paths");
-            Assert.IsNull(objective.ProgressRule);
-            CollectionAssert.AreEqual(Array.Empty<uint>(), objective.RevealedObjectiveIds.ToArray());
-            CollectionAssert.AreEqual(Array.Empty<uint>(), objective.ActivatedObjectiveIds.ToArray());
-            Assert.AreEqual(0, objective.Conversations.Count);
+            Assert.IsTrue(mission.IsOperational);
+            Assert.AreEqual(2, objective.ExecutableTransitions.Count);
+            CollectionAssert.AreEqual(
+                new uint[] { 20, 21 },
+                objective.ExecutableTransitions.Select(transition => transition.TransitionId).ToArray());
         }
 
         [TestMethod]
@@ -340,14 +337,47 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
-        public void MissionManagerKeepsProgressTransitionsWithActionsInactive()
+        public void MissionManagerLoadsOperationalProgressTransitionsWithActionsAndMultipleExecutableRules()
         {
-            var fixture = MissionContentFixture.CreateValid();
-            fixture.Triggers[0].Kind = Rasa.Structures.World.MissionTriggerKind.ProgressEvent;
-            fixture.Triggers[0].NpcPackageId = null;
-            fixture.Triggers[0].PlayerFlagId = null;
-            fixture.Triggers[0].EventKind = (byte)Rasa.Data.MissionProgressEventKind.CreatureKilled;
-            fixture.Triggers[0].SubjectId = 501;
+            var fixture = CreatePureProgressFixture();
+            fixture.Actions.Add(new Rasa.Structures.World.MissionActionEntry
+            {
+                MissionId = 321,
+                ContentRevision = "deployment_11",
+                ObjectiveId = 10,
+                TransitionId = 20,
+                ActionId = 2,
+                Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
+                Kind = Rasa.Structures.World.MissionActionKind.StartScenario,
+                Sequence = 2,
+                ScenarioId = 60,
+                Comment = "Start follow-up scenario"
+            });
+            fixture.Transitions.Add(new Rasa.Structures.World.MissionObjectiveTransitionEntry
+            {
+                MissionId = 321,
+                ContentRevision = "deployment_11",
+                ObjectiveId = 10,
+                TransitionId = 21,
+                Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
+                Sequence = 2,
+                FromState = (byte)Rasa.Data.MissionObjectiveState.Incomplete,
+                ToState = (byte)Rasa.Data.MissionObjectiveState.Completed,
+                Comment = "Timeout transition"
+            });
+            fixture.Triggers.Add(new Rasa.Structures.World.MissionTriggerEntry
+            {
+                MissionId = 321,
+                ContentRevision = "deployment_11",
+                ObjectiveId = 10,
+                TransitionId = 21,
+                TriggerId = 2,
+                Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
+                Kind = Rasa.Structures.World.MissionTriggerKind.TimerElapsed,
+                Sequence = 1,
+                DurationSeconds = 5,
+                Comment = "Timeout"
+            });
             using var context = MissionTestContext.WithCustomDefinitions(
                 new System.Collections.Generic.Dictionary<uint, Mission>());
             var manager = new MissionManager(
@@ -357,12 +387,10 @@ namespace Rasa.Test.Missions
             var report = manager.LoadMissions();
             var giver = context.AddNpc(101);
 
-            Assert.IsTrue(report.BlocksReadiness);
-            Assert.IsFalse(manager.LoadedMissions[321].IsOperational);
-            StringAssert.Contains(
-                manager.LoadedMissions[321].OperationalDiagnostic,
-                "progress-triggered transitions cannot execute actions");
-            Assert.IsFalse(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            Assert.IsFalse(report.BlocksReadiness);
+            Assert.IsTrue(manager.LoadedMissions[321].IsOperational);
+            Assert.AreEqual(2, manager.LoadedMissions[321].Objectives[10].ExecutableTransitions.Count);
+            Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
         }
 
         [TestMethod]

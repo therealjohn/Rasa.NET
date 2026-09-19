@@ -27,6 +27,7 @@ namespace Rasa.Managers
                 MissionActionKind.RevealObjective,
                 MissionActionKind.ActivateObjective,
                 MissionActionKind.CompleteObjective,
+                MissionActionKind.StartScenario,
                 MissionActionKind.GrantReward
             };
 

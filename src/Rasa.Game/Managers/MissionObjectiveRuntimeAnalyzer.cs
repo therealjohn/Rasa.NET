@@ -20,34 +20,18 @@ namespace Rasa.Managers
                 .ThenBy(transition => transition.TransitionId)
                 .ToArray();
             var diagnostics = new List<MissionObjectiveRuntimeDiagnostic>();
-            var executablePaths = new List<string>();
-            var selectedConversationTransition = default(MissionObjectiveTransitionDefinition);
-            MissionProgressRule selectedProgressRule = null;
-            IReadOnlyDictionary<uint, MissionObjectiveCounterDefinition> selectedCounters =
-                new Dictionary<uint, MissionObjectiveCounterDefinition>();
-            IReadOnlyDictionary<uint, MissionObjectiveItemCounterDefinition> selectedItemCounters =
-                new Dictionary<uint, MissionObjectiveItemCounterDefinition>();
-            var selectedProgressTransition = default(MissionObjectiveTransitionDefinition);
+            var executableTransitions = new List<MissionObjectiveExecutableTransition>();
+            var conversations = new List<MissionObjectiveConversation>();
+            var revealedObjectiveIds = new HashSet<uint>();
+            var activatedObjectiveIds = new HashSet<uint>();
+            var counters = new Dictionary<uint, MissionObjectiveCounterDefinition>();
+            var itemCounters = new Dictionary<uint, MissionObjectiveItemCounterDefinition>();
 
             foreach (var transition in orderedTransitions)
             {
-                var conversationTriggers = transition.Triggers
-                    .Where(trigger =>
-                        trigger.Kind == MissionTriggerKind.Conversation &&
-                        trigger.NpcPackageId.HasValue &&
-                        trigger.PlayerFlagId.HasValue)
-                    .ToArray();
-                if (conversationTriggers.Length > 0)
-                {
-                    executablePaths.Add($"conversation transition {transition.TransitionId}");
-                    selectedConversationTransition ??= transition;
-                }
-
-                if (!TryBuildEventRule(
+                if (!TryBuildExecutableTransition(
                         transition,
-                        out var progressRule,
-                        out var counters,
-                        out var itemCounters,
+                        out var executableTransition,
                         out var diagnostic))
                 {
                     if (!string.IsNullOrWhiteSpace(diagnostic))
@@ -61,28 +45,24 @@ namespace Rasa.Managers
                     continue;
                 }
 
-                executablePaths.Add($"progress transition {transition.TransitionId}");
-                selectedProgressTransition ??= transition;
-                selectedProgressRule ??= progressRule;
-                if (selectedCounters.Count == 0)
-                    selectedCounters = counters;
-                if (selectedItemCounters.Count == 0)
-                    selectedItemCounters = itemCounters;
-
-                if (transition.Actions.Count > 0)
-                {
-                    diagnostics.Add(new MissionObjectiveRuntimeDiagnostic(
-                        "unsupported-progress-transition-actions",
-                        $"progress-triggered transitions cannot execute actions in the current runtime; transition {transition.TransitionId} must remove authored actions before it can be operational.",
-                        transition.TransitionId));
-                }
-            }
-
-            if (executablePaths.Count > 1)
-            {
-                diagnostics.Add(new MissionObjectiveRuntimeDiagnostic(
-                    "multiple-executable-transition-paths",
-                    $"objective {objectiveId} has multiple executable transition paths ({string.Join(", ", executablePaths)}); current runtime supports exactly one objective-level completion path."));
+                executableTransitions.Add(executableTransition);
+                conversations.AddRange(executableTransition.Conversations);
+                foreach (var revealed in executableTransition.RevealedObjectiveIds)
+                    revealedObjectiveIds.Add(revealed);
+                foreach (var activated in executableTransition.ActivatedObjectiveIds)
+                    activatedObjectiveIds.Add(activated);
+                MergeCounters(
+                    objectiveId,
+                    transition.TransitionId,
+                    executableTransition.Counters,
+                    counters,
+                    diagnostics);
+                MergeItemCounters(
+                    objectiveId,
+                    transition.TransitionId,
+                    executableTransition.ItemCounters,
+                    itemCounters,
+                    diagnostics);
             }
 
             if (diagnostics.Count > 0)
@@ -93,63 +73,79 @@ namespace Rasa.Managers
                     Array.Empty<uint>(),
                     null,
                     new Dictionary<uint, MissionObjectiveCounterDefinition>(),
-                    new Dictionary<uint, MissionObjectiveItemCounterDefinition>());
-
-            if (selectedConversationTransition != null)
-            {
-                return new MissionObjectiveRuntimeAnalysis(
-                    Array.Empty<MissionObjectiveRuntimeDiagnostic>(),
-                    selectedConversationTransition.Triggers
-                        .Where(trigger =>
-                            trigger.Kind == MissionTriggerKind.Conversation &&
-                            trigger.NpcPackageId.HasValue &&
-                            trigger.PlayerFlagId.HasValue)
-                        .Select(trigger => new MissionObjectiveConversation(
-                            trigger.NpcPackageId.Value,
-                            trigger.PlayerFlagId.Value,
-                            MissionObjectiveConversationType.Completion))
-                        .ToArray(),
-                    selectedConversationTransition.Actions
-                        .Where(action =>
-                            action.Kind == MissionActionKind.RevealObjective &&
-                            action.TargetObjectiveId.HasValue)
-                        .Select(action => action.TargetObjectiveId.Value)
-                        .Distinct()
-                        .OrderBy(value => value)
-                        .ToArray(),
-                    selectedConversationTransition.Actions
-                        .Where(action =>
-                            action.Kind == MissionActionKind.ActivateObjective &&
-                            action.TargetObjectiveId.HasValue)
-                        .Select(action => action.TargetObjectiveId.Value)
-                        .Distinct()
-                        .OrderBy(value => value)
-                        .ToArray(),
-                    null,
-                    new Dictionary<uint, MissionObjectiveCounterDefinition>(),
-                    new Dictionary<uint, MissionObjectiveItemCounterDefinition>());
-            }
-
-            if (selectedProgressTransition != null)
-            {
-                return new MissionObjectiveRuntimeAnalysis(
-                    Array.Empty<MissionObjectiveRuntimeDiagnostic>(),
-                    Array.Empty<MissionObjectiveConversation>(),
-                    Array.Empty<uint>(),
-                    Array.Empty<uint>(),
-                    selectedProgressRule,
-                    selectedCounters,
-                    selectedItemCounters);
-            }
+                    new Dictionary<uint, MissionObjectiveItemCounterDefinition>(),
+                    Array.Empty<MissionObjectiveExecutableTransition>());
 
             return new MissionObjectiveRuntimeAnalysis(
                 Array.Empty<MissionObjectiveRuntimeDiagnostic>(),
+                conversations,
+                revealedObjectiveIds.OrderBy(value => value).ToArray(),
+                activatedObjectiveIds.OrderBy(value => value).ToArray(),
+                executableTransitions.Count(transition => transition.ProgressRule != null) == 1
+                    ? executableTransitions.Single(transition => transition.ProgressRule != null).ProgressRule
+                    : null,
+                counters,
+                itemCounters,
+                executableTransitions);
+        }
+
+        private static bool TryBuildExecutableTransition(
+            MissionObjectiveTransitionDefinition transition,
+            out MissionObjectiveExecutableTransition executableTransition,
+            out string diagnostic)
+        {
+            executableTransition = null;
+            diagnostic = null;
+
+            var conversationTriggers = transition.Triggers
+                .Where(trigger =>
+                    trigger.Kind == MissionTriggerKind.Conversation &&
+                    trigger.NpcPackageId.HasValue &&
+                    trigger.PlayerFlagId.HasValue)
+                .ToArray();
+            if (conversationTriggers.Length > 0)
+            {
+                if (conversationTriggers.Length != transition.Triggers.Count)
+                {
+                    diagnostic = $"transition {transition.TransitionId} mixes conversation triggers with other trigger kinds; author one executable trigger shape per transition.";
+                    return false;
+                }
+
+                executableTransition = new MissionObjectiveExecutableTransition(
+                    transition.TransitionId,
+                    transition.Sequence,
+                    transition.TryGetToState(out var conversationToState) ? conversationToState : null,
+                    conversationTriggers.Select(trigger => new MissionObjectiveConversation(
+                        trigger.NpcPackageId!.Value,
+                        trigger.PlayerFlagId!.Value,
+                        MissionObjectiveConversationType.Completion)),
+                    null,
+                    new Dictionary<uint, MissionObjectiveCounterDefinition>(),
+                    new Dictionary<uint, MissionObjectiveItemCounterDefinition>(),
+                    transition.Actions);
+                return true;
+            }
+
+            if (!TryBuildEventRule(
+                    transition,
+                    out var rule,
+                    out var counters,
+                    out var itemCounters,
+                    out diagnostic))
+                return false;
+            if (rule == null)
+                return false;
+
+            executableTransition = new MissionObjectiveExecutableTransition(
+                transition.TransitionId,
+                transition.Sequence,
+                transition.TryGetToState(out var progressToState) ? progressToState : null,
                 Array.Empty<MissionObjectiveConversation>(),
-                Array.Empty<uint>(),
-                Array.Empty<uint>(),
-                null,
-                new Dictionary<uint, MissionObjectiveCounterDefinition>(),
-                new Dictionary<uint, MissionObjectiveItemCounterDefinition>());
+                rule,
+                counters,
+                itemCounters,
+                transition.Actions);
+            return true;
         }
 
         private static bool TryBuildEventRule(
@@ -223,6 +219,58 @@ namespace Rasa.Managers
 
             return false;
         }
+
+        private static void MergeCounters(
+            uint objectiveId,
+            uint transitionId,
+            IReadOnlyDictionary<uint, MissionObjectiveCounterDefinition> source,
+            IDictionary<uint, MissionObjectiveCounterDefinition> destination,
+            ICollection<MissionObjectiveRuntimeDiagnostic> diagnostics)
+        {
+            foreach (var entry in source)
+            {
+                if (!destination.TryGetValue(entry.Key, out var existing))
+                {
+                    destination.Add(entry.Key, entry.Value);
+                    continue;
+                }
+
+                if (existing.InitialValue == entry.Value.InitialValue &&
+                    existing.TargetValue == entry.Value.TargetValue)
+                    continue;
+
+                diagnostics.Add(new MissionObjectiveRuntimeDiagnostic(
+                    "conflicting-progress-counters",
+                    $"objective {objectiveId} transition {transitionId} authors counter {entry.Key} with a different range than another executable transition.",
+                    transitionId));
+            }
+        }
+
+        private static void MergeItemCounters(
+            uint objectiveId,
+            uint transitionId,
+            IReadOnlyDictionary<uint, MissionObjectiveItemCounterDefinition> source,
+            IDictionary<uint, MissionObjectiveItemCounterDefinition> destination,
+            ICollection<MissionObjectiveRuntimeDiagnostic> diagnostics)
+        {
+            foreach (var entry in source)
+            {
+                if (!destination.TryGetValue(entry.Key, out var existing))
+                {
+                    destination.Add(entry.Key, entry.Value);
+                    continue;
+                }
+
+                if (existing.InitialValue == entry.Value.InitialValue &&
+                    existing.TargetValue == entry.Value.TargetValue)
+                    continue;
+
+                diagnostics.Add(new MissionObjectiveRuntimeDiagnostic(
+                    "conflicting-progress-item-counters",
+                    $"objective {objectiveId} transition {transitionId} authors item counter {entry.Key} with a different range than another executable transition.",
+                    transitionId));
+            }
+        }
     }
 
     internal sealed class MissionObjectiveRuntimeAnalysis
@@ -234,6 +282,7 @@ namespace Rasa.Managers
         public MissionProgressRule ProgressRule { get; }
         public IReadOnlyDictionary<uint, MissionObjectiveCounterDefinition> Counters { get; }
         public IReadOnlyDictionary<uint, MissionObjectiveItemCounterDefinition> ItemCounters { get; }
+        public IReadOnlyList<MissionObjectiveExecutableTransition> ExecutableTransitions { get; }
 
         internal MissionObjectiveRuntimeAnalysis(
             IReadOnlyList<MissionObjectiveRuntimeDiagnostic> diagnostics,
@@ -242,7 +291,8 @@ namespace Rasa.Managers
             IReadOnlyList<uint> activatedObjectiveIds,
             MissionProgressRule progressRule,
             IReadOnlyDictionary<uint, MissionObjectiveCounterDefinition> counters,
-            IReadOnlyDictionary<uint, MissionObjectiveItemCounterDefinition> itemCounters)
+            IReadOnlyDictionary<uint, MissionObjectiveItemCounterDefinition> itemCounters,
+            IReadOnlyList<MissionObjectiveExecutableTransition> executableTransitions)
         {
             Diagnostics = diagnostics ?? Array.Empty<MissionObjectiveRuntimeDiagnostic>();
             Conversations = conversations ?? Array.Empty<MissionObjectiveConversation>();
@@ -251,6 +301,7 @@ namespace Rasa.Managers
             ProgressRule = progressRule;
             Counters = counters ?? new Dictionary<uint, MissionObjectiveCounterDefinition>();
             ItemCounters = itemCounters ?? new Dictionary<uint, MissionObjectiveItemCounterDefinition>();
+            ExecutableTransitions = executableTransitions ?? Array.Empty<MissionObjectiveExecutableTransition>();
         }
     }
 

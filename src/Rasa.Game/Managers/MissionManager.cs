@@ -1251,17 +1251,15 @@ namespace Rasa.Managers
                 if (!TryGetNpcOnPlayerMap(client.Player, npcEntityId, out var npc))
                     return Reject($"Rejected mission {missionId} objective {objectiveId}: NPC is not in the current map instance.");
                 if (npc.Npc == null ||
-                    !objectiveDefinition.Conversations.Any(conversation =>
-                        conversation.Type == MissionObjectiveConversationType.Completion &&
-                        conversation.NpcPackageId == npc.Npc.NpcPackageId &&
-                        conversation.PlayerFlagId == playerFlagId))
+                    !TryGetMatchingConversationTransition(
+                        objectiveDefinition,
+                        npc.Npc.NpcPackageId,
+                        playerFlagId,
+                        out var transition))
                     return Reject($"Rejected mission {missionId} objective {objectiveId}: completion binding does not match.");
 
                 var npcPackageId = npc.Npc.NpcPackageId;
-                var revealed = objectiveDefinition.RevealedObjectiveIds.ToArray();
-                var activated = objectiveDefinition.ActivatedObjectiveIds.ToArray();
-                var appliedRevealed = new List<uint>();
-                var appliedActivated = new List<uint>();
+                var actionApplication = TransitionActionApplication.Empty;
                 IReadOnlyDictionary<uint, CharacterMissionObjectiveEntry> durableObjectives = null;
                 var completeable = false;
                 try
@@ -1285,39 +1283,10 @@ namespace Rasa.Managers
                                 "Mission objective NPC changed before persistence.");
 
                         durableObjective.ObjectiveState = (byte)MissionObjectiveState.Completed;
-                        foreach (var successorId in revealed)
-                        {
-                            if (!durableObjectives.TryGetValue(successorId, out var successor))
-                                throw new GameplayRejectionException(
-                                    "Configured revealed mission objective is missing.");
-                            if (successor.ObjectiveState == (byte)MissionObjectiveState.Inactive)
-                            {
-                                successor.ObjectiveState = (byte)MissionObjectiveState.NotAssigned;
-                                appliedRevealed.Add(successorId);
-                            }
-                        }
-                        foreach (var successorId in activated)
-                        {
-                            if (!durableObjectives.TryGetValue(successorId, out var successor))
-                                throw new GameplayRejectionException(
-                                    "Configured activated mission objective is missing.");
-                            if (successor.ObjectiveState ==
-                                (byte)MissionObjectiveState.Inactive ||
-                                successor.ObjectiveState ==
-                                (byte)MissionObjectiveState.NotAssigned)
-                            {
-                                successor.ObjectiveState = (byte)MissionObjectiveState.Incomplete;
-                                appliedActivated.Add(successorId);
-                            }
-                            else if (successor.ObjectiveState is
-                                ((byte)MissionObjectiveState.Incomplete) or
-                                ((byte)MissionObjectiveState.Completed) or
-                                ((byte)MissionObjectiveState.Failed))
-                                continue;
-                            else
-                                throw new GameplayRejectionException(
-                                    "Configured activated mission objective state is invalid.");
-                        }
+                        actionApplication = ApplyTransitionActions(
+                            objectiveId,
+                            transition,
+                            durableObjectives);
 
                         completeable = true;
                         foreach (var candidate in definition.Objectives.Values.Where(
@@ -1347,8 +1316,7 @@ namespace Rasa.Managers
                     return false;
                 }
 
-                foreach (var touchedObjectiveId in revealed
-                    .Concat(activated)
+                foreach (var touchedObjectiveId in actionApplication.FinalObjectiveStates.Keys
                     .Append(objectiveId)
                     .Distinct())
                 {
@@ -1364,7 +1332,7 @@ namespace Rasa.Managers
 
                 client.CallMethod(client.Player.EntityId,
                     new ObjectiveCompletedPacket(missionId, objectiveId));
-                foreach (var successorId in revealed.Where(appliedRevealed.Contains))
+                foreach (var successorId in actionApplication.RevealedObjectiveIds)
                     client.CallMethod(client.Player.EntityId,
                         new ObjectiveRevealedPacket(
                             missionId,
@@ -1373,12 +1341,14 @@ namespace Rasa.Managers
                                 runtimeMission.State,
                                 runtimeMission.Completeable,
                                 runtimeMission.Objectives)));
-                foreach (var successorId in appliedActivated)
+                foreach (var successorId in actionApplication.ActivatedObjectiveIds)
                     client.CallMethod(client.Player.EntityId,
                         new ObjectiveActivatedPacket(missionId, successorId));
                 if (completeable)
                     client.CallMethod(client.Player.EntityId,
                         new MissionCompleteablePacket(missionId, true));
+                foreach (var scenarioId in actionApplication.StartScenarioIds)
+                    _scenarioService.TryExecute(client, missionId, scenarioId);
                 return true;
             }
         }
@@ -1904,15 +1874,16 @@ namespace Rasa.Managers
                         mission.MissionId, out var runtimeMission) &&
                     runtimeMission.State == MissionState.Active &&
                     mission.Objectives.Values.Any(objective =>
-                        objective.ProgressRule != null &&
-                        objective.ProgressRule.Matches(progress) &&
+                        objective.GetExecutableTransitionsOrLegacyDefault().Any(transition =>
+                            transition.ProgressRule != null &&
+                            transition.ProgressRule.Matches(progress) &&
+                            CanAdvanceFromRuntime(
+                                client.Player,
+                                transition.ProgressRule)) &&
                         runtimeMission.Objectives.TryGetValue(
                             objective.ObjectiveId, out var runtimeObjective) &&
                         runtimeObjective.State ==
-                            MissionObjectiveState.Incomplete &&
-                        CanAdvanceFromRuntime(
-                            client.Player,
-                            objective.ProgressRule)));
+                            MissionObjectiveState.Incomplete));
         }
 
         internal MissionProgressPublicationPlan PlanProgress(
@@ -1942,25 +1913,34 @@ namespace Rasa.Managers
                 foreach (var objective in mission.Objectives.Values
                     .OrderBy(definition => definition.ObjectiveId))
                 {
-                    var rule = objective.ProgressRule;
-                    var matchingProgress = rule == null
-                        ? (MissionProgressEvent?)null
-                        : progresses
-                            .Where(rule.Matches)
-                            .Select(value => (MissionProgressEvent?)value)
-                            .FirstOrDefault();
-                    if (!matchingProgress.HasValue ||
+                    var matchingTransition = objective.GetExecutableTransitionsOrLegacyDefault()
+                        .Where(transition =>
+                            transition.ProgressRule != null &&
+                            CanAdvanceFromRuntime(client.Player, transition.ProgressRule))
+                        .Select(transition => new
+                        {
+                            Transition = transition,
+                            Progress = progresses
+                                .Where(transition.ProgressRule.Matches)
+                                .Select(value => (MissionProgressEvent?)value)
+                                .FirstOrDefault()
+                        })
+                        .Where(match => match.Progress.HasValue)
+                        .OrderBy(match => match.Transition.Sequence)
+                        .ThenBy(match => match.Transition.TransitionId)
+                        .FirstOrDefault();
+                    if (matchingTransition == null ||
                         !runtimeMission.Objectives.TryGetValue(
                             objective.ObjectiveId, out var runtimeObjective) ||
-                        runtimeObjective.State != MissionObjectiveState.Incomplete ||
-                        !CanAdvanceFromRuntime(client.Player, rule))
+                        runtimeObjective.State != MissionObjectiveState.Incomplete)
                         continue;
                     candidates.Add(new ProgressCandidate(
                         mission,
                         runtimeMission,
                         objective,
                         runtimeObjective,
-                        matchingProgress.Value));
+                        matchingTransition.Transition,
+                        matchingTransition.Progress!.Value));
                 }
             }
             if (candidates.Count == 0)
@@ -1972,6 +1952,7 @@ namespace Rasa.Managers
                     "Durable character owner changed.");
 
             var publications = new List<ProgressPublication>();
+            var failurePlans = new List<MissionFailurePublicationPlan>();
             var completableMissions = new SortedSet<uint>();
             var waypointIds = new HashSet<uint>(
                 client.Player.GainedWaypoints.Select(entry => entry.WaypointId));
@@ -2004,9 +1985,13 @@ namespace Rasa.Managers
                         throw new GameplayRejectionException(
                             "Durable mission objective state is stale.");
 
-                    var rule = candidate.ObjectiveDefinition.ProgressRule;
+                    var rule = candidate.ExecutableTransition.ProgressRule;
+                    var toState = candidate.ExecutableTransition.ToState ?? MissionObjectiveState.Completed;
                     if (rule.RuleType == MissionProgressRuleType.CompleteDistinctSet)
                     {
+                        if (toState != MissionObjectiveState.Completed)
+                            throw new GameplayRejectionException(
+                                "Distinct progress transitions can only complete objectives in the current runtime.");
                         IReadOnlySet<uint> runtimeSubjects;
                         IReadOnlySet<uint> durableSubjects;
                         if (rule.Kind == MissionProgressEventKind.WaypointAcquired)
@@ -2034,12 +2019,20 @@ namespace Rasa.Managers
                                 "Distinct progress subjects are incomplete.");
                         durableObjective.ObjectiveState =
                             (byte)MissionObjectiveState.Completed;
-                        publications.Add(ProgressPublication.ForCompleted(candidate));
+                        publications.Add(ProgressPublication.ForCompleted(
+                            candidate,
+                            ApplyTransitionActions(
+                                candidate.ObjectiveDefinition.ObjectiveId,
+                                candidate.ExecutableTransition,
+                                durableObjectives)));
                         continue;
                     }
 
                     if (rule.RuleType == MissionProgressRuleType.IncrementExactCounter)
                     {
+                        if (toState != MissionObjectiveState.Completed)
+                            throw new GameplayRejectionException(
+                                "Counter progress transitions can only complete objectives in the current runtime.");
                         var counterId = rule.CounterId.Value;
                         if (!candidate.RuntimeObjective.Counters.TryGetValue(
                             counterId, out var runtimeValue))
@@ -2063,14 +2056,23 @@ namespace Rasa.Managers
                         if (completed)
                             durableObjective.ObjectiveState =
                                 (byte)MissionObjectiveState.Completed;
+                        var actionApplication = completed
+                            ? ApplyTransitionActions(
+                                candidate.ObjectiveDefinition.ObjectiveId,
+                                candidate.ExecutableTransition,
+                                durableObjectives)
+                            : TransitionActionApplication.Empty;
                         publications.Add(ProgressPublication.Counter(
-                            candidate, counterId, value, completed));
+                            candidate, counterId, value, completed, actionApplication));
                         continue;
                     }
 
                     if (rule.RuleType ==
                         MissionProgressRuleType.IncrementExactItemCounter)
                     {
+                        if (toState != MissionObjectiveState.Completed)
+                            throw new GameplayRejectionException(
+                                "Item counter progress transitions can only complete objectives in the current runtime.");
                         var itemClassId = rule.CounterId.Value;
                         if (!candidate.RuntimeObjective.ItemCounters.TryGetValue(
                             itemClassId, out var runtimeValue))
@@ -2095,18 +2097,70 @@ namespace Rasa.Managers
                         if (completed)
                             durableObjective.ObjectiveState =
                                 (byte)MissionObjectiveState.Completed;
+                        var actionApplication = completed
+                            ? ApplyTransitionActions(
+                                candidate.ObjectiveDefinition.ObjectiveId,
+                                candidate.ExecutableTransition,
+                                durableObjectives)
+                            : TransitionActionApplication.Empty;
                         publications.Add(
                             ProgressPublication.ItemCounter(
                                 candidate,
                                 itemClassId,
                                 value,
-                                completed));
+                                completed,
+                                actionApplication));
+                        continue;
+                    }
+
+                    if (toState == MissionObjectiveState.Failed)
+                    {
+                        durableObjective.ObjectiveState =
+                            (byte)MissionObjectiveState.Failed;
+                        var failMission = candidate.ObjectiveDefinition.IsRequired.Value;
+                        var nextCompleteable = !failMission &&
+                            first.Definition.Objectives.Values
+                                .Where(objective => objective.IsRequired.Value)
+                                .All(objective =>
+                                    durableObjectives.TryGetValue(
+                                        objective.ObjectiveId,
+                                        out var requiredObjective) &&
+                                    requiredObjective.ObjectiveState ==
+                                        (byte)MissionObjectiveState.Completed);
+                        var nextCompleteableChanged =
+                            durableMission.Completeable != nextCompleteable;
+                        durableMission.Completeable = nextCompleteable;
+                        if (failMission)
+                            durableMission.MissionState = (uint)MissionState.Failed;
+                        var failureActions = ApplyTransitionActions(
+                            candidate.ObjectiveDefinition.ObjectiveId,
+                            candidate.ExecutableTransition,
+                            durableObjectives);
+                        _deadlineService.SynchronizeMission(
+                            unitOfWork,
+                            client.Player.Id,
+                            first.Definition,
+                            durableMission,
+                            durableObjectives);
+                        failurePlans.Add(
+                            new MissionFailurePublicationPlan(
+                                candidate.Definition.MissionId,
+                                candidate.ObjectiveDefinition.ObjectiveId,
+                                failMission ? MissionState.Failed : MissionState.Active,
+                                nextCompleteable,
+                                nextCompleteableChanged,
+                                failureActions.StartScenarioIds));
                         continue;
                     }
 
                     durableObjective.ObjectiveState =
                         (byte)MissionObjectiveState.Completed;
-                    publications.Add(ProgressPublication.ForCompleted(candidate));
+                    publications.Add(ProgressPublication.ForCompleted(
+                        candidate,
+                        ApplyTransitionActions(
+                            candidate.ObjectiveDefinition.ObjectiveId,
+                            candidate.ExecutableTransition,
+                            durableObjectives)));
                 }
 
                 var completeable = first.Definition.Objectives.Values
@@ -2129,7 +2183,11 @@ namespace Rasa.Managers
 
             return new MissionProgressPublicationPlan(
                 publications,
-                completableMissions);
+                failurePlans,
+                completableMissions,
+                (progressClient, progressedMissionId, scenarioId) =>
+                    _scenarioService.TryExecute(progressClient, progressedMissionId, scenarioId),
+                this);
         }
 
         private static IReadOnlyList<MissionProgressEvent> AggregateProgress(
@@ -2213,6 +2271,95 @@ namespace Rasa.Managers
             if (rule.Kind == MissionProgressEventKind.LogosAcquired)
                 return rule.AreAllSubjectsObserved(new HashSet<uint>(player.Logos));
             return false;
+        }
+
+        private static bool TryGetMatchingConversationTransition(
+            MissionObjectiveDefinition objectiveDefinition,
+            uint npcPackageId,
+            uint playerFlagId,
+            out MissionObjectiveExecutableTransition transition)
+        {
+            transition = objectiveDefinition.GetExecutableTransitionsOrLegacyDefault()
+                .Where(candidate => candidate.Conversations.Any(conversation =>
+                    conversation.Type == MissionObjectiveConversationType.Completion &&
+                    conversation.NpcPackageId == npcPackageId &&
+                    conversation.PlayerFlagId == playerFlagId))
+                .OrderBy(candidate => candidate.Sequence)
+                .ThenBy(candidate => candidate.TransitionId)
+                .FirstOrDefault();
+            return transition != null;
+        }
+
+        private static TransitionActionApplication ApplyTransitionActions(
+            uint currentObjectiveId,
+            MissionObjectiveExecutableTransition transition,
+            IReadOnlyDictionary<uint, CharacterMissionObjectiveEntry> durableObjectives)
+        {
+            if (transition == null)
+                return TransitionActionApplication.Empty;
+
+            var revealed = new List<uint>();
+            var activated = new List<uint>();
+            var startedScenarios = new List<uint>();
+            var finalStates = new Dictionary<uint, MissionObjectiveState>();
+
+            foreach (var action in transition.Actions)
+            {
+                switch (action.Kind)
+                {
+                    case MissionActionKind.CompleteObjective:
+                        if (action.TargetObjectiveId.HasValue &&
+                            action.TargetObjectiveId.Value != currentObjectiveId)
+                            throw new GameplayRejectionException(
+                                $"Transition {transition.TransitionId} can only complete its current objective in the current runtime.");
+                        break;
+
+                    case MissionActionKind.RevealObjective:
+                        if (!action.TargetObjectiveId.HasValue ||
+                            !durableObjectives.TryGetValue(action.TargetObjectiveId.Value, out var revealedObjective))
+                            throw new GameplayRejectionException(
+                                "Configured revealed mission objective is missing.");
+                        if (revealedObjective.ObjectiveState == (byte)MissionObjectiveState.Inactive)
+                        {
+                            revealedObjective.ObjectiveState = (byte)MissionObjectiveState.NotAssigned;
+                            revealed.Add(action.TargetObjectiveId.Value);
+                        }
+                        finalStates[action.TargetObjectiveId.Value] =
+                            (MissionObjectiveState)revealedObjective.ObjectiveState;
+
+                        break;
+
+                    case MissionActionKind.ActivateObjective:
+                        if (!action.TargetObjectiveId.HasValue ||
+                            !durableObjectives.TryGetValue(action.TargetObjectiveId.Value, out var activatedObjective))
+                            throw new GameplayRejectionException(
+                                "Configured activated mission objective is missing.");
+                        if (activatedObjective.ObjectiveState is
+                            ((byte)MissionObjectiveState.Incomplete) or
+                            ((byte)MissionObjectiveState.Completed) or
+                            ((byte)MissionObjectiveState.Failed))
+                            break;
+                        if (activatedObjective.ObjectiveState is not
+                            ((byte)MissionObjectiveState.Inactive) and not
+                            ((byte)MissionObjectiveState.NotAssigned))
+                            throw new GameplayRejectionException(
+                                "Configured activated mission objective state is invalid.");
+
+                        activatedObjective.ObjectiveState = (byte)MissionObjectiveState.Incomplete;
+                        activated.Add(action.TargetObjectiveId.Value);
+                        finalStates[action.TargetObjectiveId.Value] =
+                            (MissionObjectiveState)activatedObjective.ObjectiveState;
+                        break;
+
+                    case MissionActionKind.StartScenario:
+                        if (action.ScenarioId.HasValue &&
+                            !startedScenarios.Contains(action.ScenarioId.Value))
+                            startedScenarios.Add(action.ScenarioId.Value);
+                        break;
+                }
+            }
+
+            return new TransitionActionApplication(finalStates, revealed, activated, startedScenarios);
         }
 
         private static bool IsPublishedState(MissionState state) =>
@@ -2583,19 +2730,24 @@ namespace Rasa.Managers
             private readonly MissionState _missionState;
             private readonly bool _completeable;
             private readonly bool _completeableChanged;
+            internal uint MissionId => _missionId;
+            internal IReadOnlyList<uint> StartScenarioIds { get; }
 
             internal MissionFailurePublicationPlan(
                 uint missionId,
                 uint objectiveId,
                 MissionState missionState,
                 bool completeable,
-                bool completeableChanged)
+                bool completeableChanged,
+                IEnumerable<uint> startScenarioIds = null)
             {
                 _missionId = missionId;
                 _objectiveId = objectiveId;
                 _missionState = missionState;
                 _completeable = completeable;
                 _completeableChanged = completeableChanged;
+                StartScenarioIds = Array.AsReadOnly(
+                    (startScenarioIds ?? Array.Empty<uint>()).ToArray());
             }
 
             internal void Publish(Client client, MissionManager manager)
@@ -2628,19 +2780,28 @@ namespace Rasa.Managers
         internal sealed class MissionProgressPublicationPlan
         {
             internal static readonly MissionProgressPublicationPlan Empty =
-                new(Array.Empty<ProgressPublication>(), Array.Empty<uint>());
+                new(Array.Empty<ProgressPublication>(), Array.Empty<MissionFailurePublicationPlan>(), Array.Empty<uint>(), null, null);
 
             private readonly ProgressPublication[] _publications;
+            private readonly MissionFailurePublicationPlan[] _failurePlans;
             private readonly uint[] _completableMissions;
+            private readonly Func<Client, uint, uint, bool> _startScenario;
+            private readonly MissionManager _manager;
 
-            internal bool HasChanges => _publications.Length > 0;
+            internal bool HasChanges => _publications.Length > 0 || _failurePlans.Length > 0;
 
             internal MissionProgressPublicationPlan(
                 IEnumerable<ProgressPublication> publications,
-                IEnumerable<uint> completableMissions)
+                IEnumerable<MissionFailurePublicationPlan> failurePlans,
+                IEnumerable<uint> completableMissions,
+                Func<Client, uint, uint, bool> startScenario,
+                MissionManager manager)
             {
                 _publications = publications.ToArray();
+                _failurePlans = failurePlans.ToArray();
                 _completableMissions = completableMissions.ToArray();
+                _startScenario = startScenario;
+                _manager = manager;
             }
 
             internal void Publish(Client client)
@@ -2673,7 +2834,17 @@ namespace Rasa.Managers
                             client,
                             publication,
                             out var objective))
+                    {
                         objective.State = MissionObjectiveState.Completed;
+                        if (client.Player.Missions.TryGetValue(
+                                publication.MissionId,
+                                out var mission))
+                            foreach (var state in publication.FinalObjectiveStates)
+                                if (mission.Objectives.TryGetValue(
+                                        state.Key,
+                                        out var successor))
+                                    successor.State = state.Value;
+                    }
 
                 foreach (var missionId in _completableMissions)
                     if (client.Player.Missions.TryGetValue(
@@ -2711,6 +2882,7 @@ namespace Rasa.Managers
 
                 foreach (var publication in _publications.Where(
                     publication => publication.Completed))
+                {
                     TryPublish(
                         () => client.CallMethod(
                             client.Player.EntityId,
@@ -2718,6 +2890,27 @@ namespace Rasa.Managers
                                 publication.MissionId,
                                 publication.ObjectiveId)),
                         $"mission {publication.MissionId} objective completion");
+                    foreach (var objectiveId in publication.RevealedObjectiveIds)
+                        TryPublish(
+                            () => client.CallMethod(
+                                client.Player.EntityId,
+                                new ObjectiveRevealedPacket(
+                                    publication.MissionId,
+                                    objectiveId,
+                                    publication.Definition.CreateInfo(
+                                        publication.RuntimeMission.State,
+                                        publication.RuntimeMission.Completeable,
+                                        publication.RuntimeMission.Objectives))),
+                            $"mission {publication.MissionId} objective {objectiveId} revealed");
+                    foreach (var objectiveId in publication.ActivatedObjectiveIds)
+                        TryPublish(
+                            () => client.CallMethod(
+                                client.Player.EntityId,
+                                new ObjectiveActivatedPacket(
+                                    publication.MissionId,
+                                    objectiveId)),
+                            $"mission {publication.MissionId} objective {objectiveId} activated");
+                }
 
                 foreach (var missionId in _completableMissions)
                     TryPublish(
@@ -2725,6 +2918,32 @@ namespace Rasa.Managers
                             client.Player.EntityId,
                             new MissionCompleteablePacket(missionId, true)),
                         $"mission {missionId} completable");
+
+                foreach (var failurePlan in _failurePlans)
+                    failurePlan.Publish(client, _manager);
+
+                foreach (var publication in _publications)
+                    foreach (var scenarioId in publication.StartScenarioIds)
+                        TryPublish(
+                            () =>
+                            {
+                                _startScenario?.Invoke(
+                                    client,
+                                    publication.MissionId,
+                                    scenarioId);
+                            },
+                            $"mission {publication.MissionId} start scenario {scenarioId}");
+                foreach (var failurePlan in _failurePlans)
+                    foreach (var scenarioId in failurePlan.StartScenarioIds)
+                        TryPublish(
+                            () =>
+                            {
+                                _startScenario?.Invoke(
+                                    client,
+                                    failurePlan.MissionId,
+                                    scenarioId);
+                            },
+                            $"mission {failurePlan.MissionId} start scenario {scenarioId}");
             }
 
             private static bool TryGetRuntimeObjective(
@@ -2740,12 +2959,45 @@ namespace Rasa.Managers
             }
         }
 
+        internal readonly struct TransitionActionApplication
+        {
+            internal static readonly TransitionActionApplication Empty =
+                new(
+                    new Dictionary<uint, MissionObjectiveState>(),
+                    Array.Empty<uint>(),
+                    Array.Empty<uint>(),
+                    Array.Empty<uint>());
+
+            internal IReadOnlyDictionary<uint, MissionObjectiveState> FinalObjectiveStates { get; }
+            internal IReadOnlyList<uint> RevealedObjectiveIds { get; }
+            internal IReadOnlyList<uint> ActivatedObjectiveIds { get; }
+            internal IReadOnlyList<uint> StartScenarioIds { get; }
+
+            internal TransitionActionApplication(
+                IReadOnlyDictionary<uint, MissionObjectiveState> finalObjectiveStates,
+                IEnumerable<uint> revealedObjectiveIds,
+                IEnumerable<uint> activatedObjectiveIds,
+                IEnumerable<uint> startScenarioIds)
+            {
+                FinalObjectiveStates = new ReadOnlyDictionary<uint, MissionObjectiveState>(
+                    new Dictionary<uint, MissionObjectiveState>(
+                        finalObjectiveStates ?? new Dictionary<uint, MissionObjectiveState>()));
+                RevealedObjectiveIds = Array.AsReadOnly(
+                    (revealedObjectiveIds ?? Array.Empty<uint>()).ToArray());
+                ActivatedObjectiveIds = Array.AsReadOnly(
+                    (activatedObjectiveIds ?? Array.Empty<uint>()).ToArray());
+                StartScenarioIds = Array.AsReadOnly(
+                    (startScenarioIds ?? Array.Empty<uint>()).ToArray());
+            }
+        }
+
         internal readonly struct ProgressCandidate
         {
             internal Mission Definition { get; }
             internal MissionLog RuntimeMission { get; }
             internal MissionObjectiveDefinition ObjectiveDefinition { get; }
             internal MissionObjectiveLog RuntimeObjective { get; }
+            internal MissionObjectiveExecutableTransition ExecutableTransition { get; }
             internal MissionProgressEvent Progress { get; }
 
             internal ProgressCandidate(
@@ -2753,18 +3005,22 @@ namespace Rasa.Managers
                 MissionLog runtimeMission,
                 MissionObjectiveDefinition objectiveDefinition,
                 MissionObjectiveLog runtimeObjective,
+                MissionObjectiveExecutableTransition executableTransition,
                 MissionProgressEvent progress)
             {
                 Definition = definition;
                 RuntimeMission = runtimeMission;
                 ObjectiveDefinition = objectiveDefinition;
                 RuntimeObjective = runtimeObjective;
+                ExecutableTransition = executableTransition;
                 Progress = progress;
             }
         }
 
         internal readonly struct ProgressPublication
         {
+            internal Mission Definition { get; }
+            internal MissionLog RuntimeMission { get; }
             internal uint MissionId { get; }
             internal uint ObjectiveId { get; }
             internal uint? CounterId { get; }
@@ -2773,8 +3029,14 @@ namespace Rasa.Managers
             internal uint? TargetValue { get; }
             internal bool Completed { get; }
             internal bool IsItemCounter { get; }
+            internal IReadOnlyDictionary<uint, MissionObjectiveState> FinalObjectiveStates { get; }
+            internal IReadOnlyList<uint> RevealedObjectiveIds { get; }
+            internal IReadOnlyList<uint> ActivatedObjectiveIds { get; }
+            internal IReadOnlyList<uint> StartScenarioIds { get; }
 
             private ProgressPublication(
+                Mission definition,
+                MissionLog runtimeMission,
                 uint missionId,
                 uint objectiveId,
                 uint? counterId,
@@ -2782,8 +3044,11 @@ namespace Rasa.Managers
                 uint? initialValue,
                 uint? targetValue,
                 bool completed,
+                TransitionActionApplication actionApplication,
                 bool isItemCounter = false)
             {
+                Definition = definition;
+                RuntimeMission = runtimeMission;
                 MissionId = missionId;
                 ObjectiveId = objectiveId;
                 CounterId = counterId;
@@ -2792,45 +3057,70 @@ namespace Rasa.Managers
                 TargetValue = targetValue;
                 Completed = completed;
                 IsItemCounter = isItemCounter;
+                FinalObjectiveStates = new ReadOnlyDictionary<uint, MissionObjectiveState>(
+                    new Dictionary<uint, MissionObjectiveState>(
+                        actionApplication.FinalObjectiveStates));
+                RevealedObjectiveIds = completed
+                    ? Array.AsReadOnly(actionApplication.RevealedObjectiveIds.ToArray())
+                    : Array.Empty<uint>();
+                ActivatedObjectiveIds = completed
+                    ? Array.AsReadOnly(actionApplication.ActivatedObjectiveIds.ToArray())
+                    : Array.Empty<uint>();
+                StartScenarioIds = completed
+                    ? Array.AsReadOnly(actionApplication.StartScenarioIds.ToArray())
+                    : Array.Empty<uint>();
             }
 
-            internal static ProgressPublication ForCompleted(ProgressCandidate candidate) =>
+            internal static ProgressPublication ForCompleted(
+                ProgressCandidate candidate,
+                TransitionActionApplication actionApplication) =>
                 new(
+                    candidate.Definition,
+                    candidate.RuntimeMission,
                     candidate.Definition.MissionId,
                     candidate.ObjectiveDefinition.ObjectiveId,
                     null,
                     null,
                     null,
                     null,
-                    true);
+                    true,
+                    actionApplication);
 
             internal static ProgressPublication Counter(
                 ProgressCandidate candidate,
                 uint counterId,
                 uint counterValue,
-                bool completed) =>
+                bool completed,
+                TransitionActionApplication actionApplication) =>
                 new(
+                    candidate.Definition,
+                    candidate.RuntimeMission,
                     candidate.Definition.MissionId,
                     candidate.ObjectiveDefinition.ObjectiveId,
                     counterId,
                     counterValue,
-                    candidate.ObjectiveDefinition.ProgressRule.InitialValue,
-                    candidate.ObjectiveDefinition.ProgressRule.TargetValue,
-                    completed);
+                    candidate.ExecutableTransition.ProgressRule.InitialValue,
+                    candidate.ExecutableTransition.ProgressRule.TargetValue,
+                    completed,
+                    actionApplication);
 
             internal static ProgressPublication ItemCounter(
                 ProgressCandidate candidate,
                 uint itemClassId,
                 uint counterValue,
-                bool completed) =>
+                bool completed,
+                TransitionActionApplication actionApplication) =>
                 new(
+                    candidate.Definition,
+                    candidate.RuntimeMission,
                     candidate.Definition.MissionId,
                     candidate.ObjectiveDefinition.ObjectiveId,
                     itemClassId,
                     counterValue,
-                    candidate.ObjectiveDefinition.ProgressRule.InitialValue,
-                    candidate.ObjectiveDefinition.ProgressRule.TargetValue,
+                    candidate.ExecutableTransition.ProgressRule.InitialValue,
+                    candidate.ExecutableTransition.ProgressRule.TargetValue,
                     completed,
+                    actionApplication,
                     isItemCounter: true);
         }
     }

@@ -30,8 +30,11 @@ namespace Rasa.Services.Preloader
         internal const uint LightningDummyCreatureId = 510212;
         internal const uint CommanderRogersCreatureId = 100;
         private const byte MissionCompletedState = 4;
+        private const byte MissionFailedState = 2;
+        private const byte ObjectiveInactiveState = 4;
         private const byte ObjectiveIncompleteState = 1;
         private const byte ObjectiveCompletedState = 2;
+        private const byte ObjectiveFailedState = 3;
         private const byte ProgressInteractionUsed = 6;
         private const byte ProgressAreaEntered = 7;
         private const byte ProgressItemEquipped = 8;
@@ -134,6 +137,7 @@ namespace Rasa.Services.Preloader
             yield return SpawnPool(CaptainDelessioCreatureId, 398.9, 114.0, 173.3, 0.0, BootcampMapContextId, CaptainDelessioCreatureId, "Delessio");
             yield return SpawnPool(CorporalHartmannCreatureId, 385.7, 119.4, 166.7, 0.0, BootcampMapContextId, CorporalHartmannCreatureId, "Hartmann");
             yield return SpawnPool(CorporalDeSimoneCreatureId, 391.5, 114.0, 164.8, 0.0, BootcampMapContextId, CorporalDeSimoneCreatureId, "DeSimone");
+            yield return SpawnPool(WoundedSurvivorCreatureId, -104.6, 86.1, 70.5, 0.0, BootcampMapContextId, WoundedSurvivorCreatureId, "Wounded survivor");
         }
 
         internal static IEnumerable<object[]> MissionDefinitions()
@@ -150,36 +154,36 @@ namespace Rasa.Services.Preloader
             yield return new object[] { 1992U, Revision, 1U, MissionContentRequirement.Required, MissionPrerequisiteKind.MissionCompleted, 1990U, MissionCompletedState, null, null, null, "Requires Initiation" };
             yield return new object[] { 1994U, Revision, 1U, MissionContentRequirement.Required, MissionPrerequisiteKind.MissionCompleted, 1992U, MissionCompletedState, null, null, null, "Requires Gearing Up for Battle" };
             yield return new object[] { 1995U, Revision, 1U, MissionContentRequirement.Required, MissionPrerequisiteKind.MissionCompleted, 1994U, MissionCompletedState, null, null, null, "Requires Capture the Flag" };
-            yield return new object[] { 2005U, Revision, 1U, MissionContentRequirement.Optional, MissionPrerequisiteKind.MissionAccepted, 1995U, null, null, null, null, "Retry after final mission is accepted" };
+            yield return new object[] { 2005U, Revision, 1U, MissionContentRequirement.Optional, MissionPrerequisiteKind.MissionAccepted, 1995U, MissionFailedState, null, null, null, "Retry after final mission fails" };
         }
 
         internal static IEnumerable<object[]> MissionObjectives()
         {
             yield return Objective(1990, 1, 21148, 21149, 1, "Approach the Eloh Hologram");
-            yield return Objective(1990, 2, 21150, 21151, 2, "Approach the Eloh Hologram");
+            yield return Objective(1990, 2, 21150, 21151, 2, "Approach the Eloh Hologram", initialState: ObjectiveInactiveState);
 
             yield return Objective(1992, 4, 21482, 21483, 1, "Speak to Captain Delessio");
-            yield return Objective(1992, 1, 21174, 21175, 2, "Get your gear from the nearby crate");
-            yield return Objective(1992, 2, 21176, 21177, 3, "Equip the gear");
-            yield return Objective(1992, 5, 21485, 21486, 4, "Speak to Captain Delessio");
-            yield return Objective(1992, 6, 21489, 21490, 5, "Speak to Corporal Hartmann by the Firing Range");
-            yield return Objective(1992, 3, 21178, 21179, 6, "Shoot the Practice Dummy");
-            yield return Objective(1992, 9, 21663, 21664, 7, "Speak to Corporal Hartmann");
-            yield return Objective(1992, 8, 21666, 21667, 8, "Use Lightning on the Target Dummy");
-            yield return Objective(1992, 7, 21492, 21493, 9, "Speak to Corporal Hartmann");
+            yield return Objective(1992, 1, 21174, 21175, 2, "Get your gear from the nearby crate", initialState: ObjectiveInactiveState);
+            yield return Objective(1992, 2, 21176, 21177, 3, "Equip the gear", initialState: ObjectiveInactiveState);
+            yield return Objective(1992, 5, 21485, 21486, 4, "Speak to Captain Delessio", initialState: ObjectiveInactiveState);
+            yield return Objective(1992, 6, 21489, 21490, 5, "Speak to Corporal Hartmann by the Firing Range", initialState: ObjectiveInactiveState);
+            yield return Objective(1992, 3, 21178, 21179, 6, "Shoot the Practice Dummy", initialState: ObjectiveInactiveState);
+            yield return Objective(1992, 9, 21663, 21664, 7, "Speak to Corporal Hartmann", initialState: ObjectiveInactiveState);
+            yield return Objective(1992, 8, 21666, 21667, 8, "Use Lightning on the Target Dummy", initialState: ObjectiveInactiveState);
+            yield return Objective(1992, 7, 21492, 21493, 9, "Speak to Corporal Hartmann", initialState: ObjectiveInactiveState);
 
             yield return Objective(1994, 4, 21670, 21671, 1, "Speak to Corporal DeSimone");
-            yield return Objective(1994, 2, 21336, 21337, 2, "Find a way out of the cave");
-            yield return Objective(1994, 1, 21313, 21314, 3, "Eliminate the Tizzik G", 21315);
-            yield return Objective(1994, 3, 21615, 21616, 4, "Report to Captain Youngblood");
+            yield return Objective(1994, 2, 21336, 21337, 2, "Find a way out of the cave", initialState: ObjectiveInactiveState);
+            yield return Objective(1994, 1, 21313, 21314, 3, "Eliminate the Tizzik G", 21315, ObjectiveInactiveState);
+            yield return Objective(1994, 3, 21615, 21616, 4, "Report to Captain Youngblood", initialState: ObjectiveInactiveState);
 
             yield return Objective(1995, 2, 21556, 21557, 1, "Locate the missing AFS team");
-            yield return Objective(1995, 3, 21559, 21560, 2, "Remove the bomb from Conrad's corpse");
-            yield return Objective(1995, 1, 21327, 21328, 3, "Destroy the crashed dropship");
-            yield return Objective(1995, 4, 21561, 21562, 4, "Check in with Corporal Van Valkenberg");
+            yield return Objective(1995, 3, 21559, 21560, 2, "Remove the bomb from Conrad's corpse", initialState: ObjectiveInactiveState);
+            yield return Objective(1995, 1, 21327, 21328, 3, "Destroy the crashed dropship", initialState: ObjectiveInactiveState);
+            yield return Objective(1995, 4, 21561, 21562, 4, "Check in with Corporal Van Valkenberg", initialState: ObjectiveInactiveState);
 
             yield return Objective(2005, 1, 21569, 21570, 1, "Destroy the crashed dropship");
-            yield return Objective(2005, 4, 21571, 21572, 2, "Check in with Corporal Van Valkenberg");
+            yield return Objective(2005, 4, 21571, 21572, 2, "Check in with Corporal Van Valkenberg", initialState: ObjectiveInactiveState);
         }
 
         internal static IEnumerable<object[]> MissionTransitions()
@@ -205,9 +209,11 @@ namespace Rasa.Services.Preloader
             yield return Transition(1995, 2, 1, "Wounded survivor");
             yield return Transition(1995, 3, 1, "Conrad corpse");
             yield return Transition(1995, 1, 1, "Dropship charge");
+            yield return Transition(1995, 1, 2, ObjectiveFailedState, "Dropship timeout");
             yield return Transition(1995, 4, 1, "Van Valkenberg");
 
             yield return Transition(2005, 1, 1, "Retry dropship charge");
+            yield return Transition(2005, 1, 2, ObjectiveFailedState, "Retry timeout");
             yield return Transition(2005, 4, 1, "Retry Van Valkenberg");
         }
 
@@ -234,41 +240,78 @@ namespace Rasa.Services.Preloader
             yield return ConversationTrigger(1995, 2, 1, 1, 2584, 1, "Wounded survivor briefing");
             yield return ProgressTrigger(1995, 3, 1, 1, ProgressInteractionUsed, 24990, "Recover Conrad's bomb");
             yield return ProgressTrigger(1995, 1, 1, 1, ProgressInteractionUsed, 24911, "Plant the dropship bomb");
+            yield return TimerTrigger(1995, 1, 2, 1, 600U, "Dropship timer expired");
             yield return ConversationTrigger(1995, 4, 1, 1, 2564, 1, "Van Valkenberg handoff");
 
             yield return ProgressTrigger(2005, 1, 1, 1, ProgressInteractionUsed, 24911, "Retry the dropship bomb");
+            yield return TimerTrigger(2005, 1, 2, 1, 600U, "Retry timer expired");
             yield return ConversationTrigger(2005, 4, 1, 1, 2564, 1, "Retry Van Valkenberg handoff");
         }
 
         internal static IEnumerable<object[]> MissionActions()
         {
+            yield return CompleteAction(1990, 1, 1, 1, 1, "Complete bridge approach");
+            yield return RevealAction(1990, 1, 1, 2, 2, "Reveal terrace approach");
+            yield return ActivateAction(1990, 1, 1, 3, 2, "Activate terrace approach");
+
             yield return CompleteAction(1992, 4, 1, 1, 4, "Complete Delessio greeting");
-            yield return RevealAction(1992, 4, 1, 2, 1, "Reveal equipment crate");
-            yield return ActivateAction(1992, 4, 1, 3, 1, "Activate equipment crate");
+            yield return StartScenarioAction(1992, 4, 1, 2, 1, "Start equipment crate scene");
+            yield return RevealAction(1992, 4, 1, 3, 1, "Reveal equipment crate");
+            yield return ActivateAction(1992, 4, 1, 4, 1, "Activate equipment crate");
+            yield return CompleteAction(1992, 1, 1, 1, 1, "Complete equipment crate");
+            yield return StartScenarioAction(1992, 1, 1, 2, 2, "Grant the crate loadout");
+            yield return RevealAction(1992, 1, 1, 3, 2, "Reveal equip gear");
+            yield return ActivateAction(1992, 1, 1, 4, 2, "Activate equip gear");
+            yield return CompleteAction(1992, 2, 1, 1, 2, "Complete equip gear");
+            yield return RevealAction(1992, 2, 1, 2, 5, "Reveal Delessio follow-up");
+            yield return ActivateAction(1992, 2, 1, 3, 5, "Activate Delessio follow-up");
             yield return CompleteAction(1992, 5, 1, 1, 5, "Complete Delessio follow-up");
             yield return RevealAction(1992, 5, 1, 2, 6, "Reveal Hartmann greeting");
             yield return ActivateAction(1992, 5, 1, 3, 6, "Activate Hartmann greeting");
             yield return CompleteAction(1992, 6, 1, 1, 6, "Complete Hartmann greeting");
             yield return RevealAction(1992, 6, 1, 2, 3, "Reveal practice dummy");
             yield return ActivateAction(1992, 6, 1, 3, 3, "Activate practice dummy");
+            yield return CompleteAction(1992, 3, 1, 1, 3, "Complete practice dummy");
+            yield return RevealAction(1992, 3, 1, 2, 9, "Reveal Hartmann Lightning setup");
+            yield return ActivateAction(1992, 3, 1, 3, 9, "Activate Hartmann Lightning setup");
             yield return CompleteAction(1992, 9, 1, 1, 9, "Complete Hartmann Lightning setup");
             yield return RevealAction(1992, 9, 1, 2, 8, "Reveal Lightning dummy");
             yield return ActivateAction(1992, 9, 1, 3, 8, "Activate Lightning dummy");
+            yield return CompleteAction(1992, 8, 1, 1, 8, "Complete Lightning dummy");
+            yield return RevealAction(1992, 8, 1, 2, 7, "Reveal Hartmann completion");
+            yield return ActivateAction(1992, 8, 1, 3, 7, "Activate Hartmann completion");
             yield return CompleteAction(1992, 7, 1, 1, 7, "Complete Hartmann training");
             yield return RewardAction(1992, 7, 1, 2, 1, "Reference mission reward");
 
             yield return CompleteAction(1994, 4, 1, 1, 4, "Complete DeSimone promotion");
-            yield return RevealAction(1994, 4, 1, 2, 2, "Reveal cave exit");
-            yield return ActivateAction(1994, 4, 1, 3, 2, "Activate cave exit");
+            yield return StartScenarioAction(1994, 4, 1, 2, 1, "Start cave encounter scene");
+            yield return RevealAction(1994, 4, 1, 3, 2, "Reveal cave exit");
+            yield return ActivateAction(1994, 4, 1, 4, 2, "Activate cave exit");
+            yield return CompleteAction(1994, 2, 1, 1, 2, "Complete cave exit");
+            yield return RevealAction(1994, 2, 1, 2, 1, "Reveal Tizzik encounter");
+            yield return ActivateAction(1994, 2, 1, 3, 1, "Activate Tizzik encounter");
+            yield return CompleteAction(1994, 1, 1, 1, 1, "Complete Tizzik encounter");
+            yield return RevealAction(1994, 1, 1, 2, 3, "Reveal Youngblood debrief");
+            yield return ActivateAction(1994, 1, 1, 3, 3, "Activate Youngblood debrief");
             yield return CompleteAction(1994, 3, 1, 1, 3, "Complete Youngblood debrief");
             yield return RewardAction(1994, 3, 1, 2, 1, "Reference mission reward");
 
             yield return CompleteAction(1995, 2, 1, 1, 2, "Complete wounded survivor");
-            yield return RevealAction(1995, 2, 1, 2, 3, "Reveal Conrad corpse");
-            yield return ActivateAction(1995, 2, 1, 3, 3, "Activate Conrad corpse");
+            yield return StartScenarioAction(1995, 2, 1, 2, 1, "Start the crash site scene");
+            yield return RevealAction(1995, 2, 1, 3, 3, "Reveal Conrad corpse");
+            yield return ActivateAction(1995, 2, 1, 4, 3, "Activate Conrad corpse");
+            yield return CompleteAction(1995, 3, 1, 1, 3, "Complete Conrad corpse");
+            yield return RevealAction(1995, 3, 1, 2, 1, "Reveal dropship charge");
+            yield return ActivateAction(1995, 3, 1, 3, 1, "Activate dropship charge");
+            yield return CompleteAction(1995, 1, 1, 1, 1, "Complete dropship charge");
+            yield return StartScenarioAction(1995, 1, 1, 2, 3, "Begin the extraction fuse");
             yield return CompleteAction(1995, 4, 1, 1, 4, "Complete Van Valkenberg handoff");
+            yield return StartScenarioAction(1995, 4, 1, 2, 5, "Transfer to Alia Das");
 
+            yield return CompleteAction(2005, 1, 1, 1, 1, "Complete retry dropship charge");
+            yield return StartScenarioAction(2005, 1, 1, 2, 1, "Begin the retry extraction fuse");
             yield return CompleteAction(2005, 4, 1, 1, 4, "Complete retry handoff");
+            yield return StartScenarioAction(2005, 4, 1, 2, 3, "Transfer retry to Alia Das");
         }
 
         internal static IEnumerable<object[]> MissionRewards()
@@ -359,46 +402,55 @@ namespace Rasa.Services.Preloader
 
         internal static IEnumerable<object[]> MissionScenarios()
         {
-            yield return Scenario(1992, 1, "bootcamp-1992-world", "1992 world content");
+            yield return Scenario(1992, 1, "bootcamp-1992-crate", "1992 equipment crate scene");
+            yield return Scenario(1992, 2, "bootcamp-1992-loadout", "1992 loadout and range scene");
             yield return Scenario(1994, 1, "bootcamp-1994-world", "1994 world content");
             yield return Scenario(1995, 1, "bootcamp-1995-world", "1995 missing-team scene");
             yield return Scenario(1995, 2, "bootcamp-1995-exit", "1995 exit handoff");
-            yield return Scenario(2005, 1, "bootcamp-2005-world", "2005 retry scene");
+            yield return Scenario(1995, 3, "bootcamp-1995-fuse", "1995 extraction fuse");
+            yield return Scenario(1995, 5, "bootcamp-1995-transfer", "1995 transfer handoff");
+            yield return Scenario(2005, 1, "bootcamp-2005-fuse", "2005 retry fuse");
             yield return Scenario(2005, 2, "bootcamp-2005-exit", "2005 retry exit handoff");
+            yield return Scenario(2005, 3, "bootcamp-2005-transfer", "2005 retry transfer");
         }
 
         internal static IEnumerable<object[]> MissionScenarioSteps()
         {
             yield return SpawnDynamicObjectStep(1992, 1, 1, "bootcamp-equipment-crate", 7862, 397.3, 114.0, 173.7, 0.0, true, "Spawn equipment crate");
-            yield return GrantRewardPackageStep(1992, 1, 2, 58, "Grant crate loadout");
-            yield return SpawnGroupStep(1992, 1, 3, 1, "Spawn practice dummy");
-            yield return SpawnGroupStep(1992, 1, 4, 2, "Spawn Lightning dummy");
+            yield return GrantRewardPackageStep(1992, 2, 1, 58, "Grant crate loadout");
+            yield return SpawnGroupStep(1992, 2, 2, 1, "Spawn practice dummy");
+            yield return SpawnGroupStep(1992, 2, 3, 2, "Spawn Lightning dummy");
 
             yield return SpawnGroupStep(1994, 1, 1, 1, "Spawn escort group");
             yield return SpawnGroupStep(1994, 1, 2, 2, "Spawn Tizzik encounter");
             yield return SpawnGroupStep(1994, 1, 3, 3, "Spawn Youngblood arrival");
 
-            yield return SpawnGroupStep(1995, 1, 1, 1, "Spawn wounded survivor");
-            yield return SpawnDynamicObjectStep(1995, 1, 2, "bootcamp-conrad-corpse", 24990, -102.4, 85.69, 66.8, 0.0, true, "Spawn Conrad corpse");
-            yield return SpawnDynamicObjectStep(1995, 1, 3, "bootcamp-dropship-debris", 24911, -225.35, 99.60, -70.52, 0.0, true, "Spawn dropship debris");
-            yield return StartDeadlineStep(1995, 1, 4, 600000U, "Start the bomb timer");
-            yield return ScheduleScenarioStep(1995, 1, 5, 2, 5000U, "Schedule the exit handoff");
+            yield return SpawnDynamicObjectStep(1995, 1, 1, "bootcamp-conrad-corpse", 24990, -102.4, 85.69, 66.8, 0.0, true, "Spawn Conrad corpse");
+            yield return SpawnDynamicObjectStep(1995, 1, 2, "bootcamp-dropship-debris", 24911, -225.35, 99.60, -70.52, 0.0, true, "Spawn dropship debris");
 
             yield return SpawnGroupStep(1995, 2, 1, 2, "Spawn reinforcements");
             yield return SpawnGroupStep(1995, 2, 2, 3, "Spawn Van Valkenberg");
-            yield return TransferPlayerStep(1995, 2, 3, WildernessMapContextId, 884.11, 305.8, 347.81, 1.5613, "Transfer to Alia Das");
-            yield return QualificationStep(1995, 2, 4, CharacterQualificationKey.BootcampComplete, MissionScenarioStepEntry.GrantedQualificationValue, "Mark Bootcamp complete");
-            yield return SkipEntitlementStep(1995, 2, 5, true, "Unlock account bootcamp skip");
+            yield return RevealObjectiveStep(1995, 2, 3, 4, "Reveal Van Valkenberg handoff");
+            yield return ActivateObjectiveStep(1995, 2, 4, 4, "Activate Van Valkenberg handoff");
 
-            yield return SpawnDynamicObjectStep(2005, 1, 1, "bootcamp-retry-dropship-debris", 24911, -225.35, 99.60, -70.52, 0.0, true, "Spawn retry dropship debris");
-            yield return StartDeadlineStep(2005, 1, 2, 600000U, "Start the retry bomb timer");
-            yield return ScheduleScenarioStep(2005, 1, 3, 2, 5000U, "Schedule the retry exit handoff");
+            yield return CancelDeadlineStep(1995, 3, 1, "Cancel the bomb timer");
+            yield return ScheduleScenarioStep(1995, 3, 2, 2, 5000U, "Schedule the exit handoff");
+
+            yield return TransferPlayerStep(1995, 5, 1, WildernessMapContextId, 884.11, 305.8, 347.81, 1.5613, "Transfer to Alia Das");
+            yield return QualificationStep(1995, 5, 2, CharacterQualificationKey.BootcampComplete, MissionScenarioStepEntry.GrantedQualificationValue, "Mark Bootcamp complete");
+            yield return SkipEntitlementStep(1995, 5, 3, true, "Unlock account bootcamp skip");
+
+            yield return CancelDeadlineStep(2005, 1, 1, "Cancel the retry timer");
+            yield return ScheduleScenarioStep(2005, 1, 2, 2, 5000U, "Schedule the retry exit handoff");
 
             yield return SpawnGroupStep(2005, 2, 1, 1, "Spawn retry reinforcements");
             yield return SpawnGroupStep(2005, 2, 2, 2, "Spawn retry Van Valkenberg");
-            yield return TransferPlayerStep(2005, 2, 3, WildernessMapContextId, 884.11, 305.8, 347.81, 1.5613, "Transfer retry to Alia Das");
-            yield return QualificationStep(2005, 2, 4, CharacterQualificationKey.BootcampComplete, MissionScenarioStepEntry.GrantedQualificationValue, "Mark Bootcamp complete");
-            yield return SkipEntitlementStep(2005, 2, 5, true, "Unlock account bootcamp skip");
+            yield return RevealObjectiveStep(2005, 2, 3, 4, "Reveal retry handoff");
+            yield return ActivateObjectiveStep(2005, 2, 4, 4, "Activate retry handoff");
+
+            yield return TransferPlayerStep(2005, 3, 1, WildernessMapContextId, 884.11, 305.8, 347.81, 1.5613, "Transfer retry to Alia Das");
+            yield return QualificationStep(2005, 3, 2, CharacterQualificationKey.BootcampComplete, MissionScenarioStepEntry.GrantedQualificationValue, "Mark Bootcamp complete");
+            yield return SkipEntitlementStep(2005, 3, 3, true, "Unlock account bootcamp skip");
         }
 
         internal static IEnumerable<object[]> MissionEvidence()
@@ -488,18 +540,22 @@ namespace Rasa.Services.Preloader
             uint clientBodyTextId,
             uint ordinal,
             string comment,
-            uint? counter0TextId = null) =>
+            uint? counter0TextId = null,
+            byte initialState = ObjectiveIncompleteState) =>
             new object[]
             {
                 missionId, Revision, objectiveId, MissionContentRequirement.Required, clientNameTextId, clientBodyTextId,
-                counter0TextId, null, null, ordinal, ObjectiveIncompleteState, true, comment
+                counter0TextId, null, null, ordinal, initialState, true, comment
             };
 
         private static object[] Transition(uint missionId, uint objectiveId, uint transitionId, string comment) =>
+            Transition(missionId, objectiveId, transitionId, ObjectiveCompletedState, comment);
+
+        private static object[] Transition(uint missionId, uint objectiveId, uint transitionId, byte toState, string comment) =>
             new object[]
             {
                 missionId, Revision, objectiveId, transitionId, MissionContentRequirement.Required, 1U,
-                ObjectiveIncompleteState, ObjectiveCompletedState, comment
+                ObjectiveIncompleteState, toState, comment
             };
 
         private static object[] ConversationTrigger(
@@ -530,6 +586,19 @@ namespace Rasa.Services.Preloader
             {
                 missionId, Revision, objectiveId, transitionId, triggerId, MissionContentRequirement.Required,
                 MissionTriggerKind.ProgressEvent, 1U, null, null, (byte)eventKind, subjectId, counterId, null, null, null, null, null, null, sourceSpawnResolved, comment
+            };
+
+        private static object[] TimerTrigger(
+            uint missionId,
+            uint objectiveId,
+            uint transitionId,
+            uint triggerId,
+            uint durationSeconds,
+            string comment) =>
+            new object[]
+            {
+                missionId, Revision, objectiveId, transitionId, triggerId, MissionContentRequirement.Required,
+                MissionTriggerKind.TimerElapsed, 1U, null, null, null, null, null, null, null, null, durationSeconds, null, null, null, comment
             };
 
         private static object[] AreaTrigger(
@@ -574,6 +643,14 @@ namespace Rasa.Services.Preloader
                 missionId, Revision, objectiveId, transitionId, actionId, MissionContentRequirement.Required,
                 MissionActionKind.GrantReward, actionId, null, null,
                 rewardId, null, null, null, null, null, comment
+            };
+
+        private static object[] StartScenarioAction(uint missionId, uint objectiveId, uint transitionId, uint actionId, uint scenarioId, string comment) =>
+            new object[]
+            {
+                missionId, Revision, objectiveId, transitionId, actionId, MissionContentRequirement.Required,
+                MissionActionKind.StartScenario, actionId, null, null,
+                null, null, scenarioId, null, null, null, comment
             };
 
         private static object[] RewardItem(
@@ -693,6 +770,61 @@ namespace Rasa.Services.Preloader
                 missionId, Revision, scenarioId, stepId, MissionContentRequirement.Required,
                 MissionScenarioStepKind.StartDeadline, stepId, null, null, null, null,
                 null, null, null, delayMilliseconds, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, comment
+            };
+
+        private static object[] CancelDeadlineStep(
+            uint missionId,
+            uint scenarioId,
+            uint stepId,
+            string comment) =>
+            new object[]
+            {
+                missionId, Revision, scenarioId, stepId, MissionContentRequirement.Required,
+                MissionScenarioStepKind.CancelDeadline, stepId, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, comment
+            };
+
+        private static object[] RevealObjectiveStep(
+            uint missionId,
+            uint scenarioId,
+            uint stepId,
+            uint targetObjectiveId,
+            string comment) =>
+            new object[]
+            {
+                missionId, Revision, scenarioId, stepId, MissionContentRequirement.Required,
+                MissionScenarioStepKind.RevealObjective, stepId, targetObjectiveId, null, null, null,
+                null, null, null, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, comment
+            };
+
+        private static object[] ActivateObjectiveStep(
+            uint missionId,
+            uint scenarioId,
+            uint stepId,
+            uint targetObjectiveId,
+            string comment) =>
+            new object[]
+            {
+                missionId, Revision, scenarioId, stepId, MissionContentRequirement.Required,
+                MissionScenarioStepKind.ActivateObjective, stepId, targetObjectiveId, null, null, null,
+                null, null, null, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, comment
+            };
+
+        private static object[] FailObjectiveStep(
+            uint missionId,
+            uint scenarioId,
+            uint stepId,
+            uint targetObjectiveId,
+            string comment) =>
+            new object[]
+            {
+                missionId, Revision, scenarioId, stepId, MissionContentRequirement.Required,
+                MissionScenarioStepKind.FailObjective, stepId, targetObjectiveId, null, null, null,
+                null, null, null, null, null, null, null, null, null, null, null, null,
                 null, null, null, null, null, null, null, null, null, comment
             };
 

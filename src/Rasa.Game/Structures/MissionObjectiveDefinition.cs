@@ -6,6 +6,7 @@ using System.Linq;
 namespace Rasa.Structures
 {
     using Data;
+    using Missions;
 
     public readonly struct MissionObjectiveCounterDefinition
     {
@@ -35,6 +36,64 @@ namespace Rasa.Structures
         }
     }
 
+    public sealed class MissionObjectiveExecutableTransition
+    {
+        public uint TransitionId { get; }
+        public uint Sequence { get; }
+        public MissionObjectiveState? ToState { get; }
+        public IReadOnlyList<MissionObjectiveConversation> Conversations { get; }
+        public MissionProgressRule ProgressRule { get; }
+        public IReadOnlyDictionary<uint, MissionObjectiveCounterDefinition> Counters { get; }
+        public IReadOnlyDictionary<uint, MissionObjectiveItemCounterDefinition> ItemCounters { get; }
+        public IReadOnlyList<MissionActionDefinition> Actions { get; }
+        public IReadOnlyList<uint> RevealedObjectiveIds { get; }
+        public IReadOnlyList<uint> ActivatedObjectiveIds { get; }
+
+        public MissionObjectiveExecutableTransition(
+            uint transitionId,
+            uint sequence,
+            MissionObjectiveState? toState,
+            IEnumerable<MissionObjectiveConversation> conversations,
+            MissionProgressRule progressRule,
+            IReadOnlyDictionary<uint, MissionObjectiveCounterDefinition> counters,
+            IReadOnlyDictionary<uint, MissionObjectiveItemCounterDefinition> itemCounters,
+            IEnumerable<MissionActionDefinition> actions)
+        {
+            TransitionId = transitionId;
+            Sequence = sequence;
+            ToState = toState;
+            Conversations = Array.AsReadOnly(
+                (conversations ?? Array.Empty<MissionObjectiveConversation>())
+                .ToArray());
+            ProgressRule = progressRule;
+            Counters = new ReadOnlyDictionary<uint, MissionObjectiveCounterDefinition>(
+                new Dictionary<uint, MissionObjectiveCounterDefinition>(
+                    counters ?? new Dictionary<uint, MissionObjectiveCounterDefinition>()));
+            ItemCounters = new ReadOnlyDictionary<uint, MissionObjectiveItemCounterDefinition>(
+                new Dictionary<uint, MissionObjectiveItemCounterDefinition>(
+                    itemCounters ?? new Dictionary<uint, MissionObjectiveItemCounterDefinition>()));
+            Actions = Array.AsReadOnly(
+                (actions ?? Array.Empty<MissionActionDefinition>())
+                .OrderBy(action => action.Sequence)
+                .ThenBy(action => action.ActionId)
+                .ToArray());
+            RevealedObjectiveIds = Array.AsReadOnly(
+                Actions.Where(action =>
+                        action.Kind == World.MissionActionKind.RevealObjective &&
+                        action.TargetObjectiveId.HasValue)
+                    .Select(action => action.TargetObjectiveId!.Value)
+                    .Distinct()
+                    .ToArray());
+            ActivatedObjectiveIds = Array.AsReadOnly(
+                Actions.Where(action =>
+                        action.Kind == World.MissionActionKind.ActivateObjective &&
+                        action.TargetObjectiveId.HasValue)
+                    .Select(action => action.TargetObjectiveId!.Value)
+                    .Distinct()
+                    .ToArray());
+        }
+    }
+
     public sealed class MissionObjectiveDefinition
     {
         public uint ObjectiveId { get; }
@@ -51,6 +110,7 @@ namespace Rasa.Structures
         public IReadOnlyList<uint> ActivatedObjectiveIds { get; }
         public IReadOnlyList<MissionIndicator> Indicators { get; }
         public MissionProgressRule ProgressRule { get; }
+        public IReadOnlyList<MissionObjectiveExecutableTransition> ExecutableTransitions { get; }
         public bool HasCompleteServerContract { get; }
 
         public MissionObjectiveDefinition(
@@ -67,7 +127,8 @@ namespace Rasa.Structures
             IEnumerable<uint> revealedObjectiveIds = null,
             IEnumerable<uint> activatedObjectiveIds = null,
             IEnumerable<MissionIndicator> indicators = null,
-            MissionProgressRule progressRule = null)
+            MissionProgressRule progressRule = null,
+            IEnumerable<MissionObjectiveExecutableTransition> executableTransitions = null)
         {
             ObjectiveId = objectiveId;
             ClientNameTextId = clientNameTextId;
@@ -95,6 +156,11 @@ namespace Rasa.Structures
                 ? null
                 : Array.AsReadOnly(indicators.Select(CloneIndicator).ToArray());
             ProgressRule = progressRule;
+            ExecutableTransitions = Array.AsReadOnly(
+                (executableTransitions ?? Array.Empty<MissionObjectiveExecutableTransition>())
+                .OrderBy(transition => transition.Sequence)
+                .ThenBy(transition => transition.TransitionId)
+                .ToArray());
             HasCompleteServerContract =
                 ClientNameTextId.HasValue &&
                 ClientBodyTextId.HasValue &&
@@ -161,5 +227,62 @@ namespace Rasa.Structures
                 IndicatorId = indicator.IndicatorId,
                 Show3DEffect = indicator.Show3DEffect
             };
+
+        internal IReadOnlyList<MissionObjectiveExecutableTransition> GetExecutableTransitionsOrLegacyDefault()
+        {
+            if (ExecutableTransitions.Count > 0)
+                return ExecutableTransitions;
+            if (Conversations.Count == 0 && ProgressRule == null)
+                return Array.Empty<MissionObjectiveExecutableTransition>();
+
+            var actions = new List<MissionActionDefinition>();
+            uint sequence = 1;
+            foreach (var objectiveId in RevealedObjectiveIds ?? Array.Empty<uint>())
+            {
+                actions.Add(new MissionActionDefinition(new World.MissionActionEntry
+                {
+                    MissionId = 0,
+                    ContentRevision = string.Empty,
+                    ObjectiveId = ObjectiveId,
+                    TransitionId = 0,
+                    ActionId = sequence,
+                    Kind = World.MissionActionKind.RevealObjective,
+                    Sequence = sequence,
+                    TargetObjectiveId = objectiveId,
+                    Comment = "Legacy reveal"
+                }));
+                sequence++;
+            }
+
+            foreach (var objectiveId in ActivatedObjectiveIds ?? Array.Empty<uint>())
+            {
+                actions.Add(new MissionActionDefinition(new World.MissionActionEntry
+                {
+                    MissionId = 0,
+                    ContentRevision = string.Empty,
+                    ObjectiveId = ObjectiveId,
+                    TransitionId = 0,
+                    ActionId = sequence,
+                    Kind = World.MissionActionKind.ActivateObjective,
+                    Sequence = sequence,
+                    TargetObjectiveId = objectiveId,
+                    Comment = "Legacy activate"
+                }));
+                sequence++;
+            }
+
+            return new[]
+            {
+                new MissionObjectiveExecutableTransition(
+                    0,
+                    0,
+                    MissionObjectiveState.Completed,
+                    Conversations,
+                    ProgressRule,
+                    Counters,
+                    ItemCounters,
+                    actions)
+            };
+        }
     }
 }

@@ -5,7 +5,7 @@ namespace Rasa.Structures.Missions
     using Data;
     using Structures.World;
 
-    internal sealed class MissionActionDefinition
+    public sealed class MissionActionDefinition
     {
         public uint MissionId { get; }
         public string ContentRevision { get; }

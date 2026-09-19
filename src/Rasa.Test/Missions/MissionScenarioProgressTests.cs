@@ -143,6 +143,42 @@ namespace Rasa.Test.Missions
                     .ToArray());
         }
 
+        [TestMethod]
+        public void ProgressCompletionStartsAuthoredScenarioOncePostCommit()
+        {
+            using var context = MissionTestContext.WithCustomDefinitions(
+                new Dictionary<uint, Mission>());
+            var fixture = CreateProgressStartScenarioFixture();
+            var manager = LoadManager(context, fixture);
+            var giver = context.AddNpc(101);
+
+            Assert.IsTrue(manager.TryAcceptNpcMission(
+                context.Client,
+                giver.EntityId,
+                321));
+            context.Drain();
+
+            Assert.IsTrue(manager.RecordProgress(
+                context.Client,
+                MissionProgressEvent.Interaction(3147)));
+            Assert.IsFalse(manager.RecordProgress(
+                context.Client,
+                MissionProgressEvent.Interaction(3147)));
+
+            Assert.AreEqual(
+                MissionObjectiveState.Completed,
+                context.Client.Player.Missions[321].Objectives[10].State);
+            Assert.AreEqual(
+                MissionObjectiveState.Incomplete,
+                context.Client.Player.Missions[321].Objectives[11].State);
+            using var unit = context.CreateChar();
+            CollectionAssert.AreEquivalent(
+                new[] { "scenario:60:step:1", "scenario:60:step:2" },
+                unit.CharacterMissionScenario.Get(1, 321)
+                    .Select(entry => entry.StepKey)
+                    .ToArray());
+        }
+
         private static MissionContentFixture CreateScenarioFixture(
             uint stepId = 1,
             uint scenarioEventId = 1)
@@ -195,6 +231,83 @@ namespace Rasa.Test.Missions
                 CounterId = 60,
                 Comment = $"Scenario 60 event {scenarioEventId}"
             });
+            return fixture;
+        }
+
+        private static MissionContentFixture CreateProgressStartScenarioFixture()
+        {
+            var fixture = MissionContentFixture.CreateValid();
+            fixture.Triggers.Clear();
+            fixture.Actions.Clear();
+            fixture.Transitions.Clear();
+            fixture.Rewards.Clear();
+            fixture.RewardItems.Clear();
+            fixture.Indicators.Clear();
+            fixture.ScenarioSteps.Clear();
+            fixture.Transitions.Add(new MissionObjectiveTransitionEntry
+            {
+                MissionId = 321,
+                ContentRevision = "deployment_11",
+                ObjectiveId = 10,
+                TransitionId = 20,
+                Requirement = MissionContentRequirement.Required,
+                Sequence = 1,
+                FromState = (byte)MissionObjectiveState.Incomplete,
+                ToState = (byte)MissionObjectiveState.Completed,
+                Comment = "Use interaction"
+            });
+            fixture.Triggers.Add(new MissionTriggerEntry
+            {
+                MissionId = 321,
+                ContentRevision = "deployment_11",
+                ObjectiveId = 10,
+                TransitionId = 20,
+                TriggerId = 1,
+                Requirement = MissionContentRequirement.Required,
+                Kind = MissionTriggerKind.ProgressEvent,
+                Sequence = 1,
+                EventKind = (byte)MissionProgressEventKind.InteractionUsed,
+                SubjectId = 3147,
+                Comment = "Use interaction"
+            });
+            fixture.Actions.Add(new MissionActionEntry
+            {
+                MissionId = 321,
+                ContentRevision = "deployment_11",
+                ObjectiveId = 10,
+                TransitionId = 20,
+                ActionId = 1,
+                Requirement = MissionContentRequirement.Required,
+                Kind = MissionActionKind.StartScenario,
+                Sequence = 1,
+                ScenarioId = 60,
+                Comment = "Start follow-up scenario"
+            });
+            fixture.ScenarioSteps.AddRange(
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 1,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.RevealObjective,
+                    Sequence = 1,
+                    TargetObjectiveId = 11,
+                    Comment = "Reveal objective 11"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 2,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.ActivateObjective,
+                    Sequence = 2,
+                    TargetObjectiveId = 11,
+                    Comment = "Activate objective 11"
+                });
             return fixture;
         }
 
