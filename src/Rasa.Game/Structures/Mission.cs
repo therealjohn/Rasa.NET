@@ -99,7 +99,8 @@ namespace Rasa.Structures
         internal MissionInfo CreateInfo(
             MissionState state,
             bool completeable,
-            IReadOnlyDictionary<uint, MissionObjectiveLog> objectiveLogs = null)
+            IReadOnlyDictionary<uint, MissionObjectiveLog> objectiveLogs = null,
+            Func<uint, uint?> objectiveTimeRemaining = null)
         {
             if (!IsOperational)
                 throw new InvalidOperationException("Mission definition is not operational.");
@@ -110,7 +111,9 @@ namespace Rasa.Structures
             {
                 if (!objectiveLogs.TryGetValue(definition.ObjectiveId, out var log))
                     continue;
-                objectives.Add(definition.CreateRuntime(log.State, log.Counters, log.ItemCounters));
+                var objective = definition.CreateRuntime(log.State, log.Counters, log.ItemCounters);
+                objective.TimeRemaining = objectiveTimeRemaining?.Invoke(definition.ObjectiveId);
+                objectives.Add(objective);
             }
 
             return new MissionInfo

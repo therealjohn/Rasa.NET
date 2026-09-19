@@ -596,6 +596,11 @@ namespace Rasa.Managers
                 context.MissionDefinition.MissionId,
                 dueAt,
                 state);
+            context.Plan.AddPublication(() =>
+                context.MissionManager.PublishMissionStatus(
+                    context.Client,
+                    context.MissionDefinition.MissionId,
+                    $"mission {context.MissionDefinition.MissionId} status after deadline start"));
         }
 
         private static void PlanCancelDeadline(MissionActionContext context)
@@ -604,10 +609,17 @@ namespace Rasa.Managers
                 context.Client.Player.Id,
                 context.MissionDefinition.MissionId);
             if (existing?.State == CharacterMissionDeadlineState.Active)
+            {
                 context.UnitOfWork.CharacterMissionDeadlines.SetState(
                     context.Client.Player.Id,
                     context.MissionDefinition.MissionId,
                     CharacterMissionDeadlineState.Cancelled);
+                context.Plan.AddPublication(() =>
+                    context.MissionManager.PublishMissionStatus(
+                        context.Client,
+                        context.MissionDefinition.MissionId,
+                        $"mission {context.MissionDefinition.MissionId} status after deadline cancel"));
+            }
         }
 
         private static void PlanSatisfyDeadline(MissionActionContext context)
@@ -616,10 +628,17 @@ namespace Rasa.Managers
                 context.Client.Player.Id,
                 context.MissionDefinition.MissionId);
             if (existing?.State == CharacterMissionDeadlineState.Active)
+            {
                 context.UnitOfWork.CharacterMissionDeadlines.SetState(
                     context.Client.Player.Id,
                     context.MissionDefinition.MissionId,
                     CharacterMissionDeadlineState.Satisfied);
+                context.Plan.AddPublication(() =>
+                    context.MissionManager.PublishMissionStatus(
+                        context.Client,
+                        context.MissionDefinition.MissionId,
+                        $"mission {context.MissionDefinition.MissionId} status after deadline satisfaction"));
+            }
         }
 
         private void PlanRewardPackage(

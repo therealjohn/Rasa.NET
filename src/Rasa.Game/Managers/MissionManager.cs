@@ -305,6 +305,7 @@ namespace Rasa.Managers
         private readonly Action<PythonPacket> _beforeMissionPacketPublication;
         private readonly MissionDeadlineService _deadlineService;
         private readonly IMissionScenarioService _scenarioService;
+        private readonly Func<DateTime> _utcNow;
 
         public IReadOnlyDictionary<uint, Mission> LoadedMissions => _loadedMissionsView;
         internal IMissionScenarioService ScenarioService => _scenarioService;
@@ -357,7 +358,8 @@ namespace Rasa.Managers
             Action<Item> beforeRewardItemPublication = null,
             Action<PythonPacket> beforeMissionPacketPublication = null,
             MissionDeadlineService deadlineService = null,
-            IMissionScenarioService scenarioService = null)
+            IMissionScenarioService scenarioService = null,
+            Func<DateTime> utcNow = null)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
             _loadedMissions = definitions.ToDictionary(entry => entry.Key, entry => entry.Value);
@@ -372,9 +374,11 @@ namespace Rasa.Managers
             _manifestationManager = manifestationManager;
             _beforeRewardItemPublication = beforeRewardItemPublication;
             _beforeMissionPacketPublication = beforeMissionPacketPublication;
+            _utcNow = utcNow ?? (() => DateTime.UtcNow);
             _deadlineService = deadlineService ?? new MissionDeadlineService(
                 () => _gameUnitOfWorkFactory,
-                () => this);
+                () => this,
+                _utcNow);
             _scenarioService = scenarioService ?? new MissionScenarioService(
                 () => _gameUnitOfWorkFactory,
                 () => this,
@@ -549,13 +553,84 @@ namespace Rasa.Managers
                     !IsPublishedState(entry.Value.State))
                     continue;
 
-                snapshot.Add(entry.Key, definition.CreateInfo(
-                    entry.Value.State,
-                    entry.Value.Completeable,
-                    entry.Value.Objectives));
+                snapshot.Add(entry.Key, BuildPublishedMissionInfo(
+                    player,
+                    definition,
+                    entry.Value));
             }
 
             return snapshot;
+        }
+
+        internal void PublishMissionStatus(Client client, uint missionId, string description)
+        {
+            if (client?.Player == null ||
+                !client.Player.Missions.TryGetValue(missionId, out var runtimeMission) ||
+                !TryGetOperationalMission(missionId, out var definition) ||
+                !IsPublishedState(runtimeMission.State))
+                return;
+
+            PublishMissionPacket(
+                client,
+                new MissionStatusInfoPacket(
+                    new Dictionary<uint, MissionInfo>
+                    {
+                        [missionId] = BuildPublishedMissionInfo(
+                            client.Player,
+                            definition,
+                            runtimeMission)
+                    }),
+                description);
+        }
+
+        private MissionInfo BuildPublishedMissionInfo(
+            Manifestation player,
+            Mission definition,
+            MissionLog runtimeMission)
+        {
+            uint activeDeadlineObjectiveId = 0;
+            uint? timeRemaining = null;
+            if (player != null &&
+                definition != null &&
+                runtimeMission != null &&
+                runtimeMission.State == MissionState.Active &&
+                definition.Objectives.Values.Any(objective =>
+                    objective.GetExecutableTransitionsOrLegacyDefault().Any(transition =>
+                        transition.ProgressRule?.Kind == MissionProgressEventKind.DeadlineElapsed)))
+            {
+                using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+                var deadline = unitOfWork.CharacterMissionDeadlines.Get(
+                    player.Id,
+                    definition.MissionId);
+                if (deadline?.State == CharacterMissionDeadlineState.Active)
+                {
+                    var timedObjectives = definition.Objectives.Values
+                        .Where(objective =>
+                            objective.GetExecutableTransitionsOrLegacyDefault().Any(transition =>
+                                transition.ProgressRule?.Kind == MissionProgressEventKind.DeadlineElapsed) &&
+                            runtimeMission.Objectives.TryGetValue(objective.ObjectiveId, out var runtimeObjective) &&
+                            runtimeObjective.State == MissionObjectiveState.Incomplete)
+                        .Select(objective => objective.ObjectiveId)
+                        .ToArray();
+                    if (timedObjectives.Length == 1)
+                    {
+                        activeDeadlineObjectiveId = timedObjectives[0];
+                        var remaining = deadline.DueAtUtc - _utcNow();
+                        timeRemaining = remaining <= TimeSpan.Zero
+                            ? 0U
+                            : checked((uint)Math.Ceiling(remaining.TotalSeconds));
+                    }
+                }
+            }
+
+            return definition.CreateInfo(
+                runtimeMission.State,
+                runtimeMission.Completeable,
+                runtimeMission.Objectives,
+                objectiveId =>
+                    objectiveId == activeDeadlineObjectiveId
+                        ? timeRemaining
+                        : null);
         }
 
         public void PublishInitialState(Client client)
@@ -939,8 +1014,12 @@ namespace Rasa.Managers
                 client.Player.Missions.Add(missionId, log);
                 client.CallMethod(
                     client.Player.EntityId,
-                    new MissionGainedPacket(missionId, definition.CreateInfo(
-                        log.State, log.Completeable, log.Objectives)));
+                    new MissionGainedPacket(
+                        missionId,
+                        BuildPublishedMissionInfo(
+                            client.Player,
+                            definition,
+                            log)));
                 return true;
             }
         }
@@ -1374,10 +1453,10 @@ namespace Rasa.Managers
                         new ObjectiveRevealedPacket(
                             missionId,
                             successorId,
-                            definition.CreateInfo(
-                                runtimeMission.State,
-                                runtimeMission.Completeable,
-                                runtimeMission.Objectives)));
+                            BuildPublishedMissionInfo(
+                                client.Player,
+                                definition,
+                                runtimeMission)));
                 foreach (var successorId in actionApplication.ActivatedObjectiveIds)
                     client.CallMethod(client.Player.EntityId,
                         new ObjectiveActivatedPacket(missionId, successorId));
@@ -1487,7 +1566,11 @@ namespace Rasa.Managers
                             objectiveId,
                             failMission ? MissionState.Failed : MissionState.Active,
                             completeable,
-                            completeableChanged);
+                            completeableChanged,
+                            publishMissionStatus:
+                                objectiveDefinition.GetExecutableTransitionsOrLegacyDefault()
+                                    .Any(transition =>
+                                        transition.ProgressRule?.Kind == MissionProgressEventKind.DeadlineElapsed));
                     });
                 }
                 catch (Exception error) when (GameplayRejectionException.IsExpected(error))
@@ -1600,10 +1683,10 @@ namespace Rasa.Managers
                             new ObjectiveRevealedPacket(
                                 missionId,
                                 objectiveId,
-                                definition.CreateInfo(
-                                    runtimeMission.State,
-                                    runtimeMission.Completeable,
-                                    runtimeMission.Objectives)),
+                                BuildPublishedMissionInfo(
+                                    client.Player,
+                                    definition,
+                                    runtimeMission)),
                             $"mission {missionId} objective {objectiveId} revealed"));
                     return true;
 
@@ -1708,10 +1791,10 @@ namespace Rasa.Managers
                                 new ObjectiveRevealedPacket(
                                     missionId,
                                     successorId,
-                                    definition.CreateInfo(
-                                        runtimeMission.State,
-                                        runtimeMission.Completeable,
-                                        runtimeMission.Objectives)),
+                                    BuildPublishedMissionInfo(
+                                        client.Player,
+                                        definition,
+                                        runtimeMission)),
                                 $"mission {missionId} objective {successorId} revealed");
                         foreach (var successorId in appliedActivated)
                             PublishMissionPacket(
@@ -1758,7 +1841,11 @@ namespace Rasa.Managers
                             objectiveId,
                             failMission ? MissionState.Failed : MissionState.Active,
                             nextCompleteable,
-                            nextCompleteableChanged));
+                            nextCompleteableChanged,
+                            publishMissionStatus:
+                                objectiveDefinition.GetExecutableTransitionsOrLegacyDefault()
+                                    .Any(transition =>
+                                        transition.ProgressRule?.Kind == MissionProgressEventKind.DeadlineElapsed)));
                     return true;
             }
 
@@ -2336,7 +2423,10 @@ namespace Rasa.Managers
                                 failMission ? MissionState.Failed : MissionState.Active,
                                 nextCompleteable,
                                 nextCompleteableChanged,
-                                failureActions.StartScenarioIds));
+                                failureActions.StartScenarioIds,
+                                publishMissionStatus:
+                                    candidate.ExecutableTransition.ProgressRule?.Kind ==
+                                    MissionProgressEventKind.DeadlineElapsed));
                         continue;
                     }
 
@@ -2936,6 +3026,7 @@ namespace Rasa.Managers
             private readonly MissionState _missionState;
             private readonly bool _completeable;
             private readonly bool _completeableChanged;
+            private readonly bool _publishMissionStatus;
             internal uint MissionId => _missionId;
             internal IReadOnlyList<uint> StartScenarioIds { get; }
 
@@ -2945,13 +3036,15 @@ namespace Rasa.Managers
                 MissionState missionState,
                 bool completeable,
                 bool completeableChanged,
-                IEnumerable<uint> startScenarioIds = null)
+                IEnumerable<uint> startScenarioIds = null,
+                bool publishMissionStatus = false)
             {
                 _missionId = missionId;
                 _objectiveId = objectiveId;
                 _missionState = missionState;
                 _completeable = completeable;
                 _completeableChanged = completeableChanged;
+                _publishMissionStatus = publishMissionStatus;
                 StartScenarioIds = Array.AsReadOnly(
                     (startScenarioIds ?? Array.Empty<uint>()).ToArray());
             }
@@ -2984,6 +3077,11 @@ namespace Rasa.Managers
                         client,
                         new MissionFailedPacket(_missionId),
                         $"mission {_missionId} failed after objective failure");
+                if (_publishMissionStatus)
+                    manager.PublishMissionStatus(
+                        client,
+                        _missionId,
+                        $"mission {_missionId} status after deadline change");
 
                 MissionManager.PublishStartedScenarios(
                     client,
@@ -3122,10 +3220,10 @@ namespace Rasa.Managers
                                 new ObjectiveRevealedPacket(
                                     publication.MissionId,
                                     objectiveId,
-                                    publication.Definition.CreateInfo(
-                                        publication.RuntimeMission.State,
-                                        publication.RuntimeMission.Completeable,
-                                        publication.RuntimeMission.Objectives))),
+                                    _manager.BuildPublishedMissionInfo(
+                                        client.Player,
+                                        publication.Definition,
+                                        publication.RuntimeMission))),
                             $"mission {publication.MissionId} objective {objectiveId} revealed");
                     foreach (var objectiveId in publication.ActivatedObjectiveIds)
                         TryPublish(

@@ -204,7 +204,7 @@ namespace Rasa.Structures
             // Actor
             EntityClass = character.Gender == 0 ? EntityClasses.HumanBaseMale : EntityClasses.HumanBaseFemale;
             Name = character.Name;
-            FamilyName = character.GameAccount.FamilyName;
+            FamilyName = character.GameAccount?.FamilyName;
             Position = new Vector3((float)character.CoordX, (float)character.CoordY, (float)character.CoordZ);
             Rotation = (float)character.Rotation;
             MapContextId = character.MapContextId;

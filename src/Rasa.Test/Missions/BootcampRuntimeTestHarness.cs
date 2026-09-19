@@ -11,8 +11,6 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
-using ClientState = RasaGame::Rasa.Data.ClientState;
-
 namespace Rasa.Test.Missions
 {
     using Configuration;
@@ -21,9 +19,12 @@ namespace Rasa.Test.Missions
     using Context;
     using Context.World;
     using Rasa.Packets.MapChannel.Client;
+    using Rasa.Game.Handlers;
+    using Rasa.Packets;
     using Rasa.Data;
     using Rasa.Game;
     using Rasa.Managers;
+    using Rasa.Packets.Protocol;
     using Rasa.Repositories.UnitOfWork;
     using Rasa.Repositories.World;
     using Rasa.Services.DbContext;
@@ -56,137 +57,57 @@ namespace Rasa.Test.Missions
         internal const uint CorporalDeSimonePackageId = 2562;
         internal const uint WoundedSurvivorPackageId = 2584;
         internal const uint CorporalVanValkenbergPackageId = 2564;
+        private const uint FreshPendingAccountId = 2;
+        private const uint FreshPendingCharacterId = 2;
+        private const byte FreshPendingSlot = 1;
 
         internal static Harness Create()
         {
-            var databaseDirectory = Path.Combine(
-                AppContext.BaseDirectory,
-                "TestDatabases",
-                Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(databaseDirectory);
-            var worldDatabase = Path.Combine(databaseDirectory, "world");
-            var worldContext = (SqliteWorldContext)CreateContext(typeof(SqliteWorldContext), worldDatabase);
-            worldContext.Database.Migrate();
+            var bootstrap = CreateBootstrap();
+            ConfigureRuntimePlayer(bootstrap.Context.Client);
+            var bootcampMap = bootstrap.Maps.GetOrCreatePrivateInstance(
+                BootcampMapContextId,
+                bootstrap.Context.Client.Player.Id);
+            AttachClientToMap(bootstrap.Context.Client, bootcampMap);
+            return new Harness(
+                bootstrap.Context,
+                bootstrap.WorldContext,
+                bootstrap.Manager,
+                bootstrap.Maps,
+                bootcampMap,
+                bootstrap.Singletons,
+                () => bootstrap.Clock.UtcNow,
+                value => bootstrap.Clock.UtcNow = value,
+                bootstrap.Context.Client);
+        }
 
-            var context = MissionTestContext.WithCustomDefinitions(new Dictionary<uint, Mission>());
-            var bootcampTemplate = CreatePublicMap(BootcampMapContextId, "bootcamp_runtime");
-            context.Client.Player.MapContextId = BootcampMapContextId;
-            context.Client.Player.Class = (uint)CharacterClass.Recruit;
-            context.Client.Player.AppearanceData = new Dictionary<EquipmentData, AppearanceData>();
-            context.Client.Player.Attributes[Attributes.Body] =
-                new ActorAttributes(Attributes.Body, 10, 10, 10, 0, 0);
-            context.Client.Player.Attributes[Attributes.Mind] =
-                new ActorAttributes(Attributes.Mind, 10, 10, 10, 0, 0);
-            context.Client.Player.Attributes[Attributes.Spirit] =
-                new ActorAttributes(Attributes.Spirit, 10, 10, 10, 0, 0);
-            context.Client.Player.Attributes[Attributes.Health] =
-                new ActorAttributes(Attributes.Health, 100, 100, 100, 0, 0);
-            context.Client.Player.Attributes[Attributes.Chi] =
-                new ActorAttributes(Attributes.Chi, 100, 100, 100, 0, 0);
-            context.Client.Player.Attributes[Attributes.Power] =
-                new ActorAttributes(Attributes.Power, 100, 100, 100, 0, 0);
-            context.Client.Player.Attributes[Attributes.Regen] =
-                new ActorAttributes(Attributes.Regen, 0, 0, 0, 0, 0);
-            context.Client.Player.Attributes[Attributes.Armor] =
-                new ActorAttributes(Attributes.Armor, 0, 0, 0, 0, 0);
+        internal static Harness CreateFromPendingSelection()
+        {
+            var bootstrap = CreateBootstrap();
+            SeedFreshPendingCharacter(bootstrap.Context);
+            var client = CreateSelectionClient(bootstrap.Context, FreshPendingAccountId);
 
-            PrepareBootcampScenarioClasses();
-            PrepareBootcampRewardTemplates(context);
-
-            var factory = new RuntimeLoadingFactory(context, worldContext);
-            MissionManager manager = null;
-            CharacterManager charactersManager = null;
-            var now = new DateTime(2026, 9, 19, 12, 0, 0, DateTimeKind.Utc);
-            var creatures = new CreatureManager(factory, new ManifestationManager(context));
-            foreach (var creatureId in new[]
-                     {
-                         39U,
-                         50U,
-                         CaptainYoungbloodCreatureId,
-                         WoundedSurvivorCreatureId,
-                         CorporalVanValkenbergCreatureId,
-                         TizzikGiCreatureId,
-                         PracticeDummyCreatureId,
-                         LightningDummyCreatureId
-                     })
-            {
-                creatures.LoadedCreatures[creatureId] = new Creature
+            bootstrap.Characters.RequestSwitchToCharacterInSlot(
+                client,
+                new Rasa.Packets.Game.Client.RequestSwitchToCharacterInSlotPacket
                 {
-                    DbId = creatureId,
-                    EntityClass = (EntityClasses)4001,
-                    Npc = new Npc
-                    {
-                        NpcPackageId = creatureId == CaptainYoungbloodCreatureId
-                            ? CaptainYoungbloodPackageId
-                            : creatureId == WoundedSurvivorCreatureId
-                                ? WoundedSurvivorPackageId
-                            : creatureId == CorporalVanValkenbergCreatureId
-                                ? CorporalVanValkenbergPackageId
-                                : creatureId
-                    },
-                    AppearanceData = new Dictionary<EquipmentData, AppearanceData>()
-                };
-            }
+                    SlotNum = FreshPendingSlot,
+                    SkipBootcamp = false
+                });
 
-            MapChannelManager maps = null;
-            var objects = new DynamicObjectManager(factory, maps);
-            var manifestation = new ManifestationManager(context);
-            var deadlineService = new MissionDeadlineService(
-                () => factory,
-                () => manager,
-                () => now);
-            var scenarioService = new MissionScenarioService(
-                () => factory,
-                () => manager,
-                manifestation,
-                () => maps,
-                () => creatures,
-                () => objects,
-                () => CommunicatorManager.Instance,
-                () => now);
-            maps = new MapChannelManager(
-                factory,
-                updateCharacter: (client, update, value) =>
-                    charactersManager.UpdateCharacter(client, update, value),
-                refreshStats: (_, _) => { },
-                assignPlayer: _ => { },
-                enterMapChannels: _ => { },
-                privateInstances: new PrivateMapInstanceService(),
-                scenarioService: scenarioService);
-            maps.MapChannelArray.Add(BootcampMapContextId, bootcampTemplate);
-            maps.MapChannelArray.Add(WildernessMapContextId, CreatePublicMap(WildernessMapContextId, "alia_das_fixture"));
-            objects = new DynamicObjectManager(factory, maps);
-            manager = new MissionManager(
-                factory,
-                new Dictionary<uint, Mission>(),
-                new Dictionary<uint, MissionRewardDefinition>(),
-                manifestation,
-                deadlineService: deadlineService,
-                scenarioService: scenarioService);
-            charactersManager = new CharacterManager(context, manager);
-            objects = new DynamicObjectManager(
-                factory,
-                maps,
-                missionManager: manager,
-                characterManager: charactersManager);
-            var report = manager.LoadMissions();
-            if (report.BlocksReadiness)
-                throw new InvalidOperationException(
-                    string.Join(" | ", report.Diagnostics.Select(diagnostic => diagnostic.Code)));
-            var singletons = new ManagerInstances(maps, objects, creatures, manager);
-            objects.InitTeleporters();
-            var bootcampMap = maps.GetOrCreatePrivateInstance(BootcampMapContextId, context.Client.Player.Id);
-            AttachClientToMap(context.Client, bootcampMap);
+            ConfigureRuntimePlayer(client);
+            RouteMapLoaded(client);
 
             return new Harness(
-                context,
-                worldContext,
-                manager,
-                maps,
-                bootcampMap,
-                singletons,
-                () => now,
-                value => now = value);
+                bootstrap.Context,
+                bootstrap.WorldContext,
+                bootstrap.Manager,
+                bootstrap.Maps,
+                client.Player.MapChannel,
+                bootstrap.Singletons,
+                () => bootstrap.Clock.UtcNow,
+                value => bootstrap.Clock.UtcNow = value,
+                client);
         }
 
         internal static void AssertObjectiveStates(
@@ -351,6 +272,29 @@ namespace Rasa.Test.Missions
                 .EquipableClassInfo = new EquipableClassInfo(equipmentSlot);
         }
 
+        private static void ConfigureRuntimePlayer(Client client)
+        {
+            client.Player.MapContextId = BootcampMapContextId;
+            client.Player.Class = (uint)CharacterClass.Recruit;
+            client.Player.AppearanceData ??= new Dictionary<EquipmentData, AppearanceData>();
+            client.Player.Attributes[Attributes.Body] =
+                new ActorAttributes(Attributes.Body, 10, 10, 10, 0, 0);
+            client.Player.Attributes[Attributes.Mind] =
+                new ActorAttributes(Attributes.Mind, 10, 10, 10, 0, 0);
+            client.Player.Attributes[Attributes.Spirit] =
+                new ActorAttributes(Attributes.Spirit, 10, 10, 10, 0, 0);
+            client.Player.Attributes[Attributes.Health] =
+                new ActorAttributes(Attributes.Health, 100, 100, 100, 0, 0);
+            client.Player.Attributes[Attributes.Chi] =
+                new ActorAttributes(Attributes.Chi, 100, 100, 100, 0, 0);
+            client.Player.Attributes[Attributes.Power] =
+                new ActorAttributes(Attributes.Power, 100, 100, 100, 0, 0);
+            client.Player.Attributes[Attributes.Regen] =
+                new ActorAttributes(Attributes.Regen, 0, 0, 0, 0, 0);
+            client.Player.Attributes[Attributes.Armor] =
+                new ActorAttributes(Attributes.Armor, 0, 0, 0, 0, 0);
+        }
+
         private static void AttachClientToMap(Client client, MapChannel destination)
         {
             if (client.Player.MapChannel != null)
@@ -364,6 +308,170 @@ namespace Rasa.Test.Missions
             destination.ClientList.Add(client);
             CellManager.Instance.AddToWorld(client);
             client.State = RasaGame::Rasa.Data.ClientState.Ingame;
+        }
+
+        private static Bootstrap CreateBootstrap()
+        {
+            var databaseDirectory = Path.Combine(
+                AppContext.BaseDirectory,
+                "TestDatabases",
+                Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(databaseDirectory);
+            var worldDatabase = Path.Combine(databaseDirectory, "world");
+            var worldContext = (SqliteWorldContext)CreateContext(typeof(SqliteWorldContext), worldDatabase);
+            worldContext.Database.Migrate();
+
+            var context = MissionTestContext.WithCustomDefinitions(new Dictionary<uint, Mission>());
+            PrepareBootcampScenarioClasses();
+            PrepareBootcampRewardTemplates(context);
+
+            var factory = new RuntimeLoadingFactory(context, worldContext);
+            MissionManager manager = null;
+            CharacterManager charactersManager = null;
+            var clock = new ClockState(new DateTime(2026, 9, 19, 12, 0, 0, DateTimeKind.Utc));
+            var creatures = new CreatureManager(factory, new ManifestationManager(context));
+            foreach (var creatureId in new[]
+                     {
+                         39U,
+                         50U,
+                         CaptainYoungbloodCreatureId,
+                         WoundedSurvivorCreatureId,
+                         CorporalVanValkenbergCreatureId,
+                         TizzikGiCreatureId,
+                         PracticeDummyCreatureId,
+                         LightningDummyCreatureId
+                     })
+            {
+                creatures.LoadedCreatures[creatureId] = new Creature
+                {
+                    DbId = creatureId,
+                    EntityClass = (EntityClasses)4001,
+                    Npc = new Npc
+                    {
+                        NpcPackageId = creatureId == CaptainYoungbloodCreatureId
+                            ? CaptainYoungbloodPackageId
+                            : creatureId == WoundedSurvivorCreatureId
+                                ? WoundedSurvivorPackageId
+                            : creatureId == CorporalVanValkenbergCreatureId
+                                ? CorporalVanValkenbergPackageId
+                                : creatureId
+                    },
+                    AppearanceData = new Dictionary<EquipmentData, AppearanceData>()
+                };
+            }
+
+            MapChannelManager maps = null;
+            var objects = new DynamicObjectManager(factory, maps);
+            var manifestation = new ManifestationManager(context);
+            var deadlineService = new MissionDeadlineService(
+                () => factory,
+                () => manager,
+                () => clock.UtcNow);
+            var scenarioService = new MissionScenarioService(
+                () => factory,
+                () => manager,
+                manifestation,
+                () => maps,
+                () => creatures,
+                () => objects,
+                () => CommunicatorManager.Instance,
+                () => clock.UtcNow);
+            maps = new MapChannelManager(
+                factory,
+                updateCharacter: (client, update, value) =>
+                    charactersManager.UpdateCharacter(client, update, value),
+                refreshStats: (_, _) => { },
+                assignPlayer: _ => { },
+                enterMapChannels: _ => { },
+                privateInstances: new PrivateMapInstanceService(),
+                scenarioService: scenarioService);
+            maps.MapChannelArray.Add(BootcampMapContextId, CreatePublicMap(BootcampMapContextId, "bootcamp_runtime"));
+            maps.MapChannelArray.Add(WildernessMapContextId, CreatePublicMap(WildernessMapContextId, "alia_das_fixture"));
+            objects = new DynamicObjectManager(factory, maps);
+            manager = new MissionManager(
+                factory,
+                new Dictionary<uint, Mission>(),
+                new Dictionary<uint, MissionRewardDefinition>(),
+                manifestation,
+                deadlineService: deadlineService,
+                scenarioService: scenarioService,
+                utcNow: () => clock.UtcNow);
+            var inventory = new InventoryManager(factory, manager);
+            var auction = new AuctionHouseManager(factory, manager);
+            var clan = Activator.CreateInstance(
+                typeof(ClanManager),
+                BindingFlags.Instance | BindingFlags.NonPublic,
+                binder: null,
+                args: new object[] { factory },
+                culture: null);
+            var social = Activator.CreateInstance(
+                typeof(SocialManager),
+                BindingFlags.Instance | BindingFlags.NonPublic,
+                binder: null,
+                args: new object[] { factory },
+                culture: null);
+            charactersManager = new CharacterManager(context, manager);
+            objects = new DynamicObjectManager(
+                factory,
+                maps,
+                missionManager: manager,
+                characterManager: charactersManager);
+            var report = manager.LoadMissions();
+            if (report.BlocksReadiness)
+                throw new InvalidOperationException(
+                    string.Join(" | ", report.Diagnostics.Select(diagnostic => diagnostic.Code)));
+            var singletons = new ManagerInstances(
+                maps,
+                objects,
+                creatures,
+                manager,
+                inventory,
+                manifestation,
+                clan,
+                auction,
+                social);
+            objects.InitTeleporters();
+
+            return new Bootstrap(
+                context,
+                worldContext,
+                manager,
+                charactersManager,
+                maps,
+                singletons,
+                clock);
+        }
+
+        private static void SeedFreshPendingCharacter(MissionTestContext context)
+        {
+            context.SeedCharacter(FreshPendingAccountId, FreshPendingSlot, FreshPendingCharacterId);
+            using var unit = context.CreateChar();
+            unit.CharacterStartingExperience.Add(
+                new CharacterStartingExperienceEntry(
+                    FreshPendingCharacterId,
+                    "deployment_11",
+                    CharacterStartingExperienceState.Pending));
+        }
+
+        private static Client CreateSelectionClient(MissionTestContext context, uint accountId)
+        {
+            using var unit = context.CreateChar();
+            var client = new Client(context, new ClientPacketHandler())
+            {
+                State = RasaGame::Rasa.Data.ClientState.CharacterSelection
+            };
+            typeof(Client)
+                .GetMethod("LoadGameAccountEntry", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(client, new object[] { unit, accountId });
+            return client;
+        }
+
+        private static void RouteMapLoaded(Client client)
+        {
+            var handler = new ClientPacketHandler();
+            handler.RegisterClient(client);
+            new PacketRouter<ClientPacketHandler, GameOpcode>()
+                .RoutePacket(handler, new MapLoadedPacket());
         }
 
         private static MapChannel CreatePublicMap(uint contextId, string name) => new()
@@ -388,14 +496,15 @@ namespace Rasa.Test.Missions
                 MapChannel bootcampMap,
                 IDisposable singletons,
                 Func<DateTime> getUtcNow,
-                Action<DateTime> setUtcNow)
+                Action<DateTime> setUtcNow,
+                Client client)
             {
                 Context = context;
                 WorldContext = worldContext;
                 Manager = manager;
                 Maps = maps;
                 BootcampMap = bootcampMap;
-                Client = context.Client;
+                Client = client;
                 _singletons = (ManagerInstances)singletons;
                 _getUtcNow = getUtcNow;
                 _setUtcNow = setUtcNow;
@@ -412,6 +521,16 @@ namespace Rasa.Test.Missions
             {
                 get => _getUtcNow();
                 set => _setUtcNow(value);
+            }
+
+            internal IReadOnlyList<PythonPacket> Drain() =>
+                MissionTestContext.Drain(Client);
+
+            internal void RouteMapLoaded()
+            {
+                BootcampRuntimeTestHarness.RouteMapLoaded(Client);
+                if (Client.Player?.MapChannel?.MapInfo?.MapContextId == BootcampMapContextId)
+                    BootcampMap = Client.Player.MapChannel;
             }
 
             internal void SeedMission(uint characterId, uint missionId, uint state, bool completeable)
@@ -454,6 +573,7 @@ namespace Rasa.Test.Missions
                                     return row;
                                 }));
                         }
+
                     });
                 }
 
@@ -573,6 +693,20 @@ namespace Rasa.Test.Missions
                     manifestation,
                     deadlineService: deadlineService,
                     scenarioService: scenarioService);
+                var inventory = new InventoryManager(factory, manager);
+                var auction = new AuctionHouseManager(factory, manager);
+                var clan = Activator.CreateInstance(
+                    typeof(ClanManager),
+                    BindingFlags.Instance | BindingFlags.NonPublic,
+                    binder: null,
+                    args: new object[] { factory },
+                    culture: null);
+                var social = Activator.CreateInstance(
+                    typeof(SocialManager),
+                    BindingFlags.Instance | BindingFlags.NonPublic,
+                    binder: null,
+                    args: new object[] { factory },
+                    culture: null);
                 charactersManager = new CharacterManager(Context, manager);
                 objects = new DynamicObjectManager(
                     factory,
@@ -585,7 +719,16 @@ namespace Rasa.Test.Missions
                         string.Join(" | ", report.Diagnostics.Select(diagnostic => diagnostic.Code)));
 
                 _singletons.Dispose();
-                _singletons = new ManagerInstances(maps, objects, creatures, manager);
+                _singletons = new ManagerInstances(
+                    maps,
+                    objects,
+                    creatures,
+                    manager,
+                    inventory,
+                    manifestation,
+                    clan,
+                    auction,
+                    social);
                 objects.InitTeleporters();
                 Manager = manager;
                 Maps = maps;
@@ -751,6 +894,18 @@ namespace Rasa.Test.Missions
 
             public void Dispose()
             {
+                if (!ReferenceEquals(Client, Context.Client))
+                {
+                    if (Client.Player?.MapChannel != null &&
+                        CellManager.Instance.IsInWorld(Client))
+                        CellManager.Instance.RemoveFromWorld(Client);
+                    Client.Player?.MapChannel?.ClientList.Remove(Client);
+                    EntityManager.Instance.UnregisterEntity(Client.Player.EntityId);
+                    EntityManager.Instance.UnregisterPlayer(Client.Player.EntityId);
+                    EntityManager.Instance.UnregisterActor(Client.Player.EntityId);
+                    EntityManager.Instance.FreeEntity(Client.Player.EntityId);
+                }
+
                 _singletons.Dispose();
                 var directory = Path.GetDirectoryName(WorldContext.Database.GetDbConnection().DataSource);
                 WorldContext.Dispose();
@@ -759,6 +914,45 @@ namespace Rasa.Test.Missions
                 if (!string.IsNullOrWhiteSpace(directory) && Directory.Exists(directory))
                     Directory.Delete(directory, true);
             }
+        }
+
+        private sealed class Bootstrap
+        {
+            internal Bootstrap(
+                MissionTestContext context,
+                SqliteWorldContext worldContext,
+                MissionManager manager,
+                CharacterManager characters,
+                MapChannelManager maps,
+                ManagerInstances singletons,
+                ClockState clock)
+            {
+                Context = context;
+                WorldContext = worldContext;
+                Manager = manager;
+                Characters = characters;
+                Maps = maps;
+                Singletons = singletons;
+                Clock = clock;
+            }
+
+            internal MissionTestContext Context { get; }
+            internal SqliteWorldContext WorldContext { get; }
+            internal MissionManager Manager { get; }
+            internal CharacterManager Characters { get; }
+            internal MapChannelManager Maps { get; }
+            internal ManagerInstances Singletons { get; }
+            internal ClockState Clock { get; }
+        }
+
+        private sealed class ClockState
+        {
+            internal ClockState(DateTime utcNow)
+            {
+                UtcNow = utcNow;
+            }
+
+            internal DateTime UtcNow { get; set; }
         }
 
         private sealed class RuntimeLoadingFactory : IGameUnitOfWorkFactory
@@ -841,25 +1035,55 @@ namespace Rasa.Test.Missions
                 .GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
             private readonly FieldInfo _missionsField = typeof(MissionManager)
                 .GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+            private readonly FieldInfo _inventoryField = typeof(InventoryManager)
+                .GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+            private readonly FieldInfo _manifestationField = typeof(ManifestationManager)
+                .GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+            private readonly FieldInfo _clanField = typeof(ClanManager)
+                .GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+            private readonly FieldInfo _auctionField = typeof(AuctionHouseManager)
+                .GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+            private readonly FieldInfo _socialField = typeof(SocialManager)
+                .GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
             private readonly object _previousMaps;
             private readonly object _previousObjects;
             private readonly object _previousCreatures;
             private readonly object _previousMissions;
+            private readonly object _previousInventory;
+            private readonly object _previousManifestation;
+            private readonly object _previousClan;
+            private readonly object _previousAuction;
+            private readonly object _previousSocial;
 
             internal ManagerInstances(
                 MapChannelManager maps,
                 DynamicObjectManager objects,
                 CreatureManager creatures,
-                MissionManager missions)
+                MissionManager missions,
+                InventoryManager inventory,
+                ManifestationManager manifestation,
+                object clan,
+                AuctionHouseManager auction,
+                object social)
             {
                 _previousMaps = _mapsField.GetValue(null);
                 _previousObjects = _objectsField.GetValue(null);
                 _previousCreatures = _creaturesField.GetValue(null);
                 _previousMissions = _missionsField.GetValue(null);
+                _previousInventory = _inventoryField.GetValue(null);
+                _previousManifestation = _manifestationField.GetValue(null);
+                _previousClan = _clanField.GetValue(null);
+                _previousAuction = _auctionField.GetValue(null);
+                _previousSocial = _socialField.GetValue(null);
                 _mapsField.SetValue(null, maps);
                 _objectsField.SetValue(null, objects);
                 _creaturesField.SetValue(null, creatures);
                 _missionsField.SetValue(null, missions);
+                _inventoryField.SetValue(null, inventory);
+                _manifestationField.SetValue(null, manifestation);
+                _clanField.SetValue(null, clan);
+                _auctionField.SetValue(null, auction);
+                _socialField.SetValue(null, social);
             }
 
             public void Dispose()
@@ -868,6 +1092,11 @@ namespace Rasa.Test.Missions
                 _objectsField.SetValue(null, _previousObjects);
                 _creaturesField.SetValue(null, _previousCreatures);
                 _missionsField.SetValue(null, _previousMissions);
+                _inventoryField.SetValue(null, _previousInventory);
+                _manifestationField.SetValue(null, _previousManifestation);
+                _clanField.SetValue(null, _previousClan);
+                _auctionField.SetValue(null, _previousAuction);
+                _socialField.SetValue(null, _previousSocial);
             }
         }
     }

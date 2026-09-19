@@ -37,16 +37,16 @@ namespace Rasa.Test.Missions
         {
             using var harness = BootcampRuntimeTestHarness.Create();
             var mcAllister = harness.AddNpc(BootcampRuntimeTestHarness.MajorMcAllisterCreatureId);
-            harness.Context.Drain();
+            harness.Drain();
 
             Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
                 harness.Client,
                 mcAllister.EntityId,
                 BootcampRuntimeTestHarness.MissionInitiation));
-            AssertPacketTypes(harness.Context.Drain(), typeof(MissionGainedPacket));
+            AssertPacketTypes(harness.Drain(), typeof(MissionGainedPacket));
 
             harness.Manager.PublishInitialState(harness.Client);
-            var snapshot = harness.Context.Drain().OfType<MissionStatusInfoPacket>().Single();
+            var snapshot = harness.Drain().OfType<MissionStatusInfoPacket>().Single();
             Assert.AreEqual(
                 BootcampRuntimeTestHarness.MissionInitiation,
                 snapshot.MissionStatusDict.Single().Key);
@@ -59,11 +59,66 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
+        public void DeadlineMissionInfoPublishesTheCountdownThenClearsItWhenTheChargeIsPlanted()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create();
+            PrepareCallingForReinforcementsDeadline(harness);
+
+            Assert.IsTrue(harness.Manager.RecordProgress(
+                harness.Client,
+                MissionProgressEvent.Interaction(24990)));
+            var startPackets = harness.Drain();
+            AssertRelativeOrder(
+                startPackets,
+                typeof(ObjectiveCompletedPacket),
+                typeof(ObjectiveRevealedPacket),
+                typeof(ObjectiveActivatedPacket));
+            AssertTimeRemainingNear(
+                FindMissionInfo(startPackets, MissionCallingForReinforcements),
+                objectiveId: 1,
+                expectedSeconds: 600);
+
+            Assert.IsTrue(harness.Manager.RecordProgress(
+                harness.Client,
+                MissionProgressEvent.Interaction(24911)));
+            var satisfactionPackets = harness.Drain();
+            AssertPacketTypes(satisfactionPackets, typeof(MissionStatusInfoPacket));
+            AssertObjectiveTimerCleared(
+                satisfactionPackets.OfType<MissionStatusInfoPacket>().Single().MissionStatusDict[MissionCallingForReinforcements],
+                objectiveId: 1,
+                expectedState: MissionObjectiveState.Incomplete);
+        }
+
+        [TestMethod]
+        public void DeadlineFailurePublishesObjectiveMissionAndStatusPacketsInOrderWithTheTimerCleared()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create();
+            PrepareCallingForReinforcementsDeadline(harness);
+            Assert.IsTrue(harness.Manager.RecordProgress(
+                harness.Client,
+                MissionProgressEvent.Interaction(24990)));
+            harness.Drain();
+
+            harness.UtcNow += BombDeadline + TimeSpan.FromSeconds(1);
+            Assert.IsTrue(harness.Manager.EvaluateDeadlines(harness.Client));
+            var failurePackets = harness.Drain();
+            AssertRelativeOrder(
+                failurePackets,
+                typeof(ObjectiveFailedPacket),
+                typeof(MissionFailedPacket),
+                typeof(MissionStatusInfoPacket));
+            AssertObjectiveTimerCleared(
+                failurePackets.OfType<MissionStatusInfoPacket>().Single().MissionStatusDict[MissionCallingForReinforcements],
+                objectiveId: 1,
+                expectedState: MissionObjectiveState.Failed);
+        }
+
+        [TestMethod]
         public void ObjectiveCounterCompletionRevealActivationAndTutorialPacketsStayInProductionOrder()
         {
             using var harness = BootcampRuntimeTestHarness.Create();
             var actors = SeedActors(harness);
-            harness.Context.Drain();
+            harness.Drain();
 
             harness.SeedMission(
                 harness.Client.Player.Id,
@@ -74,7 +129,7 @@ namespace Rasa.Test.Missions
                 harness.Client,
                 actors.McAllister.EntityId,
                 BootcampRuntimeTestHarness.MissionGearingUp));
-            harness.Context.Drain();
+            harness.Drain();
 
             Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
                 harness.Client,
@@ -82,28 +137,28 @@ namespace Rasa.Test.Missions
                 BootcampRuntimeTestHarness.MissionGearingUp,
                 4,
                 1));
-            harness.Context.Drain();
+            harness.Drain();
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Client,
                 MissionProgressEvent.Interaction(7862)));
-            harness.Context.Drain();
+            harness.Drain();
             PrepareEquipping(harness);
             Assert.IsTrue(RecordTemplateEquipProgress(harness, 13066));
-            harness.Context.Drain();
+            harness.Drain();
             Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
                 harness.Client,
                 actors.Delessio.EntityId,
                 BootcampRuntimeTestHarness.MissionGearingUp,
                 5,
                 1));
-            harness.Context.Drain();
+            harness.Drain();
             Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
                 harness.Client,
                 actors.Hartmann.EntityId,
                 BootcampRuntimeTestHarness.MissionGearingUp,
                 6,
                 1));
-            harness.Context.Drain();
+            harness.Drain();
 
             var practiceDummy = BootcampRuntimeTestHarness.FindCreature(
                 harness.BootcampMap,
@@ -112,7 +167,7 @@ namespace Rasa.Test.Missions
             new CreatureManager(null, new ManifestationManager(harness.Context), harness.Manager)
                 .HandleCreatureKill(harness.BootcampMap, practiceDummy, harness.Client.Player);
             AssertRelativeOrder(
-                harness.Context.Drain(),
+                harness.Drain(),
                 typeof(ObjectiveCompletedPacket),
                 typeof(ObjectiveRevealedPacket),
                 typeof(ObjectiveActivatedPacket));
@@ -124,7 +179,7 @@ namespace Rasa.Test.Missions
                 9,
                 1));
             AssertRelativeOrder(
-                harness.Context.Drain(),
+                harness.Drain(),
                 typeof(ObjectiveCompletedPacket),
                 typeof(ObjectiveRevealedPacket),
                 typeof(ObjectiveActivatedPacket),
@@ -173,7 +228,7 @@ namespace Rasa.Test.Missions
         {
             using var harness = BootcampRuntimeTestHarness.Create();
             var actors = SeedActors(harness);
-            harness.Context.Drain();
+            harness.Drain();
 
             harness.SeedMission(
                 harness.Client.Player.Id,
@@ -184,18 +239,18 @@ namespace Rasa.Test.Missions
                 harness.Client,
                 actors.DeSimone.EntityId,
                 MissionCaptureTheFlag));
-            harness.Context.Drain();
+            harness.Drain();
             Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
                 harness.Client,
                 actors.DeSimone.EntityId,
                 MissionCaptureTheFlag,
                 4,
                 1));
-            harness.Context.Drain();
+            harness.Drain();
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Client,
                 MissionProgressEvent.Area(MissionCaptureTheFlag, CaveInAreaId)));
-            harness.Context.Drain();
+            harness.Drain();
 
             var tizzik = BootcampRuntimeTestHarness.FindCreature(
                 harness.BootcampMap,
@@ -205,7 +260,7 @@ namespace Rasa.Test.Missions
                 .HandleCreatureKill(harness.BootcampMap, tizzik, harness.Client.Player);
             harness.UtcNow += YoungbloodDelay;
             Assert.IsTrue(harness.Manager.TickScenarios(harness.Client));
-            harness.Context.Drain();
+            harness.Drain();
 
             var youngblood = BootcampRuntimeTestHarness.FindCreature(
                 harness.BootcampMap,
@@ -217,14 +272,14 @@ namespace Rasa.Test.Missions
                 MissionCaptureTheFlag,
                 3,
                 1));
-            harness.Context.Drain();
+            harness.Drain();
             Assert.IsTrue(harness.Manager.TryCompleteNpcMission(
                 harness.Client,
                 youngblood.EntityId,
                 MissionCaptureTheFlag,
                 selectionIndex: null,
                 rating: null));
-            var capturePackets = harness.Context.Drain();
+            var capturePackets = harness.Drain();
             AssertPacketTypes(
                 capturePackets,
                 typeof(MissionCompleteablePacket),
@@ -241,7 +296,7 @@ namespace Rasa.Test.Missions
                 selectionIndex: null,
                 rating: null));
             AssertRelativeOrder(
-                harness.Context.Drain(),
+                harness.Drain(),
                 typeof(ExperienceChangedPacket),
                 typeof(MissionRewardedPacket));
 
@@ -249,7 +304,7 @@ namespace Rasa.Test.Missions
                 harness.Client,
                 youngblood.EntityId,
                 MissionCallingForReinforcements));
-            harness.Context.Drain();
+            harness.Drain();
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Client,
                 MissionProgressEvent.Area(MissionCallingForReinforcements, MissingScoutAreaId)));
@@ -264,12 +319,12 @@ namespace Rasa.Test.Missions
                 10,
                 1));
             harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
-            harness.Context.Drain();
+            harness.Drain();
 
             harness.UtcNow += BombDeadline + TimeSpan.FromSeconds(1);
             Assert.IsTrue(harness.Manager.EvaluateDeadlines(harness.Client));
             AssertRelativeOrder(
-                harness.Context.Drain(),
+                harness.Drain(),
                 typeof(ObjectiveFailedPacket),
                 typeof(MissionFailedPacket));
 
@@ -277,7 +332,7 @@ namespace Rasa.Test.Missions
             npcManager.RequestNpcConverse(
                 harness.Client,
                 new RequestNPCConversePacket { EntityId = youngblood.EntityId });
-            AssertPacketTypes(harness.Context.Drain(), typeof(ConversePacket));
+            AssertPacketTypes(harness.Drain(), typeof(ConversePacket));
 
             using var context = new BootcampSelectionTestContext();
             context.SeedAccount(901);
@@ -405,6 +460,85 @@ namespace Rasa.Test.Missions
 
         private static string DescribePackets(IEnumerable<PythonPacket> packets) =>
             string.Join(" -> ", packets.Select(packet => packet.GetType().Name));
+
+        private static void PrepareCallingForReinforcementsDeadline(
+            BootcampRuntimeTestHarness.Harness harness)
+        {
+            var youngblood = harness.AddNpc(
+                BootcampRuntimeTestHarness.CaptainYoungbloodCreatureId,
+                BootcampRuntimeTestHarness.CaptainYoungbloodPackageId);
+            harness.SeedMission(
+                harness.Client.Player.Id,
+                MissionCaptureTheFlag,
+                (uint)MissionState.Completed,
+                true);
+            harness.Drain();
+
+            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+                harness.Client,
+                youngblood.EntityId,
+                MissionCallingForReinforcements));
+            harness.Drain();
+            Assert.IsTrue(harness.Manager.RecordProgress(
+                harness.Client,
+                MissionProgressEvent.Area(MissionCallingForReinforcements, MissingScoutAreaId)));
+            var survivor = BootcampRuntimeTestHarness.FindNpcByPackage(
+                harness.BootcampMap,
+                BootcampRuntimeTestHarness.WoundedSurvivorPackageId);
+            Assert.IsNotNull(survivor);
+            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+                harness.Client,
+                survivor.EntityId,
+                MissionCallingForReinforcements,
+                10,
+                1));
+            harness.Drain();
+        }
+
+        private static MissionInfo FindMissionInfo(
+            IReadOnlyList<PythonPacket> packets,
+            uint missionId)
+        {
+            foreach (var packet in packets)
+            {
+                if (packet is ObjectiveRevealedPacket revealed &&
+                    revealed.MissionId == missionId)
+                    return revealed.MissionInfo;
+                if (packet is MissionGainedPacket gained &&
+                    gained.MissionId == missionId)
+                    return gained.MissionInfo;
+                if (packet is MissionStatusInfoPacket status &&
+                    status.MissionStatusDict.TryGetValue(missionId, out var info))
+                    return info;
+            }
+
+            throw new AssertFailedException(
+                $"Missing mission info payload for mission {missionId} in {DescribePackets(packets)}.");
+        }
+
+        private static void AssertTimeRemainingNear(
+            MissionInfo info,
+            uint objectiveId,
+            uint expectedSeconds,
+            uint toleranceSeconds = 1)
+        {
+            var objective = info.ObjectivesList.Single(entry => entry.ObjectiveId == objectiveId);
+            Assert.IsTrue(objective.TimeRemaining.HasValue);
+            Assert.IsTrue(
+                objective.TimeRemaining.Value >= expectedSeconds - toleranceSeconds &&
+                objective.TimeRemaining.Value <= expectedSeconds,
+                $"Expected time remaining near {expectedSeconds}s but found {objective.TimeRemaining.Value}s.");
+        }
+
+        private static void AssertObjectiveTimerCleared(
+            MissionInfo info,
+            uint objectiveId,
+            MissionObjectiveState expectedState)
+        {
+            var objective = info.ObjectivesList.Single(entry => entry.ObjectiveId == objectiveId);
+            Assert.AreEqual(expectedState, objective.State);
+            Assert.IsFalse(objective.TimeRemaining.HasValue);
+        }
 
         private sealed record BootcampActors(
             Creature McAllister,

@@ -28,20 +28,25 @@ namespace Rasa.Test.Missions
     using Rasa.Repositories.Char.CharacterAppearance;
     using Rasa.Repositories.Char.CharacterAbilityDrawer;
     using Rasa.Repositories.Char.CharacterInventory;
+    using Rasa.Repositories.Char.CharacterLockbox;
     using Rasa.Repositories.Char.CharacterLogos;
     using Rasa.Repositories.Char.CharacterMission;
     using Rasa.Repositories.Char.CharacterMissionDeadline;
     using Rasa.Repositories.Char.CharacterMissionProgress;
     using Rasa.Repositories.Char.CharacterMissionScenario;
+    using Rasa.Repositories.Char.CharacterOption;
     using Rasa.Repositories.Char.CharacterQualification;
     using Rasa.Repositories.Char.CharacterSkills;
     using Rasa.Repositories.Char.CharacterStartingExperience;
     using Rasa.Repositories.Char.CharacterTeleporter;
+    using Rasa.Repositories.Char.CharacterTitle;
     using Rasa.Repositories.Char.Clan;
     using Rasa.Repositories.Char.ClanInventory;
     using Rasa.Repositories.Char.ClanLockboxLog;
     using Rasa.Repositories.Char.ClanMember;
+    using Rasa.Repositories.Char.Friend;
     using Rasa.Repositories.Char.GameAccount;
+    using Rasa.Repositories.Char.Ignored;
     using Rasa.Repositories.Char.Items;
     using Rasa.Repositories.UnitOfWork;
     using Rasa.Repositories.World;
@@ -854,21 +859,23 @@ namespace Rasa.Test.Missions
                 characterAbilityDrawers: new CharacterAbilityDrawerRepository(context),
                 characterAppearances: new CharacterAppearanceRepository(context),
                 characterInventories: new CharacterInventoryRepository(context),
-                characterLockboxes: null, characterLogoses: new CharacterLogosRepository(context),
+                characterLockboxes: new CharacterLockboxRepository(context),
+                characterLogoses: new CharacterLogosRepository(context),
                 characterMissions: new CharacterMissionRepository(context),
                 characterMissionDeadlines: new CharacterMissionDeadlineRepository(context),
                 characterMissionProgress: new CharacterMissionProgressRepository(context),
                 characterMissionScenario: new CharacterMissionScenarioRepository(context),
-                characterOptions: null,
+                characterOptions: new CharacterOptionRepository(context),
                 characterQualifications: new CharacterQualificationRepository(context),
                 characterSkills: new CharacterSkillsRepository(context), characterTeleporters: new CharacterTeleporterRepository(context),
                 characterStartingExperience: new CharacterStartingExperienceRepository(context),
-                characterTitles: null,
+                characterTitles: new CharacterTitleRepository(context),
                 auctions: new AuctionRepository(context), clans: new ClanRepository(context),
                 clanInventories: new ClanInventoryRepository(context),
                 clanMembers: new ClanMemberRepository(context),
                 clanLockboxLogs: new ClanLockboxLogRepository(context),
-                friends: null, ignoreds: null,
+                friends: new FriendRepository(context),
+                ignoreds: new IgnoredRepository(context),
                 items: new ItemRepository(context), petitions: null, userOptions: null);
         }
 

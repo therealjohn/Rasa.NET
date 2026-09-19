@@ -953,10 +953,14 @@ namespace Rasa.Managers
 
                 var origin = client.Player.MapChannel;
                 var isDropship = info.WaypointType == WaypointType.Dropship;
+                var isBootcampExitPad =
+                    packet.WaypointId == CharacterManager.BootcampExitPadWaypointId &&
+                    client.Player.MapContextId == CharacterManager.BootcampPrivateMapContextId;
                 if ((packet.MapInstanceId != 0 && packet.MapInstanceId != destinationMap.InstanceId) ||
                     info.Contested ||
-                    !client.Player.GainedWaypoints.Any(waypoint => waypoint.WaypointId == packet.WaypointId &&
-                        waypoint.WaypointType == (byte)info.WaypointType) ||
+                    (!isBootcampExitPad &&
+                        !client.Player.GainedWaypoints.Any(waypoint => waypoint.WaypointId == packet.WaypointId &&
+                            waypoint.WaypointType == (byte)info.WaypointType)) ||
                     (!isDropship && info.WaypointType != WaypointType.Waypoint && info.WaypointType != WaypointType.LocalTeleporter) ||
                     (!isDropship && destinationMap != origin))
                 {
@@ -976,8 +980,7 @@ namespace Rasa.Managers
                     return;
                 }
 
-                if (packet.WaypointId == CharacterManager.BootcampExitPadWaypointId &&
-                    client.Player.MapContextId == CharacterManager.BootcampPrivateMapContextId)
+                if (isBootcampExitPad)
                 {
                     if (!Characters.TryDepartBootcampFromExitPad(client))
                         RejectTravel(client, "Bootcamp departure is not available.");

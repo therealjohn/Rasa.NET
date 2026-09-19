@@ -60,11 +60,11 @@ namespace Rasa.Test.Missions
             using var harness = CreateFreshBootcampHarness();
             var youngblood = StartTimedFinale(harness);
             harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
-            harness.Context.Drain();
+            harness.Drain();
 
             harness.UtcNow += BombDeadline + TimeSpan.FromSeconds(1);
             Assert.IsTrue(harness.Manager.EvaluateDeadlines(harness.Client));
-            var timeoutPackets = harness.Context.Drain();
+            var timeoutPackets = harness.Drain();
             Assert.AreEqual(
                 MissionState.Failed,
                 harness.Client.Player.Missions[MissionCallingForReinforcements].State);
@@ -78,7 +78,7 @@ namespace Rasa.Test.Missions
                 harness.Client,
                 youngblood.EntityId,
                 MissionBombRetry));
-            harness.Context.Drain();
+            harness.Drain();
 
             harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-dropship-debris"));
             harness.UtcNow += FuseDelay;
@@ -231,33 +231,35 @@ namespace Rasa.Test.Missions
 
         private static BootcampRuntimeTestHarness.Harness CreateFreshBootcampHarness()
         {
-            var harness = BootcampRuntimeTestHarness.Create();
-            using (var unit = harness.Context.CreateChar())
-            {
-                unit.CharacterStartingExperience.Add(
-                    new CharacterStartingExperienceEntry(
-                        harness.Client.Player.Id,
-                        "deployment_11",
-                        CharacterStartingExperienceState.Bootcamp));
-                unit.CharacterTeleporters.Add(
-                    new CharacterTeleporterEntry(
-                        harness.Client.Player.Id,
-                        BootcampSelectionTestContext.ExitPadWaypointId,
-                        (byte)WaypointType.Dropship));
-            }
+            var harness = BootcampRuntimeTestHarness.CreateFromPendingSelection();
+            Assert.AreEqual(RasaGame::Rasa.Data.ClientState.Ingame, harness.Client.State);
+            Assert.AreEqual(BootcampRuntimeTestHarness.BootcampMapContextId, harness.Client.Player.MapContextId);
+            Assert.IsNotNull(harness.Client.Player.MapChannel);
+            Assert.IsTrue(harness.Client.Player.MapChannel.IsPrivateInstance);
+            Assert.AreEqual(harness.Client.Player.Id, harness.Client.Player.MapChannel.OwnerCharacterId);
+            Assert.AreSame(
+                harness.Client.Player.MapChannel,
+                harness.Maps.FindOwnedPrivateInstance(
+                    BootcampRuntimeTestHarness.BootcampMapContextId,
+                    harness.Client.Player.Id));
 
-            harness.Client.Player.GainedWaypoints.Add(
-                new CharacterTeleporterEntry(
-                    harness.Client.Player.Id,
-                    BootcampSelectionTestContext.ExitPadWaypointId,
-                    (byte)WaypointType.Dropship));
+            using var verify = harness.Context.CreateChar();
+            Assert.AreEqual(
+                CharacterStartingExperienceState.Bootcamp,
+                verify.CharacterStartingExperience.Get(harness.Client.Player.Id).State);
+            var durableMission = verify.CharacterMissions.GetByCharacterAndMission(
+                harness.Client.Player.Id,
+                BootcampRuntimeTestHarness.MissionInitiation);
+            Assert.IsNotNull(durableMission);
+            Assert.AreEqual((uint)MissionState.Active, durableMission.MissionState);
+            Assert.IsFalse(durableMission.Completeable);
             return harness;
         }
 
         private static Creature AdvanceFreshCharacterToMission1995(BootcampRuntimeTestHarness.Harness harness)
         {
             var actors = SeedBootcampActors(harness);
-            harness.Context.Drain();
+            harness.Drain();
             CompleteInitiation(harness, actors.McAllister);
             CompleteGearingUp(harness, actors);
             return CompleteCaptureTheFlag(harness, actors);
@@ -280,10 +282,11 @@ namespace Rasa.Test.Missions
             BootcampRuntimeTestHarness.Harness harness,
             Creature mcAllister)
         {
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
-                harness.Client,
-                mcAllister.EntityId,
-                BootcampRuntimeTestHarness.MissionInitiation));
+            if (!harness.Client.Player.Missions.ContainsKey(BootcampRuntimeTestHarness.MissionInitiation))
+                Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+                    harness.Client,
+                    mcAllister.EntityId,
+                    BootcampRuntimeTestHarness.MissionInitiation));
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Client,
                 MissionProgressEvent.Area(BootcampRuntimeTestHarness.MissionInitiation, InitiationFirstAreaId)));
@@ -306,7 +309,7 @@ namespace Rasa.Test.Missions
                 harness.Client,
                 actors.McAllister.EntityId,
                 BootcampRuntimeTestHarness.MissionGearingUp));
-            harness.Context.Drain();
+            harness.Drain();
 
             Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
                 harness.Client,
@@ -381,7 +384,7 @@ namespace Rasa.Test.Missions
                 harness.Client,
                 actors.DeSimone.EntityId,
                 MissionCaptureTheFlag));
-            harness.Context.Drain();
+            harness.Drain();
 
             Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
                 harness.Client,
@@ -589,11 +592,7 @@ namespace Rasa.Test.Missions
                     MapInstanceId = harness.BootcampMap.InstanceId
                 });
             Assert.IsNotNull(harness.Client.PendingTransfer);
-            typeof(MapChannelManager)
-                .GetMethod(
-                    "CompleteMapLinkTransfer",
-                    BindingFlags.Instance | BindingFlags.NonPublic)!
-                .Invoke(harness.Maps, new object[] { harness.Client });
+            harness.RouteMapLoaded();
         }
 
         private static void AssertDurableBootcampDeparture(
