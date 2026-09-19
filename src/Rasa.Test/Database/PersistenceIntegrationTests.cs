@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -145,9 +146,15 @@ namespace Rasa.Test.Database
         }
 
         [TestMethod]
-        public void CombinedCharModelIncludesMissionDurabilityStartingExperienceAndQualifications()
+        [DataRow(typeof(SqliteCharContext), "TEXT", "tinyint(3)", "tinyint(3)")]
+        [DataRow(typeof(MySqlCharContext), "datetime(6)", "tinyint(3) unsigned", "tinyint(3) unsigned")]
+        public void CombinedCharModelIncludesMissionDurabilityStartingExperienceAndQualifications(
+            Type contextType,
+            string dueAtColumnType,
+            string stateColumnType,
+            string qualificationColumnType)
         {
-            using var context = CreateContext(typeof(SqliteCharContext), "unused");
+            using var context = CreateContext(contextType, "unused");
             var model = context.GetService<IDesignTimeModel>().Model;
             var deadline = RequireEntity(model, "Rasa.Structures.Char.CharacterMissionDeadlineEntry");
             var scenarioStep = RequireEntity(model, "Rasa.Structures.Char.CharacterMissionScenarioStepEntry");
@@ -168,12 +175,16 @@ namespace Rasa.Test.Database
                 qualification.FindPrimaryKey()?.Properties.Select(property => property.Name).ToArray());
 
             Assert.AreEqual("due_at_utc", deadline.FindProperty("DueAtUtc")?.GetColumnName());
+            Assert.AreEqual(dueAtColumnType, deadline.FindProperty("DueAtUtc")?.GetColumnType());
             Assert.AreEqual("state", deadline.FindProperty("State")?.GetColumnName());
+            Assert.AreEqual(stateColumnType, deadline.FindProperty("State")?.GetColumnType());
             Assert.AreEqual("step_key", scenarioStep.FindProperty("StepKey")?.GetColumnName());
             Assert.AreEqual("varchar(64)", scenarioStep.FindProperty("StepKey")?.GetColumnType());
             Assert.AreEqual("content_revision", startingExperience.FindProperty("ContentRevision")?.GetColumnName());
             Assert.AreEqual("varchar(32)", startingExperience.FindProperty("ContentRevision")?.GetColumnType());
+            Assert.AreEqual(stateColumnType, startingExperience.FindProperty("State")?.GetColumnType());
             Assert.AreEqual("qualification_key", qualification.FindProperty("QualificationKey")?.GetColumnName());
+            Assert.AreEqual(qualificationColumnType, qualification.FindProperty("QualificationKey")?.GetColumnType());
 
             Assert.AreEqual(
                 DeleteBehavior.Cascade,
@@ -194,6 +205,27 @@ namespace Rasa.Test.Database
                 constraint.Name == "CK_character_starting_experience_state"));
             Assert.IsTrue(qualification.GetCheckConstraints().Any(constraint =>
                 constraint.Name == "CK_character_qualification_key"));
+
+            var dueAtConverter = deadline.FindProperty("DueAtUtc")?.GetTypeMapping().Converter;
+            Assert.IsNotNull(dueAtConverter);
+            Assert.AreEqual(
+                DateTimeKind.Utc,
+                ((DateTime)dueAtConverter!.ConvertFromProvider(new DateTime(2026, 9, 19, 6, 30, 0))).Kind);
+            AssertEnumConversion(
+                deadline,
+                "State",
+                CharacterMissionDeadlineState.Cancelled,
+                (byte)CharacterMissionDeadlineState.Cancelled);
+            AssertEnumConversion(
+                startingExperience,
+                "State",
+                CharacterStartingExperienceState.Legacy,
+                (byte)CharacterStartingExperienceState.Legacy);
+            AssertEnumConversion(
+                qualification,
+                "QualificationKey",
+                CharacterQualificationKey.BootcampComplete,
+                (byte)CharacterQualificationKey.BootcampComplete);
         }
 
         [TestMethod]
@@ -244,7 +276,8 @@ namespace Rasa.Test.Database
                             "20260917130621_AbilityTraySelection",
                             "20260917200225_MissionCharacterState",
                             "20260918001335_MissionObjectiveProgress",
-                            "20260919053207_MissionDurabilityState"
+                            "20260919053207_MissionDurabilityState",
+                            "20260919060000_StartingExperienceLegacyBackfill"
                         },
                         migrations);
                 }
@@ -256,11 +289,64 @@ namespace Rasa.Test.Database
                             "20260917130734_AbilityTraySelection",
                             "20260917200310_MissionCharacterState",
                             "20260918002055_MissionObjectiveProgress",
-                            "20260919053307_MissionDurabilityState"
+                            "20260919053307_MissionDurabilityState",
+                            "20260919060100_StartingExperienceLegacyBackfill"
                         },
                         migrations);
                 }
             }
+        }
+
+        [TestMethod]
+        [DataRow(typeof(SqliteCharContext),
+            "20260919053207_MissionDurabilityState",
+            "StartingExperienceLegacyBackfill")]
+        [DataRow(typeof(MySqlCharContext),
+            "20260919053307_MissionDurabilityState",
+            "StartingExperienceLegacyBackfill")]
+        public void MissionDurabilityMigrationsOrderSchemaBeforeDataAndKeepDataMigrationSchemaFree(
+            Type contextType,
+            string schemaMigrationName,
+            string dataMigrationTypeName)
+        {
+            using var context = CreateContext(contextType, "unused");
+            var migrations = context.Database.GetMigrations().ToArray();
+            var schemaIndex = Array.IndexOf(migrations, schemaMigrationName);
+            var dataIndex = Array.FindIndex(
+                migrations,
+                migration => migration.EndsWith(
+                    "_" + dataMigrationTypeName,
+                    StringComparison.Ordinal));
+
+            Assert.IsTrue(schemaIndex >= 0, schemaMigrationName);
+            Assert.IsTrue(dataIndex >= 0, dataMigrationTypeName);
+            Assert.IsTrue(schemaIndex < dataIndex, contextType.Name);
+
+            var assembly = context.GetService<IMigrationsAssembly>();
+            var schemaMigration = assembly.Migrations.Values
+                .Select(type => assembly.CreateMigration(type, context.Database.ProviderName))
+                .Single(candidate => candidate.GetType().Name == "MissionDurabilityState");
+            var dataMigration = assembly.Migrations.Values
+                .Select(type => assembly.CreateMigration(type, context.Database.ProviderName))
+                .Single(candidate => candidate.GetType().Name == dataMigrationTypeName);
+
+            Assert.IsFalse(
+                schemaMigration.UpOperations.OfType<SqlOperation>().Any(),
+                "Schema migration should remain schema-only.");
+            Assert.AreEqual(0, schemaMigration.DownOperations.OfType<SqlOperation>().Count());
+            Assert.IsTrue(dataMigration.UpOperations.Count > 0, dataMigrationTypeName);
+            Assert.IsTrue(
+                dataMigration.UpOperations.All(operation => operation is SqlOperation),
+                "Data migration should contain SQL only.");
+            Assert.AreEqual(0, dataMigration.DownOperations.Count);
+            StringAssert.Contains(
+                ((SqlOperation)dataMigration.UpOperations.Single()).Sql,
+                "character_starting_experience",
+                dataMigrationTypeName);
+            StringAssert.Contains(
+                ((SqlOperation)dataMigration.UpOperations.Single()).Sql,
+                "character",
+                dataMigrationTypeName);
         }
 
         [TestMethod]
@@ -377,6 +463,28 @@ namespace Rasa.Test.Database
         }
 
         [TestMethod]
+        public void MySqlMissionDurabilityOfflineSqlCapturesDatabaseParityAndLegacyBackfill()
+        {
+            using var context = CreateContext(typeof(MySqlCharContext), "unused");
+            var sql = NormalizeSql(context.GetService<IMigrator>().GenerateScript());
+
+            StringAssert.Contains(sql, "create table character_mission_deadline");
+            StringAssert.Contains(sql, "primary key (character_id, mission_id)");
+            StringAssert.Contains(sql, "create table character_mission_scenario_step");
+            StringAssert.Contains(sql, "primary key (character_id, mission_id, step_key)");
+            StringAssert.Contains(sql, "step_key varchar(64)");
+            StringAssert.Contains(sql, "due_at_utc datetime(6) not null");
+            StringAssert.Contains(sql, "constraint ck_character_mission_deadline_state check (state in (1, 2, 3, 4))");
+            StringAssert.Contains(sql, "constraint ck_character_starting_experience_state check (state in (1, 2, 3, 4, 5))");
+            StringAssert.Contains(sql, "constraint ck_character_qualification_key check (qualification_key in (1))");
+            StringAssert.Contains(sql, "foreign key (character_id, mission_id) references character_mission (character_id, mission_id) on delete cascade");
+            StringAssert.Contains(sql, "foreign key (character_id) references character (id) on delete cascade");
+            StringAssert.Contains(
+                sql,
+                "insert into character_starting_experience (character_id, content_revision, state) select character.id, 'legacy', 5 from character where not exists (select 1 from character_starting_experience existing where existing.character_id = character.id)");
+        }
+
+        [TestMethod]
         [DataRow(typeof(SqliteAuthContext))]
         [DataRow(typeof(SqliteCharContext))]
         [DataRow(typeof(SqliteWorldContext))]
@@ -472,7 +580,7 @@ namespace Rasa.Test.Database
                     "SELECT map_context_id AS Value FROM character WHERE id = 123").Single());
                 Assert.AreEqual(5, reopened.Database.SqlQueryRaw<int>(
                     "SELECT state AS Value FROM character_starting_experience WHERE character_id = 123").Single());
-                Assert.AreEqual("deployment_11", reopened.Database.SqlQueryRaw<string>(
+                Assert.AreEqual("legacy", reopened.Database.SqlQueryRaw<string>(
                     "SELECT content_revision AS Value FROM character_starting_experience WHERE character_id = 123").Single());
                 Assert.IsFalse(reopened.Database.GetPendingMigrations().Any());
             });
@@ -843,6 +951,31 @@ namespace Rasa.Test.Database
             var entity = model.FindEntityType(name);
             Assert.IsNotNull(entity, name);
             return entity;
+        }
+
+        private static void AssertEnumConversion<TEnum>(
+            IEntityType entity,
+            string propertyName,
+            TEnum value,
+            byte expected)
+            where TEnum : struct
+        {
+            var converter = entity.FindProperty(propertyName)?.GetTypeMapping().Converter;
+            Assert.IsNotNull(converter, propertyName);
+            Assert.AreEqual(expected, converter!.ConvertToProvider(value));
+        }
+
+        private static string NormalizeSql(string sql)
+        {
+            sql = sql.ToLowerInvariant()
+                .Replace("`", string.Empty)
+                .Replace("\"", string.Empty)
+                .Replace("[", string.Empty)
+                .Replace("]", string.Empty)
+                .Replace("\r", " ")
+                .Replace("\n", " ")
+                .Replace("\t", " ");
+            return Regex.Replace(sql, "\\s+", " ").Trim();
         }
 
         private static void WithDisposableSqlite(Action<SqliteCharContext, string> action)

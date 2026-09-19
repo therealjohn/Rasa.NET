@@ -90,9 +90,6 @@ namespace Rasa.Migrations.SqliteChar
                         onDelete: ReferentialAction.Cascade);
                 });
 
-            migrationBuilder.Sql(
-                "INSERT INTO \"character_starting_experience\" (\"character_id\", \"content_revision\", \"state\") " +
-                "SELECT \"id\", 'deployment_11', 5 FROM \"character\"");
         }
 
         /// <inheritdoc />

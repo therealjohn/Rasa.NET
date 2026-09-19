@@ -59,11 +59,19 @@ namespace Rasa.Test.Database
         {
             WithDisposableSqlite((context, database) =>
             {
+                var dataMigrationId = context.Database.GetMigrations().Single(id =>
+                    id.EndsWith(
+                        "_StartingExperienceLegacyBackfill",
+                        StringComparison.Ordinal));
                 context.GetService<IMigrator>()
                     .Migrate("20260918001335_MissionObjectiveProgress");
                 SeedCharacter(context, 17, 123, 1, 7777);
 
-                context.Database.Migrate();
+                context.GetService<IMigrator>()
+                    .Migrate("20260919053207_MissionDurabilityState");
+                Assert.IsNull(new CharacterStartingExperienceRepository(context).Get(123));
+
+                context.GetService<IMigrator>().Migrate(dataMigrationId);
 
                 using var reopened = Open(database);
                 var character = new CharacterRepository(reopened).Get(123);
@@ -71,7 +79,7 @@ namespace Rasa.Test.Database
 
                 Assert.AreEqual(7777U, character.MapContextId);
                 Assert.IsNotNull(experience);
-                Assert.AreEqual("deployment_11", experience.ContentRevision);
+                Assert.AreEqual("legacy", experience.ContentRevision);
                 Assert.AreEqual(CharacterStartingExperienceState.Legacy, experience.State);
             });
         }
