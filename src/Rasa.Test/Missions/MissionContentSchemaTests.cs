@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -243,10 +244,7 @@ namespace Rasa.Test.Missions
             string expectedRewardItemSql)
         {
             using var context = CreateContext(contextType, "unused");
-            var assembly = context.GetService<IMigrationsAssembly>();
-            var migration = assembly.Migrations.Values
-                .Select(type => assembly.CreateMigration(type, context.Database.ProviderName))
-                .Single(candidate => candidate.GetType().Name == "MissionContentRewardShape");
+            var migration = CreateMigration(context, "MissionContentRewardShape");
 
             var sqlOperations = migration.UpOperations
                 .Select((operation, index) => (operation, index))
@@ -265,6 +263,105 @@ namespace Rasa.Test.Missions
 
             Assert.IsTrue(selectionCountUpdate.index < dropKind.index, contextType.Name);
             Assert.IsTrue(rewardItemUpdate.index < dropKind.index, contextType.Name);
+        }
+
+        [TestMethod]
+        [DataRow(typeof(SqliteWorldContext),
+            "update mission_reward_definition set kind = case when selection_count > 0 or exists (select 1 from mission_reward_item item where item.mission_id = mission_reward_definition.mission_id and item.content_revision = mission_reward_definition.content_revision and item.reward_id = mission_reward_definition.reward_id and item.kind = 2) then 2 else 1 end")]
+        [DataRow(typeof(MySqlWorldContext),
+            "update mission_reward_definition set kind = case when selection_count > 0 or exists (select 1 from mission_reward_item item where item.mission_id = mission_reward_definition.mission_id and item.content_revision = mission_reward_definition.content_revision and item.reward_id = mission_reward_definition.reward_id and item.kind = 2) then 2 else 1 end")]
+        public void MissionContentRewardShapeDownMigrationRestoresLegacyKindsBeforeDroppingNewRewardShapeColumns(
+            Type contextType,
+            string expectedDefinitionKindSql)
+        {
+            using var context = CreateContext(contextType, "unused");
+            var migration = CreateMigration(context, "MissionContentRewardShape");
+
+            var addDefinitionKind = migration.DownOperations
+                .Select((operation, index) => (operation, index))
+                .Single(item => item.operation is AddColumnOperation column &&
+                    column.Table == "mission_reward_definition" &&
+                    column.Name == "kind");
+            var definitionKindRestore = migration.DownOperations
+                .Select((operation, index) => (operation, index))
+                .Where(item => item.operation is SqlOperation)
+                .Select(item => (((SqlOperation)item.operation).Sql, item.index))
+                .Single(item => NormalizeSql(item.Sql).Contains(
+                    expectedDefinitionKindSql,
+                    StringComparison.Ordinal));
+            var dropRewardItemKind = migration.DownOperations
+                .Select((operation, index) => (operation, index))
+                .Single(item => item.operation is DropColumnOperation column &&
+                    column.Table == "mission_reward_item" &&
+                    column.Name == "kind");
+            var dropSelectionCount = migration.DownOperations
+                .Select((operation, index) => (operation, index))
+                .Single(item => item.operation is DropColumnOperation column &&
+                    column.Table == "mission_reward_definition" &&
+                    column.Name == "selection_count");
+
+            Assert.IsTrue(addDefinitionKind.index < definitionKindRestore.index, contextType.Name);
+            Assert.IsTrue(definitionKindRestore.index < dropRewardItemKind.index, contextType.Name);
+            Assert.IsTrue(definitionKindRestore.index < dropSelectionCount.index, contextType.Name);
+        }
+
+        [TestMethod]
+        public void SqliteMissionContentRewardShapeDownMigrationMapsMixedRewardsToSelectableKind()
+        {
+            WithDisposableSqliteWorld((context, database) =>
+            {
+                context.Database.Migrate();
+                context.Database.ExecuteSqlRaw(
+                    "INSERT INTO mission_content_definition " +
+                    "(mission_id, content_revision, requirement, client_name_text_id, giver_id, receiver_id, level, group_type, category_id, shareable, radio_completeable, comment) " +
+                    "VALUES (654321, 'mixed-reward-down', 1, 0, 10, 20, 30, 1, 2, 0, 0, 'Down migration test mission')");
+                context.Database.ExecuteSqlRaw(
+                    "INSERT INTO mission_reward_definition " +
+                    "(mission_id, content_revision, reward_id, requirement, experience, credits, prestige, selection_count, comment) " +
+                    "VALUES " +
+                    "(654321, 'mixed-reward-down', 1, 1, 10, 0, 0, 0, 'Fixed reward'), " +
+                    "(654321, 'mixed-reward-down', 2, 1, 20, 0, 0, 1, 'Selection-count reward'), " +
+                    "(654321, 'mixed-reward-down', 3, 1, 30, 0, 0, 0, 'Selectable item reward'), " +
+                    "(654321, 'mixed-reward-down', 4, 1, 40, 0, 0, 1, 'Mixed reward')");
+                context.Database.ExecuteSqlRaw(
+                    "INSERT INTO mission_reward_item " +
+                    "(mission_id, content_revision, reward_id, item_id, kind, item_template_id, quantity) " +
+                    "VALUES " +
+                    "(654321, 'mixed-reward-down', 1, 1, 1, 1001, 1), " +
+                    "(654321, 'mixed-reward-down', 2, 1, 1, 1002, 1), " +
+                    "(654321, 'mixed-reward-down', 3, 1, 2, 1003, 1), " +
+                    "(654321, 'mixed-reward-down', 4, 1, 1, 1004, 1), " +
+                    "(654321, 'mixed-reward-down', 4, 2, 2, 1005, 1)");
+
+                context.GetService<IMigrator>().Migrate("20260919034933_MissionContentReviewFixes");
+
+                using var connection = new SqliteConnection($"Data Source={database}.db");
+                connection.Open();
+
+                using var command = connection.CreateCommand();
+                command.CommandText =
+                    "SELECT reward_id, kind " +
+                    "FROM mission_reward_definition " +
+                    "WHERE mission_id = 654321 " +
+                    "ORDER BY reward_id";
+
+                using var reader = command.ExecuteReader();
+                var restoredKinds = new List<byte>();
+                while (reader.Read())
+                {
+                    restoredKinds.Add(reader.GetByte(1));
+                }
+
+                CollectionAssert.AreEqual(
+                    new byte[]
+                    {
+                        1,
+                        2,
+                        2,
+                        2
+                    },
+                    restoredKinds.ToArray());
+            });
         }
 
         [TestMethod]
@@ -647,6 +744,14 @@ namespace Rasa.Test.Missions
         private static void AssertContainsCreateTable(string sql, string tableName)
         {
             StringAssert.Contains(sql, $"create table {tableName}");
+        }
+
+        private static Migration CreateMigration(RasaDbContextBase context, string typeName)
+        {
+            var assembly = context.GetService<IMigrationsAssembly>();
+            return assembly.Migrations.Values
+                .Select(type => assembly.CreateMigration(type, context.Database.ProviderName))
+                .Single(candidate => candidate.GetType().Name == typeName);
         }
 
         private static void AssertDeleteBehavior(

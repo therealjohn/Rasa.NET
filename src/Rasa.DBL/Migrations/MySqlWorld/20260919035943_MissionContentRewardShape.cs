@@ -61,6 +61,18 @@ namespace Rasa.Migrations.MySqlWorld
                 nullable: false,
                 defaultValue: (byte)1);
 
+            // The old schema only stores reward shape on mission_reward_definition.kind.
+            // When newer rows mix fixed and selectable items, downgrade chooses Selectable
+            // if any selectable signal exists because the legacy schema cannot represent both.
+            migrationBuilder.Sql(
+                "UPDATE mission_reward_definition " +
+                "SET kind = CASE " +
+                "WHEN selection_count > 0 OR EXISTS (SELECT 1 FROM mission_reward_item item " +
+                "WHERE item.mission_id = mission_reward_definition.mission_id " +
+                "AND item.content_revision = mission_reward_definition.content_revision " +
+                "AND item.reward_id = mission_reward_definition.reward_id " +
+                "AND item.kind = 2) THEN 2 ELSE 1 END;");
+
             migrationBuilder.DropCheckConstraint(
                 name: "CK_mission_reward_item_kind",
                 table: "mission_reward_item");
