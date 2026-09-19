@@ -19,6 +19,7 @@ namespace Rasa.Test.World
     using Rasa.Packets.MapChannel.Server;
     using Rasa.Packets.Protocol;
     using Rasa.Structures;
+    using Rasa.Structures.Char;
 
     [TestClass]
     [DoNotParallelize]
@@ -63,6 +64,109 @@ namespace Rasa.Test.World
             Assert.AreEqual(100L, publicMap.MapChannelElapsed);
             Assert.AreEqual(100L, first.MapChannelElapsed);
             Assert.AreEqual(100L, second.MapChannelElapsed);
+        }
+
+        [TestMethod]
+        public void FreshPrivateInstancesCloneRequiredStaticContentWithoutSharingMutableState()
+        {
+            var service = new PrivateMapInstanceService();
+            var maps = new MapChannelManager(null, privateInstances: service);
+            var publicMap = CreateMap();
+            publicMap.SpawnPools.Add(new SpawnPool
+            {
+                DbId = 55,
+                MapContextId = publicMap.MapInfo.MapContextId,
+                Position = new Vector3(10, 0, 10),
+                Rotation = 1.5f,
+                RespawnTime = 3000,
+                UpdateTimer = 3000,
+                SpawnSlot = new List<SpawnPoolSlot> { new(77, 1, 2) }
+            });
+            publicMap.ControlPoints.Add(1, new DynamicObject
+            {
+                MapContextId = publicMap.MapInfo.MapContextId,
+                Position = new Vector3(20, 0, 20),
+                Rotation = 2,
+                DynamicObjectType = DynamicObjectType.ControlPoint,
+                Faction = Factions.AFS,
+                StateId = UseObjectState.CpointStateFactionAOwned,
+                ObjectData = new ControlPointStatus(1, 1, 1, 30000)
+            });
+            publicMap.FootLockers.Add(2, new DynamicObject
+            {
+                MapContextId = publicMap.MapInfo.MapContextId,
+                Position = new Vector3(30, 0, 30),
+                Rotation = 3,
+                DynamicObjectType = DynamicObjectType.Lockbox,
+                Comment = "public-footlocker"
+            });
+            publicMap.Teleporters.Add(3, new DynamicObject
+            {
+                MapContextId = publicMap.MapInfo.MapContextId,
+                Position = new Vector3(40, 0, 40),
+                Rotation = 4,
+                DynamicObjectType = DynamicObjectType.Waypoint,
+                ObjectData = new WaypointInfo(3, false, WaypointType.Waypoint),
+                Comment = "public-waypoint"
+            });
+            publicMap.DynamicObjects.Add(new DynamicObject
+            {
+                MapContextId = publicMap.MapInfo.MapContextId,
+                Position = new Vector3(50, 0, 50),
+                Rotation = 5,
+                DynamicObjectType = DynamicObjectType.Logos,
+                Comment = "public-dynamic"
+            });
+            publicMap.Kraftwerks.Add(4, new DynamicObject
+            {
+                MapContextId = publicMap.MapInfo.MapContextId,
+                Position = new Vector3(60, 0, 60),
+                Rotation = 6,
+                DynamicObjectType = DynamicObjectType.Kraftwerks,
+                Comment = "public-station"
+            });
+            var publicTrigger = new MapTrigger(5, "public-trigger", new Vector3(70, 0, 70), 7,
+                publicMap.MapInfo.MapContextId);
+            CellManager.Instance.AddToWorld(publicMap, publicTrigger);
+            maps.MapChannelArray.Add(publicMap.MapInfo.MapContextId, publicMap);
+
+            var owned = maps.GetOrCreatePrivateInstance(publicMap.MapInfo.MapContextId, 7);
+
+            Assert.AreEqual(publicMap.SpawnPools.Count, owned.SpawnPools.Count);
+            Assert.AreEqual(publicMap.ControlPoints.Count, owned.ControlPoints.Count);
+            Assert.AreEqual(publicMap.FootLockers.Count, owned.FootLockers.Count);
+            Assert.AreEqual(publicMap.Teleporters.Count, owned.Teleporters.Count);
+            Assert.AreEqual(publicMap.DynamicObjects.Count, owned.DynamicObjects.Count);
+            Assert.AreEqual(publicMap.Kraftwerks.Count, owned.Kraftwerks.Count);
+            Assert.AreEqual(
+                publicMap.MapCellInfo.Cells.Values.Sum(cell => cell.MapTriggers.Count),
+                owned.MapCellInfo.Cells.Values.Sum(cell => cell.MapTriggers.Count));
+
+            var publicPool = publicMap.SpawnPools.Single();
+            var ownedPool = owned.SpawnPools.Single();
+            Assert.AreNotSame(publicPool, ownedPool);
+            Assert.AreNotSame(publicPool.SpawnSlot, ownedPool.SpawnSlot);
+            Assert.AreEqual(publicPool.DbId, ownedPool.DbId);
+
+            var publicControlPoint = publicMap.ControlPoints[1];
+            var ownedControlPoint = owned.ControlPoints[1];
+            Assert.AreNotSame(publicControlPoint, ownedControlPoint);
+            Assert.AreNotEqual(publicControlPoint.EntityId, ownedControlPoint.EntityId);
+            Assert.AreNotSame(publicControlPoint.ObjectData, ownedControlPoint.ObjectData);
+
+            var publicTeleporter = publicMap.Teleporters[3];
+            var ownedTeleporter = owned.Teleporters[3];
+            Assert.AreNotSame(publicTeleporter, ownedTeleporter);
+            Assert.AreNotEqual(publicTeleporter.EntityId, ownedTeleporter.EntityId);
+            Assert.AreNotSame(publicTeleporter.ObjectData, ownedTeleporter.ObjectData);
+
+            ownedPool.UpdateTimer = 0;
+            ownedControlPoint.Faction = Factions.Bane;
+            ownedTeleporter.Comment = "owned-waypoint";
+
+            Assert.AreEqual(3000L, publicPool.UpdateTimer);
+            Assert.AreEqual(Factions.AFS, publicControlPoint.Faction);
+            Assert.AreEqual("public-waypoint", publicTeleporter.Comment);
         }
 
         [TestMethod]
@@ -269,6 +373,67 @@ namespace Rasa.Test.World
             target.CorpseLootEntityId = 0;
             CellManager.Instance.RemoveCreatureFromWorld(second, target);
             CleanupClient(firstClient);
+        }
+
+        [TestMethod]
+        public void WaypointTravelRequiresTheDepartureStationOnTheCurrentMapInstance()
+        {
+            var service = new PrivateMapInstanceService();
+            var maps = new MapChannelManager(null, privateInstances: service);
+            var publicMap = CreateMap(1985);
+            maps.MapChannelArray.Add(publicMap.MapInfo.MapContextId, publicMap);
+            var owned = maps.GetOrCreatePrivateInstance(publicMap.MapInfo.MapContextId, 7);
+            var classes = EntityClassManager.Instance.LoadedEntityClasses;
+            var addedClass = false;
+            if (!classes.ContainsKey(EntityClasses.HumanBaseMale))
+            {
+                classes.Add(EntityClasses.HumanBaseMale,
+                    new EntityClass((uint)EntityClasses.HumanBaseMale, "fixture", 0, 0,
+                        new List<AugmentationType>(), true));
+                addedClass = true;
+            }
+            var client = CreateClient(owned, 7);
+            try
+            {
+                CellManager.Instance.AddToWorld(client);
+                WorldTestContext.Drain(client);
+                var objects = new DynamicObjectManager(null, maps, updateCharacter: (_, _, _) => { },
+                    disconnect: current => current.State = ClientState.Disconnected);
+
+                publicMap.Teleporters.Add(10, new DynamicObject
+                {
+                    MapContextId = publicMap.MapInfo.MapContextId,
+                    Position = Vector3.Zero,
+                    ObjectData = new WaypointInfo(10, false, WaypointType.Waypoint)
+                });
+                publicMap.Teleporters.Add(20, new DynamicObject
+                {
+                    MapContextId = publicMap.MapInfo.MapContextId,
+                    Position = new Vector3(200, 0, 0),
+                    ObjectData = new WaypointInfo(20, false, WaypointType.Waypoint)
+                });
+                objects.Teleporters.Add(10, publicMap.Teleporters[10]);
+                objects.Teleporters.Add(20, publicMap.Teleporters[20]);
+                client.Player.GainedWaypoints.Add(new CharacterTeleporterEntry(client.Player.Id, 20, (byte)WaypointType.Waypoint));
+
+                objects.SelectWaypoint(client, new SelectWaypointPacket
+                {
+                    MapInstanceId = owned.InstanceId,
+                    WaypointId = 20
+                });
+
+                Assert.IsNull(client.PendingTransfer);
+                Assert.AreEqual(ClientState.Ingame, client.State);
+                Assert.IsTrue(WorldTestContext.Drain(client).Any(packet =>
+                    packet.Message is CallMethodMessage message &&
+                    message.Packet is TeleportFailedPacket));
+            }
+            finally
+            {
+                CleanupClient(client);
+                if (addedClass)
+                    classes.Remove(EntityClasses.HumanBaseMale);
+            }
         }
 
         [TestMethod]

@@ -209,6 +209,37 @@ namespace Rasa.Test.Gameplay
         }
 
         [TestMethod]
+        public void DisconnectingBootcampCharacterReleasesOwnedPrivateRuntimeBeforeReconnect()
+        {
+            using var context = new CharacterCreationContext();
+            context.SeedAccount(24);
+            var characterId = context.SeedCharacter(24, 1, "Disconnect", mapContextId: 1985);
+            context.SeedStartingExperience(characterId, CharacterStartingExperienceState.Bootcamp);
+            var maps = new MapChannelManager(context, privateInstances: new PrivateMapInstanceService());
+            maps.MapChannelArray.Add(1985, CreatePublicMap(1985));
+            using var scope = new MapChannelManagerScope(maps);
+
+            var firstClient = context.CreateClient(24);
+            new CharacterManager(context).RequestSwitchToCharacterInSlot(
+                firstClient,
+                new RequestSwitchToCharacterInSlotPacket { SlotNum = 1 });
+            var firstRuntime = firstClient.Player.MapChannel;
+
+            maps.CleanupDisconnected(firstClient);
+
+            Assert.IsNull(maps.FindOwnedPrivateInstance(1985, characterId));
+
+            var secondClient = context.CreateClient(24);
+            new CharacterManager(context).RequestSwitchToCharacterInSlot(
+                secondClient,
+                new RequestSwitchToCharacterInSlotPacket { SlotNum = 1 });
+
+            Assert.AreNotSame(firstRuntime, secondClient.Player.MapChannel);
+            Assert.IsTrue(secondClient.Player.MapChannel.IsPrivateInstance);
+            Assert.AreEqual(characterId, secondClient.Player.MapChannel.OwnerCharacterId);
+        }
+
+        [TestMethod]
         public void DeletingCharacterReleasesOwnedPrivateInstances()
         {
             using var context = new CharacterCreationContext();

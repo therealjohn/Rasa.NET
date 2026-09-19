@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 
 namespace Rasa.Managers
@@ -130,19 +131,46 @@ namespace Rasa.Managers
                 LoadedSpawnPools.Add(data.Id, spawnPool);
             }
 
+            foreach (var mapChannel in MapChannelManager.Instance.MapChannelArray.Values)
+                InitializeMapChannel(mapChannel);
+
             Logger.WriteLog(LogType.Initialize, $"Loaded {LoadedSpawnPools.Count} SpawnPools");
+        }
+
+        internal void InitializeMapChannel(MapChannel mapChannel)
+        {
+            if (mapChannel == null)
+                return;
+
+            mapChannel.SpawnPools.Clear();
+            foreach (var template in LoadedSpawnPools.Values.Where(pool => pool.MapContextId == mapChannel.MapInfo.MapContextId))
+                mapChannel.SpawnPools.Add(CloneSpawnPool(template, mapChannel));
+        }
+
+        internal void CloneTemplateMap(MapChannel template, MapChannel mapChannel)
+        {
+            if (mapChannel == null)
+                return;
+
+            mapChannel.SpawnPools.Clear();
+            var source = template?.SpawnPools?.Count > 0
+                ? template.SpawnPools
+                : LoadedSpawnPools.Values.Where(pool => pool.MapContextId == mapChannel.MapInfo.MapContextId);
+
+            foreach (var spawnPool in source)
+                if (spawnPool != null)
+                    mapChannel.SpawnPools.Add(CloneSpawnPool(spawnPool, mapChannel));
         }
 
         // timePassed is elapsed milliseconds since this map's previous spawn-pool update.
         public void SpawnPoolWorker(MapChannel mapChannel, long timePassed)
         {
-            foreach (var key in LoadedSpawnPools)
+            var spawnPools = mapChannel.SpawnPools.Count > 0
+                ? mapChannel.SpawnPools
+                : LoadedSpawnPools.Values.Where(pool => pool.MapContextId == mapChannel.MapInfo.MapContextId).ToList();
+
+            foreach (var spawnPool in spawnPools)
             {
-                var spawnPool = key.Value;
-
-                if (spawnPool.MapContextId != mapChannel.MapInfo.MapContextId)
-                    continue; // spawnpool is not for this map
-
                 if (spawnPool.Mode != 0 || spawnPool.AnimType < 0 || spawnPool.AnimType > 2)
                     continue;
 
@@ -256,7 +284,8 @@ namespace Rasa.Managers
 
         internal void SpawnCreatures(SpawnPool spawnPool,List<Creature> creatureList)
         {
-            var mapChannel = MapChannelManager.Instance.FindByContextId(spawnPool.MapContextId);
+            var mapChannel = spawnPool.RuntimeMapChannel ??
+                MapChannelManager.Instance.FindByContextId(spawnPool.MapContextId);
 
             foreach (var spawnSlot in creatureList)
             {
@@ -365,9 +394,30 @@ namespace Rasa.Managers
 
             // Spawn pools were placed by hand; on a slope the offset members would hang in the
             // air or start in the ground. With a navmesh they stand on it.
-            pos = NavMeshManager.SnapToGround(MapChannelManager.Instance.FindByContextId(creature.SpawnPool.MapContextId), pos);
+            pos = NavMeshManager.SnapToGround(
+                creature.SpawnPool?.RuntimeMapChannel ??
+                MapChannelManager.Instance.FindByContextId(creature.SpawnPool.MapContextId),
+                pos);
 
             CreatureManager.Instance.SetLocation(creature, pos, creature.SpawnPool.Rotation, creature.SpawnPool.MapContextId);
+        }
+
+        private static SpawnPool CloneSpawnPool(SpawnPool template, MapChannel mapChannel)
+        {
+            return new SpawnPool
+            {
+                DbId = template.DbId,
+                Position = template.Position,
+                Rotation = template.Rotation,
+                SpawnSlot = template.SpawnSlot?.Select(slot =>
+                    new SpawnPoolSlot(slot.CreatureId, slot.CountMin, slot.CountMax)).ToList() ?? new List<SpawnPoolSlot>(),
+                Mode = template.Mode,
+                AnimType = template.AnimType,
+                MapContextId = mapChannel.MapInfo.MapContextId,
+                RuntimeMapChannel = mapChannel,
+                RespawnTime = template.RespawnTime,
+                UpdateTimer = template.RespawnTime
+            };
         }
     }
 }

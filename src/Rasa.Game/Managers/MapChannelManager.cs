@@ -147,7 +147,8 @@ namespace Rasa.Managers
         {
             return !MapChannelArray.TryGetValue(contextId, out var template)
                 ? null
-                : _privateInstances.GetOrCreate(template, ownerCharacterId);
+                : _privateInstances.GetOrCreate(template, ownerCharacterId,
+                    map => InitializePrivateMapChannel(template, map));
         }
 
         public void ReleaseOwnedPrivateInstances(uint ownerCharacterId)
@@ -205,6 +206,7 @@ namespace Rasa.Managers
                     PlayerLimit = 128,
                     ClientList = new List<Client>()
                 };
+                SpawnPoolManager.Instance.InitializeMapChannel(newMapChannel);
                 // register mapChannel
                 MapChannelArray.Add(mapInfo.Id, newMapChannel);
             }
@@ -605,7 +607,9 @@ namespace Rasa.Managers
 
             player.Cells = new uint[5, 5];
             player.MapChannel = null;
+            player.RuntimeMapChannel = null;
             player.RemoveFromMap = false;
+            ReleaseOwnedPrivateInstances(player.Id);
             player.Disconected = true;
         }
 
@@ -900,6 +904,7 @@ namespace Rasa.Managers
 
             map.PerformRecovery.Clear();
             map.QueuedMissiles.Clear();
+            map.SpawnPools.Clear();
             map.DynamicObjects.Clear();
             map.ControlPoints.Clear();
             map.FootLockers.Clear();
@@ -907,6 +912,12 @@ namespace Rasa.Managers
             map.Kraftwerks.Clear();
             map.LootDispensers.Clear();
             map.MapCellInfo.Cells.Clear();
+        }
+
+        private static void InitializePrivateMapChannel(MapChannel template, MapChannel map)
+        {
+            SpawnPoolManager.Instance.CloneTemplateMap(template, map);
+            DynamicObjectManager.Instance.CloneTemplateMap(template, map);
         }
     }
 }

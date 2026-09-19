@@ -35,7 +35,7 @@ namespace Rasa.Managers
         {
         }
 
-        internal MapChannel GetOrCreate(MapChannel template, uint ownerCharacterId)
+        internal MapChannel GetOrCreate(MapChannel template, uint ownerCharacterId, System.Action<MapChannel> initialize = null)
         {
             if (template == null || ownerCharacterId == 0)
                 return null;
@@ -59,6 +59,7 @@ namespace Rasa.Managers
                     IsPrivateInstance = true,
                     OwnerCharacterId = ownerCharacterId
                 };
+                initialize?.Invoke(map);
 
                 _instancesByKey.Add(privateKey, map);
                 _keysByOwner.Add(ownerKey, privateKey);

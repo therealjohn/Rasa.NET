@@ -18,6 +18,7 @@ namespace Rasa.Managers
     using Repositories.UnitOfWork;
     using Structures;
     using Structures.Char;
+    using Structures.World;
     using System;
 
     public class DynamicObjectManager
@@ -118,6 +119,44 @@ namespace Rasa.Managers
             InitTeleporters();
             LogosManager.Instance.LogosInit();
             KraftwerksManager.Instance.KraftwerksInit();
+        }
+
+        internal void CloneTemplateMap(MapChannel template, MapChannel mapChannel)
+        {
+            if (template == null || mapChannel == null)
+                return;
+
+            mapChannel.ControlPoints.Clear();
+            foreach (var entry in template.ControlPoints)
+                AddClonedDynamicObject(mapChannel.ControlPoints, entry.Key, entry.Value, mapChannel);
+
+            mapChannel.FootLockers.Clear();
+            foreach (var entry in template.FootLockers)
+                AddClonedDynamicObject(mapChannel.FootLockers, entry.Key, entry.Value, mapChannel);
+
+            mapChannel.Teleporters.Clear();
+            foreach (var entry in template.Teleporters)
+                AddClonedDynamicObject(mapChannel.Teleporters, entry.Key, entry.Value, mapChannel);
+
+            mapChannel.DynamicObjects.Clear();
+            foreach (var dynamicObject in template.DynamicObjects)
+                mapChannel.DynamicObjects.Add(CloneDynamicObject(dynamicObject, mapChannel));
+
+            mapChannel.Kraftwerks.Clear();
+            foreach (var entry in template.Kraftwerks)
+                AddClonedDynamicObject(mapChannel.Kraftwerks, entry.Key, entry.Value, mapChannel);
+
+            foreach (var trigger in template.MapCellInfo.Cells.Values
+                         .SelectMany(cell => cell.MapTriggers)
+                         .Distinct()
+                         .ToArray())
+                CellManager.Instance.AddToWorld(mapChannel, CloneTrigger(trigger, mapChannel));
+
+            foreach (var link in template.MapCellInfo.Cells.Values
+                         .SelectMany(cell => cell.MapLinks)
+                         .Distinct()
+                         .ToArray())
+                CellManager.Instance.AddToWorld(mapChannel, CloneMapLink(link, mapChannel));
         }
 
         internal void ForceState(DynamicObject obj, UseObjectState state, int delta)
@@ -871,9 +910,9 @@ namespace Rasa.Managers
                     return;
                 }
 
-                var nearbySource = Teleporters.Values.Any(source =>
-                    source.MapContextId == origin.MapInfo.MapContextId &&
+                var nearbySource = origin.Teleporters.Values.Any(source =>
                     source.ObjectData is WaypointInfo sourceInfo && sourceInfo.WaypointType == info.WaypointType &&
+                    MapInstanceScope.Contains(origin, source) &&
                     (isDropship ? client.Player.IsNear5m(source) : client.Player.IsNear2m(source)));
                 var destination = isDropship ? teleporter.Position : teleporter.Position + new Vector3(0, 1, 0);
                 if (!nearbySource || !CellManager.TryGetCellCoordinates(destination, out _, out _) ||
@@ -1179,5 +1218,125 @@ namespace Rasa.Managers
             return dropships;
         }
         #endregion
+
+        private static void AddClonedDynamicObject(
+            IDictionary<uint, DynamicObject> destination,
+            uint key,
+            DynamicObject source,
+            MapChannel mapChannel)
+        {
+            if (source == null)
+                return;
+
+            destination[key] = CloneDynamicObject(source, mapChannel);
+        }
+
+        private static DynamicObject CloneDynamicObject(DynamicObject source, MapChannel mapChannel)
+        {
+            DynamicObject clone = source switch
+            {
+                Logos logos => new Logos(new LogosEntry
+                {
+                    Id = logos.Id,
+                    Name = logos.Name,
+                    MapContextId = mapChannel.MapInfo.MapContextId,
+                    ClassId = (uint)logos.EntityClassId,
+                    PosX = logos.Position.X,
+                    PosY = logos.Position.Y,
+                    PosZ = logos.Position.Z
+                }),
+                _ => new DynamicObject()
+            };
+
+            clone.EntityClassId = source.EntityClassId;
+            clone.Position = source.Position;
+            clone.Rotation = source.Rotation;
+            clone.MapContextId = mapChannel.MapInfo.MapContextId;
+            clone.Faction = source.Faction;
+            clone.RespawnTime = source.RespawnTime;
+            clone.DynamicObjectType = source.DynamicObjectType;
+            clone.Comment = source.Comment;
+            clone.Lock = CloneLock(source.Lock);
+            clone.IsEnabled = source.IsEnabled;
+            clone.StateId = source.StateId;
+            clone.WindupTime = source.WindupTime;
+            clone.ActivateMission = source.ActivateMission;
+            clone.ObjectData = CloneObjectData(source.ObjectData);
+
+            if (source.IsInWorld)
+            {
+                CellManager.Instance.AddToWorld(mapChannel, clone);
+                clone.IsInWorld = true;
+            }
+
+            return clone;
+        }
+
+        private static object CloneObjectData(object objectData)
+        {
+            return objectData switch
+            {
+                null => null,
+                ControlPointStatus status => new ControlPointStatus(
+                    status.ControlPointId,
+                    status.OwnerId,
+                    status.StateId,
+                    status.EndTime),
+                WaypointInfo waypoint => new WaypointInfo(
+                    waypoint.WaypointId,
+                    waypoint.Contested,
+                    waypoint.Position,
+                    waypoint.WaypointType),
+                _ => objectData
+            };
+        }
+
+        private static UsableLock CloneLock(UsableLock source)
+        {
+            if (source == null)
+                return null;
+
+            var clone = new UsableLock
+            {
+                Unlocked = source.Unlocked,
+                LockStateId = source.LockStateId,
+                UnlockedStateId = source.UnlockedStateId,
+                MissionId = source.MissionId,
+                KeyItemTemplateId = source.KeyItemTemplateId,
+                CipherLevel = source.CipherLevel,
+                CipherAttemptsLeft = source.CipherAttemptsLeft
+            };
+            clone.LogosIds.AddRange(source.LogosIds);
+            clone.PlayerFlagReqs.AddRange(source.PlayerFlagReqs);
+            clone.PlayerFlagExs.AddRange(source.PlayerFlagExs);
+            return clone;
+        }
+
+        private static MapTrigger CloneTrigger(MapTrigger source, MapChannel mapChannel)
+        {
+            return new MapTrigger(
+                source.TriggerId,
+                source.TriggerName,
+                source.Position,
+                source.Rotation,
+                mapChannel.MapInfo.MapContextId);
+        }
+
+        private static MapLink CloneMapLink(MapLink source, MapChannel mapChannel)
+        {
+            return new MapLink
+            {
+                Id = source.Id,
+                MapContextId = mapChannel.MapInfo.MapContextId,
+                Position = source.Position,
+                Radius = source.Radius,
+                DestMapContextId = source.DestMapContextId,
+                DestPosition = source.DestPosition,
+                DestRotation = source.DestRotation,
+                Kind = source.Kind,
+                Enabled = source.Enabled,
+                Comment = source.Comment
+            };
+        }
     }
 }

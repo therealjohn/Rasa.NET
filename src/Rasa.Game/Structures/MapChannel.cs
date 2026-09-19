@@ -37,6 +37,9 @@ namespace Rasa.Structures
         // Dynamic Object List
         public List<DynamicObject> DynamicObjects = new List<DynamicObject>();
 
+        /// <summary>Spawn pools configured for this concrete map instance.</summary>
+        public List<SpawnPool> SpawnPools = new List<SpawnPool>();
+
         // Dictionary<uniqueControlPointId, dataAboutdynamicObject> ControlPoints
         public Dictionary<uint, DynamicObject> ControlPoints = new Dictionary<uint, DynamicObject>();
 
