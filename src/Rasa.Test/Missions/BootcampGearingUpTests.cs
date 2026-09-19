@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -11,6 +12,7 @@ namespace Rasa.Test.Missions
     using Rasa.Managers;
     using Rasa.Packets.Inventory.Client;
     using Rasa.Packets.Mission.Server;
+    using Rasa.Repositories.Char.CharacterMissionProgress;
     using Rasa.Repositories.UnitOfWork;
     using Rasa.Structures;
 
@@ -18,6 +20,52 @@ namespace Rasa.Test.Missions
     [DoNotParallelize]
     public class BootcampGearingUpTests
     {
+        private static readonly uint[] CrateTemplateIds = { 13066, 13096, 13156, 13186, 13713 };
+
+        [TestMethod]
+        [DynamicData(nameof(ReconnectBoundaries))]
+        public void GearingUpReconnectHydratesEachBoundaryWithoutDuplicatingGrants(
+            string boundaryName)
+        {
+            var boundary = GetReconnectBoundary(boundaryName);
+            using var harness = BootcampRuntimeTestHarness.Create();
+            var actors = SeedActors(harness);
+            harness.SeedMission(
+                harness.Client.Player.Id,
+                BootcampRuntimeTestHarness.MissionInitiation,
+                (uint)MissionState.Completed,
+                false);
+            AdvanceToBoundary(harness, actors, boundary.Stage);
+            var durableBeforeReconnect =
+                harness.Context.ReadProgress(BootcampRuntimeTestHarness.MissionGearingUp)
+                    .Missions[BootcampRuntimeTestHarness.MissionGearingUp];
+            var rewardTotalsBeforeReconnect = harness.Context.ReadRewardTotals();
+            var previousClient = harness.Client;
+            var previousManager = harness.Manager;
+
+            harness.ReconnectFresh();
+
+            Assert.AreNotSame(previousClient, harness.Client);
+            Assert.AreNotSame(previousManager, harness.Manager);
+            var mission = harness.Client.Player.Missions[BootcampRuntimeTestHarness.MissionGearingUp];
+            AssertMissionOrder(mission, boundary.ExpectedStates.ToArray());
+            Assert.AreEqual(boundary.Completeable, mission.Completeable);
+            AssertObjectiveProgressMatchesSnapshot(mission, durableBeforeReconnect, boundary.ExpectedStates);
+            Assert.AreEqual(
+                rewardTotalsBeforeReconnect.Experience,
+                harness.Context.ReadRewardTotals().Experience);
+            Assert.AreEqual(
+                rewardTotalsBeforeReconnect.Credits,
+                harness.Context.ReadRewardTotals().Credits);
+            AssertTemplateCounts(
+                harness.ReadOwnedTemplateCounts(CrateTemplateIds),
+                boundary.ExpectsCrateGrant ? 1 : 0);
+            AssertLightningGrantCounts(
+                harness.ReadLightningGrantCounts(),
+                boundary.ExpectsLightningGrant ? 1 : 0);
+            boundary.AssertAvailability(harness);
+        }
+
         [TestMethod]
         public void GearingUpPreservesObjectiveOrderAcrossReconnectsAndRejectsWrongNpcOrItem()
         {
@@ -347,6 +395,266 @@ namespace Rasa.Test.Missions
             params (uint ObjectiveId, MissionObjectiveState State)[] expected) =>
             BootcampRuntimeTestHarness.AssertObjectiveStates(mission, expected);
 
+        public static IEnumerable<object[]> ReconnectBoundaries()
+        {
+            foreach (var fixture in GetReconnectBoundaryFixtures())
+                yield return new object[] { fixture.Name };
+        }
+
+        private static ReconnectBoundaryFixture GetReconnectBoundary(string name) =>
+            GetReconnectBoundaryFixtures().Single(
+                fixture => string.Equals(fixture.Name, name, StringComparison.Ordinal));
+
+        private static IEnumerable<ReconnectBoundaryFixture> GetReconnectBoundaryFixtures()
+        {
+            yield return Fixture(
+                "Acceptance",
+                MissionBoundary.Accepted,
+                completeable: false,
+                expectsCrateGrant: false,
+                expectsLightningGrant: false,
+                availability: harness =>
+                {
+                    AssertNpcStatus(
+                        harness,
+                        BootcampRuntimeTestHarness.CaptainDelessioPackageId,
+                        ConversationStatus.ObjectivComplete);
+                    Assert.IsNull(BootcampRuntimeTestHarness.FindScenarioObject(
+                        harness.BootcampMap,
+                        "bootcamp-equipment-crate"));
+                    Assert.IsNull(BootcampRuntimeTestHarness.FindCreature(
+                        harness.BootcampMap,
+                        BootcampRuntimeTestHarness.PracticeDummyCreatureId));
+                    Assert.IsNull(BootcampRuntimeTestHarness.FindCreature(
+                        harness.BootcampMap,
+                        BootcampRuntimeTestHarness.LightningDummyCreatureId));
+                },
+                (10U, MissionObjectiveState.Completed),
+                (4U, MissionObjectiveState.Incomplete),
+                (1U, MissionObjectiveState.Inactive),
+                (2U, MissionObjectiveState.Inactive),
+                (5U, MissionObjectiveState.Inactive),
+                (6U, MissionObjectiveState.Inactive),
+                (3U, MissionObjectiveState.Inactive),
+                (9U, MissionObjectiveState.Inactive),
+                (8U, MissionObjectiveState.Inactive),
+                (7U, MissionObjectiveState.Inactive));
+
+            yield return Fixture(
+                "Delessio greeting",
+                MissionBoundary.AfterDelessioGreeting,
+                completeable: false,
+                expectsCrateGrant: false,
+                expectsLightningGrant: false,
+                availability: harness =>
+                {
+                    AssertNpcUnavailable(harness, BootcampRuntimeTestHarness.CaptainDelessioPackageId);
+                    Assert.IsNotNull(BootcampRuntimeTestHarness.FindScenarioObject(
+                        harness.BootcampMap,
+                        "bootcamp-equipment-crate"));
+                },
+                (10U, MissionObjectiveState.Completed),
+                (4U, MissionObjectiveState.Completed),
+                (1U, MissionObjectiveState.Incomplete),
+                (2U, MissionObjectiveState.Inactive),
+                (5U, MissionObjectiveState.Inactive),
+                (6U, MissionObjectiveState.Inactive),
+                (3U, MissionObjectiveState.Inactive),
+                (9U, MissionObjectiveState.Inactive),
+                (8U, MissionObjectiveState.Inactive),
+                (7U, MissionObjectiveState.Inactive));
+
+            yield return Fixture(
+                "Crate grant",
+                MissionBoundary.AfterCrateGrant,
+                completeable: false,
+                expectsCrateGrant: true,
+                expectsLightningGrant: false,
+                availability: harness =>
+                {
+                    AssertNpcUnavailable(harness, BootcampRuntimeTestHarness.CaptainDelessioPackageId);
+                    Assert.IsNull(BootcampRuntimeTestHarness.FindScenarioObject(
+                        harness.BootcampMap,
+                        "bootcamp-equipment-crate"));
+                },
+                (10U, MissionObjectiveState.Completed),
+                (4U, MissionObjectiveState.Completed),
+                (1U, MissionObjectiveState.Completed),
+                (2U, MissionObjectiveState.Incomplete),
+                (5U, MissionObjectiveState.Inactive),
+                (6U, MissionObjectiveState.Inactive),
+                (3U, MissionObjectiveState.Inactive),
+                (9U, MissionObjectiveState.Inactive),
+                (8U, MissionObjectiveState.Inactive),
+                (7U, MissionObjectiveState.Inactive));
+
+            yield return Fixture(
+                "Equip gear",
+                MissionBoundary.AfterEquip,
+                completeable: false,
+                expectsCrateGrant: true,
+                expectsLightningGrant: false,
+                availability: harness =>
+                    AssertNpcStatus(
+                        harness,
+                        BootcampRuntimeTestHarness.CaptainDelessioPackageId,
+                        ConversationStatus.ObjectivComplete),
+                (10U, MissionObjectiveState.Completed),
+                (4U, MissionObjectiveState.Completed),
+                (1U, MissionObjectiveState.Completed),
+                (2U, MissionObjectiveState.Completed),
+                (5U, MissionObjectiveState.Incomplete),
+                (6U, MissionObjectiveState.Inactive),
+                (3U, MissionObjectiveState.Inactive),
+                (9U, MissionObjectiveState.Inactive),
+                (8U, MissionObjectiveState.Inactive),
+                (7U, MissionObjectiveState.Inactive));
+
+            yield return Fixture(
+                "Delessio follow-up",
+                MissionBoundary.AfterDelessioFollowUp,
+                completeable: false,
+                expectsCrateGrant: true,
+                expectsLightningGrant: false,
+                availability: harness =>
+                    AssertNpcStatus(
+                        harness,
+                        BootcampRuntimeTestHarness.CorporalHartmannPackageId,
+                        ConversationStatus.ObjectivComplete),
+                (10U, MissionObjectiveState.Completed),
+                (4U, MissionObjectiveState.Completed),
+                (1U, MissionObjectiveState.Completed),
+                (2U, MissionObjectiveState.Completed),
+                (5U, MissionObjectiveState.Completed),
+                (6U, MissionObjectiveState.Incomplete),
+                (3U, MissionObjectiveState.Inactive),
+                (9U, MissionObjectiveState.Inactive),
+                (8U, MissionObjectiveState.Inactive),
+                (7U, MissionObjectiveState.Inactive));
+
+            yield return Fixture(
+                "Hartmann greeting",
+                MissionBoundary.AfterHartmannGreeting,
+                completeable: false,
+                expectsCrateGrant: true,
+                expectsLightningGrant: false,
+                availability: harness =>
+                {
+                    AssertNpcUnavailable(harness, BootcampRuntimeTestHarness.CorporalHartmannPackageId);
+                    Assert.IsNotNull(BootcampRuntimeTestHarness.FindCreature(
+                        harness.BootcampMap,
+                        BootcampRuntimeTestHarness.PracticeDummyCreatureId));
+                    Assert.IsNull(BootcampRuntimeTestHarness.FindCreature(
+                        harness.BootcampMap,
+                        BootcampRuntimeTestHarness.LightningDummyCreatureId));
+                },
+                (10U, MissionObjectiveState.Completed),
+                (4U, MissionObjectiveState.Completed),
+                (1U, MissionObjectiveState.Completed),
+                (2U, MissionObjectiveState.Completed),
+                (5U, MissionObjectiveState.Completed),
+                (6U, MissionObjectiveState.Completed),
+                (3U, MissionObjectiveState.Incomplete),
+                (9U, MissionObjectiveState.Inactive),
+                (8U, MissionObjectiveState.Inactive),
+                (7U, MissionObjectiveState.Inactive));
+
+            yield return Fixture(
+                "Firearm dummy",
+                MissionBoundary.AfterFirearmDummy,
+                completeable: false,
+                expectsCrateGrant: true,
+                expectsLightningGrant: false,
+                availability: harness =>
+                {
+                    AssertNpcStatus(
+                        harness,
+                        BootcampRuntimeTestHarness.CorporalHartmannPackageId,
+                        ConversationStatus.ObjectivComplete);
+                    Assert.IsNull(BootcampRuntimeTestHarness.FindCreature(
+                        harness.BootcampMap,
+                        BootcampRuntimeTestHarness.LightningDummyCreatureId));
+                },
+                (10U, MissionObjectiveState.Completed),
+                (4U, MissionObjectiveState.Completed),
+                (1U, MissionObjectiveState.Completed),
+                (2U, MissionObjectiveState.Completed),
+                (5U, MissionObjectiveState.Completed),
+                (6U, MissionObjectiveState.Completed),
+                (3U, MissionObjectiveState.Completed),
+                (9U, MissionObjectiveState.Incomplete),
+                (8U, MissionObjectiveState.Inactive),
+                (7U, MissionObjectiveState.Inactive));
+
+            yield return Fixture(
+                "Lightning grant",
+                MissionBoundary.AfterLightningGrant,
+                completeable: false,
+                expectsCrateGrant: true,
+                expectsLightningGrant: true,
+                availability: harness =>
+                {
+                    AssertNpcUnavailable(harness, BootcampRuntimeTestHarness.CorporalHartmannPackageId);
+                    Assert.IsNotNull(BootcampRuntimeTestHarness.FindCreature(
+                        harness.BootcampMap,
+                        BootcampRuntimeTestHarness.LightningDummyCreatureId));
+                },
+                (10U, MissionObjectiveState.Completed),
+                (4U, MissionObjectiveState.Completed),
+                (1U, MissionObjectiveState.Completed),
+                (2U, MissionObjectiveState.Completed),
+                (5U, MissionObjectiveState.Completed),
+                (6U, MissionObjectiveState.Completed),
+                (3U, MissionObjectiveState.Completed),
+                (9U, MissionObjectiveState.Completed),
+                (8U, MissionObjectiveState.Incomplete),
+                (7U, MissionObjectiveState.Inactive));
+
+            yield return Fixture(
+                "Lightning dummy",
+                MissionBoundary.AfterLightningDummy,
+                completeable: false,
+                expectsCrateGrant: true,
+                expectsLightningGrant: true,
+                availability: harness =>
+                    AssertNpcStatus(
+                        harness,
+                        BootcampRuntimeTestHarness.CorporalHartmannPackageId,
+                        ConversationStatus.ObjectivComplete),
+                (10U, MissionObjectiveState.Completed),
+                (4U, MissionObjectiveState.Completed),
+                (1U, MissionObjectiveState.Completed),
+                (2U, MissionObjectiveState.Completed),
+                (5U, MissionObjectiveState.Completed),
+                (6U, MissionObjectiveState.Completed),
+                (3U, MissionObjectiveState.Completed),
+                (9U, MissionObjectiveState.Completed),
+                (8U, MissionObjectiveState.Completed),
+                (7U, MissionObjectiveState.Incomplete));
+
+            yield return Fixture(
+                "Pre-turn-in",
+                MissionBoundary.BeforeTurnIn,
+                completeable: true,
+                expectsCrateGrant: true,
+                expectsLightningGrant: true,
+                availability: harness =>
+                    AssertNpcStatus(
+                        harness,
+                        BootcampRuntimeTestHarness.CorporalDeSimonePackageId,
+                        ConversationStatus.MissionComplete),
+                (10U, MissionObjectiveState.Completed),
+                (4U, MissionObjectiveState.Completed),
+                (1U, MissionObjectiveState.Completed),
+                (2U, MissionObjectiveState.Completed),
+                (5U, MissionObjectiveState.Completed),
+                (6U, MissionObjectiveState.Completed),
+                (3U, MissionObjectiveState.Completed),
+                (9U, MissionObjectiveState.Completed),
+                (8U, MissionObjectiveState.Completed),
+                (7U, MissionObjectiveState.Completed));
+        }
+
         private static void PrepareEquipping(BootcampRuntimeTestHarness.Harness harness)
         {
             harness.Client.Player.AppearanceData ??= new Dictionary<EquipmentData, AppearanceData>();
@@ -419,5 +727,217 @@ namespace Rasa.Test.Missions
             foreach (var templateId in expectedTemplateIds)
                 CollectionAssert.Contains(actual, templateId);
         }
+
+        private static ReconnectBoundaryFixture Fixture(
+            string name,
+            MissionBoundary stage,
+            bool completeable,
+            bool expectsCrateGrant,
+            bool expectsLightningGrant,
+            Action<BootcampRuntimeTestHarness.Harness> availability,
+            params (uint ObjectiveId, MissionObjectiveState State)[] expectedStates) =>
+            new(
+                name,
+                stage,
+                completeable,
+                expectsCrateGrant,
+                expectsLightningGrant,
+                availability,
+                expectedStates);
+
+        private static GearingUpActors SeedActors(BootcampRuntimeTestHarness.Harness harness) =>
+            new(
+                harness.AddNpc(BootcampRuntimeTestHarness.MajorMcAllisterCreatureId),
+                harness.AddNpc(
+                    BootcampRuntimeTestHarness.CaptainDelessioCreatureId,
+                    BootcampRuntimeTestHarness.CaptainDelessioPackageId),
+                harness.AddNpc(
+                    BootcampRuntimeTestHarness.CorporalHartmannCreatureId,
+                    BootcampRuntimeTestHarness.CorporalHartmannPackageId),
+                harness.AddNpc(
+                    BootcampRuntimeTestHarness.CorporalDeSimoneCreatureId,
+                    BootcampRuntimeTestHarness.CorporalDeSimonePackageId));
+
+        private static void AdvanceToBoundary(
+            BootcampRuntimeTestHarness.Harness harness,
+            GearingUpActors actors,
+            MissionBoundary stage)
+        {
+            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+                harness.Client,
+                actors.McAllister.EntityId,
+                BootcampRuntimeTestHarness.MissionGearingUp));
+            harness.Context.Drain();
+            if (stage == MissionBoundary.Accepted)
+                return;
+
+            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+                harness.Client,
+                actors.Delessio.EntityId,
+                BootcampRuntimeTestHarness.MissionGearingUp,
+                4,
+                1));
+            if (stage == MissionBoundary.AfterDelessioGreeting)
+                return;
+
+            Assert.IsTrue(harness.Manager.RecordProgress(
+                harness.Client,
+                MissionProgressEvent.Interaction(7862)));
+            if (stage == MissionBoundary.AfterCrateGrant)
+                return;
+
+            PrepareEquipping(harness);
+            Assert.IsTrue(RecordTemplateEquipProgress(harness, 13066));
+            if (stage == MissionBoundary.AfterEquip)
+                return;
+
+            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+                harness.Client,
+                actors.Delessio.EntityId,
+                BootcampRuntimeTestHarness.MissionGearingUp,
+                5,
+                1));
+            if (stage == MissionBoundary.AfterDelessioFollowUp)
+                return;
+
+            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+                harness.Client,
+                actors.Hartmann.EntityId,
+                BootcampRuntimeTestHarness.MissionGearingUp,
+                6,
+                1));
+            if (stage == MissionBoundary.AfterHartmannGreeting)
+                return;
+
+            var practiceDummy = BootcampRuntimeTestHarness.FindCreature(
+                harness.BootcampMap,
+                BootcampRuntimeTestHarness.PracticeDummyCreatureId);
+            Assert.IsNotNull(practiceDummy);
+            new CreatureManager(null, new ManifestationManager(harness.Context), harness.Manager)
+                .HandleCreatureKill(harness.BootcampMap, practiceDummy, harness.Client.Player);
+            if (stage == MissionBoundary.AfterFirearmDummy)
+                return;
+
+            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+                harness.Client,
+                actors.Hartmann.EntityId,
+                BootcampRuntimeTestHarness.MissionGearingUp,
+                9,
+                1));
+            if (stage == MissionBoundary.AfterLightningGrant)
+                return;
+
+            Assert.IsTrue(harness.Manager.RecordProgress(
+                harness.Client,
+                MissionProgressEvent.AbilityHit(
+                    (uint)ActionId.AaRecruitLightning,
+                    BootcampRuntimeTestHarness.LightningDummyCreatureId)));
+            if (stage == MissionBoundary.AfterLightningDummy)
+                return;
+
+            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+                harness.Client,
+                actors.Hartmann.EntityId,
+                BootcampRuntimeTestHarness.MissionGearingUp,
+                7,
+                1));
+        }
+
+        private static void AssertObjectiveProgressMatchesSnapshot(
+            MissionLog mission,
+            CharacterMissionProgress snapshot,
+            IReadOnlyList<(uint ObjectiveId, MissionObjectiveState State)> expectedStates)
+        {
+            Assert.AreEqual(expectedStates.Count, snapshot.Objectives.Count);
+            foreach (var expected in expectedStates)
+            {
+                var runtime = mission.Objectives[expected.ObjectiveId];
+                var durable = snapshot.Objectives[expected.ObjectiveId];
+                Assert.AreEqual((byte)expected.State, durable.State);
+                Assert.AreEqual(expected.State, runtime.State);
+                CollectionAssert.AreEquivalent(
+                    durable.Counters.ToDictionary(pair => pair.Key, pair => pair.Value),
+                    runtime.Counters.ToDictionary(pair => pair.Key, pair => pair.Value));
+                CollectionAssert.AreEquivalent(
+                    durable.ItemCounters.ToDictionary(pair => pair.Key, pair => pair.Value),
+                    runtime.ItemCounters.ToDictionary(pair => pair.Key, pair => pair.Value));
+            }
+        }
+
+        private static void AssertTemplateCounts(
+            IReadOnlyDictionary<uint, int> counts,
+            int expectedCountPerTemplate)
+        {
+            foreach (var templateId in CrateTemplateIds)
+            {
+                var actual = counts.TryGetValue(templateId, out var count) ? count : 0;
+                Assert.AreEqual(expectedCountPerTemplate, actual, $"Unexpected count for template {templateId}.");
+            }
+        }
+
+        private static void AssertLightningGrantCounts(
+            (int SkillCount, int TrayCount) counts,
+            int expectedCount)
+        {
+            Assert.AreEqual(expectedCount, counts.SkillCount);
+            Assert.AreEqual(expectedCount, counts.TrayCount);
+        }
+
+        private static void AssertNpcStatus(
+            BootcampRuntimeTestHarness.Harness harness,
+            uint npcPackageId,
+            ConversationStatus expectedStatus)
+        {
+            var npc = BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, npcPackageId);
+            Assert.IsNotNull(npc);
+            var conversation = harness.Manager.ClassifyNpcConversation(harness.Client.Player, npc);
+            Assert.IsTrue(conversation.TryGetStatus(out var status, out var missionIds));
+            Assert.AreEqual(expectedStatus, status);
+            CollectionAssert.Contains(missionIds, BootcampRuntimeTestHarness.MissionGearingUp);
+        }
+
+        private static void AssertNpcUnavailable(
+            BootcampRuntimeTestHarness.Harness harness,
+            uint npcPackageId)
+        {
+            var npc = BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, npcPackageId);
+            Assert.IsNotNull(npc);
+            var conversation = harness.Manager.ClassifyNpcConversation(harness.Client.Player, npc);
+            if (!conversation.TryGetStatus(out _, out var missionIds))
+                return;
+            CollectionAssert.DoesNotContain(missionIds, BootcampRuntimeTestHarness.MissionGearingUp);
+        }
+
+        private sealed record ReconnectBoundaryFixture(
+            string Name,
+            MissionBoundary Stage,
+            bool Completeable,
+            bool ExpectsCrateGrant,
+            bool ExpectsLightningGrant,
+            Action<BootcampRuntimeTestHarness.Harness> AssertAvailability,
+            IReadOnlyList<(uint ObjectiveId, MissionObjectiveState State)> ExpectedStates)
+        {
+            public override string ToString() => Name;
+        }
+
+        private enum MissionBoundary
+        {
+            Accepted,
+            AfterDelessioGreeting,
+            AfterCrateGrant,
+            AfterEquip,
+            AfterDelessioFollowUp,
+            AfterHartmannGreeting,
+            AfterFirearmDummy,
+            AfterLightningGrant,
+            AfterLightningDummy,
+            BeforeTurnIn
+        }
+
+        private sealed record GearingUpActors(
+            Creature McAllister,
+            Creature Delessio,
+            Creature Hartmann,
+            Creature DeSimone);
     }
 }

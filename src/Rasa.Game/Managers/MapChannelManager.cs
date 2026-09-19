@@ -174,6 +174,8 @@ namespace Rasa.Managers
             var abilities = new Dictionary<int, AbilityDrawerData>();
             using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
             var abilitiesData = unitOfWork.CharacterAbilityDrawers.GetCharacterAbilities(characterId);
+            if (abilitiesData == null)
+                return abilities;
 
             foreach (var ability in abilitiesData)
             {
@@ -190,6 +192,8 @@ namespace Rasa.Managers
             var skills = new Dictionary<SkillId, SkillsData>();
             using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
             var skillsData = unitOfWork.CharacterSkills.GetCharacterSkills(characterId);
+            if (skillsData == null)
+                return skills;
 
             foreach (var skill in skillsData)
                 skills.Add((SkillId)skill.SkillId, new SkillsData((SkillId)skill.SkillId, skill.AbilityId, skill.SkillLevel));

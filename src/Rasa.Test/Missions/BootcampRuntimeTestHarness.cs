@@ -121,7 +121,7 @@ namespace Rasa.Test.Missions
                 () => CommunicatorManager.Instance,
                 () => now);
             maps = new MapChannelManager(
-                null,
+                factory,
                 privateInstances: new PrivateMapInstanceService(),
                 scenarioService: scenarioService);
             maps.MapChannelArray.Add(BootcampMapContextId, context.Map);
@@ -334,7 +334,7 @@ namespace Rasa.Test.Missions
         {
             private readonly Func<DateTime> _getUtcNow;
             private readonly Action<DateTime> _setUtcNow;
-            private readonly IDisposable _singletons;
+            private ManagerInstances _singletons;
             private readonly List<(uint CreatureId, uint? PackageId)> _npcs = new();
 
             internal Harness(
@@ -353,15 +353,15 @@ namespace Rasa.Test.Missions
                 Maps = maps;
                 BootcampMap = bootcampMap;
                 Client = context.Client;
-                _singletons = singletons;
+                _singletons = (ManagerInstances)singletons;
                 _getUtcNow = getUtcNow;
                 _setUtcNow = setUtcNow;
             }
 
             internal MissionTestContext Context { get; }
             internal SqliteWorldContext WorldContext { get; }
-            internal MissionManager Manager { get; }
-            internal MapChannelManager Maps { get; }
+            internal MissionManager Manager { get; private set; }
+            internal MapChannelManager Maps { get; private set; }
             internal Client Client { get; private set; }
             internal MapChannel BootcampMap { get; private set; }
 
@@ -454,6 +454,127 @@ namespace Rasa.Test.Missions
                 AttachClientToMap(Client, BootcampMap);
             }
 
+            internal void ReconnectFresh()
+            {
+                var characterId = Client.Player.Id;
+                var accountEntry = CloneAccountEntry(Client.AccountEntry);
+                DetachClientFromCurrentMap(Client);
+                Maps.ReleaseOwnedPrivateInstances(characterId);
+
+                var factory = new RuntimeLoadingFactory(Context, WorldContext);
+                var manifestation = new ManifestationManager(Context);
+                MissionManager manager = null;
+                var creatures = new CreatureManager(factory, manifestation);
+                foreach (var creatureId in new[]
+                         {
+                             39U,
+                             50U,
+                             PracticeDummyCreatureId,
+                             LightningDummyCreatureId
+                         })
+                {
+                    creatures.LoadedCreatures[creatureId] = new Creature
+                    {
+                        DbId = creatureId,
+                        EntityClass = (EntityClasses)4001,
+                        Npc = new Npc { NpcPackageId = creatureId },
+                        AppearanceData = new Dictionary<EquipmentData, AppearanceData>()
+                    };
+                }
+
+                MapChannelManager maps = null;
+                var objects = new DynamicObjectManager(null, maps);
+                var deadlineService = new MissionDeadlineService(
+                    () => factory,
+                    () => manager,
+                    _getUtcNow);
+                var scenarioService = new MissionScenarioService(
+                    () => factory,
+                    () => manager,
+                    manifestation,
+                    () => maps,
+                    () => creatures,
+                    () => objects,
+                    () => CommunicatorManager.Instance,
+                    _getUtcNow);
+                maps = new MapChannelManager(
+                    factory,
+                    privateInstances: new PrivateMapInstanceService(),
+                    scenarioService: scenarioService);
+                maps.MapChannelArray.Add(BootcampMapContextId, Context.Map);
+                maps.MapChannelArray.Add(WildernessMapContextId, new MapChannel
+                {
+                    MapInfo = new MapInfo(WildernessMapContextId, "alia_das_fixture", 1556, 0),
+                    ClientList = new List<Client>(),
+                    PlayerLimit = 128
+                });
+                objects = new DynamicObjectManager(null, maps);
+                manager = new MissionManager(
+                    factory,
+                    new Dictionary<uint, Mission>(),
+                    new Dictionary<uint, MissionRewardDefinition>(),
+                    manifestation,
+                    deadlineService: deadlineService,
+                    scenarioService: scenarioService);
+                var report = manager.LoadMissions();
+                if (report.BlocksReadiness)
+                    throw new InvalidOperationException(
+                        string.Join(" | ", report.Diagnostics.Select(diagnostic => diagnostic.Code)));
+
+                _singletons.Dispose();
+                _singletons = new ManagerInstances(maps, objects, creatures, manager);
+                Manager = manager;
+                Maps = maps;
+                BootcampMap = Maps.GetOrCreatePrivateInstance(BootcampMapContextId, characterId);
+                foreach (var npc in _npcs)
+                    AddNpcToCurrentMap(npc.CreatureId, npc.PackageId);
+
+                var freshClient = Context.CreateCompetingClient(Manager);
+                typeof(Client).GetProperty(nameof(Client.AccountEntry))!
+                    .SetValue(freshClient, accountEntry);
+                freshClient.Player.AppearanceData ??=
+                    new Dictionary<EquipmentData, AppearanceData>();
+                new InventoryManager(Context, Manager).InitCharacterInventory(freshClient);
+                freshClient.Player.Skills = Maps.GetPlayerSkills(characterId);
+                freshClient.Player.Abilities = Maps.GetPlayerAbilities(characterId);
+                MoveClientToMap(freshClient, freshClient.Player.MapChannel, BootcampMap);
+                freshClient.State = RasaGame::Rasa.Data.ClientState.Ingame;
+                Client = freshClient;
+                MissionTestContext.Drain(freshClient);
+            }
+
+            internal IReadOnlyDictionary<uint, int> ReadOwnedTemplateCounts(params uint[] templateIds)
+            {
+                var requested = new HashSet<uint>(templateIds);
+                using var unit = Context.CreateChar();
+                return unit.CharacterInventories
+                    .GetItems(Client.AccountEntry.Id)
+                    .Where(entry =>
+                        entry.CharacterId == Client.Player.Id &&
+                        ((InventoryType)entry.InventoryType == InventoryType.Personal ||
+                         (InventoryType)entry.InventoryType == InventoryType.EquipedInventory ||
+                         (InventoryType)entry.InventoryType == InventoryType.WeaponDrawerInventory))
+                    .Select(entry => unit.Items.GetItem(entry.ItemId)?.ItemTemplateId)
+                    .Where(templateId => templateId.HasValue && requested.Contains(templateId.Value))
+                    .GroupBy(templateId => templateId!.Value)
+                    .ToDictionary(group => group.Key, group => group.Count());
+            }
+
+            internal (int SkillCount, int TrayCount) ReadLightningGrantCounts()
+            {
+                using var unit = Context.CreateChar();
+                return (
+                    unit.CharacterSkills.GetCharacterSkills(Client.Player.Id)
+                        .Count(entry =>
+                            entry.SkillId == (uint)SkillId.Lightning &&
+                            entry.AbilityId == (int)ActionId.AaRecruitLightning &&
+                            entry.SkillLevel == 1),
+                    unit.CharacterAbilityDrawers.GetCharacterAbilities(Client.Player.Id)
+                        .Count(entry =>
+                            entry.AbilityId == (int)ActionId.AaRecruitLightning &&
+                            entry.AbilityLevel == 1));
+            }
+
             private void AddNpcToCurrentMap(uint dbId, uint? npcPackageId)
             {
                 var npc = Context.AddNpc(dbId, BootcampMap, npcPackageId);
@@ -472,6 +593,50 @@ namespace Rasa.Test.Missions
                     npc.Attributes[Attributes.Speed] = new ActorAttributes(Attributes.Speed, 1, 1, 1, 0, 0);
                     npc.Attributes[Attributes.Regen] = new ActorAttributes(Attributes.Regen, 0, 0, 0, 0, 0);
                 }
+            }
+
+            private static GameAccountEntry CloneAccountEntry(GameAccountEntry source) =>
+                new()
+                {
+                    Id = source.Id,
+                    Email = source.Email,
+                    Name = source.Name,
+                    Level = source.Level,
+                    FamilyName = source.FamilyName,
+                    SelectedSlot = source.SelectedSlot,
+                    CanSkipBootcamp = source.CanSkipBootcamp,
+                    LastIp = source.LastIp,
+                    LastLogin = source.LastLogin,
+                    CreatedAt = source.CreatedAt,
+                    Characters = source.Characters?.ToList() ?? new List<CharacterEntry>()
+                };
+
+            private static void DetachClientFromCurrentMap(Client client)
+            {
+                var map = client.Player.MapChannel;
+                if (map == null)
+                    return;
+
+                CellManager.Instance.RemoveFromWorld(client);
+                map.ClientList.Remove(client);
+            }
+
+            private static void MoveClientToMap(
+                Client client,
+                MapChannel origin,
+                MapChannel destination)
+            {
+                if (origin != null)
+                {
+                    CellManager.Instance.RemoveFromWorld(client);
+                    origin.ClientList.Remove(client);
+                }
+
+                client.Player.MapChannel = destination;
+                client.Player.RuntimeMapChannel = destination;
+                client.Player.MapContextId = destination.MapInfo.MapContextId;
+                destination.ClientList.Add(client);
+                CellManager.Instance.AddToWorld(client);
             }
 
             public void Dispose()
