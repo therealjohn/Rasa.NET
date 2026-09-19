@@ -1,4 +1,7 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿using System;
+using System.Linq;
+
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.Extensions.Options;
 
@@ -230,6 +233,94 @@ namespace Rasa.Context.World
                 "AND scenario_id IS NULL AND indicator_id IS NULL))";
             const string rewardSelectionCountConstraint = "selection_count IN (0, 1)";
             const string rewardItemKindConstraint = "kind IN (1, 2)";
+            string ScenarioStepNullColumns(params string[] allowedColumns)
+            {
+                var allColumns = new[]
+                {
+                    "target_objective_id",
+                    "reward_id",
+                    "spawn_group_id",
+                    "spawn_id",
+                    "entity_class_id",
+                    "target_scenario_id",
+                    "delay_milliseconds",
+                    "skill_id",
+                    "ability_id",
+                    "skill_level",
+                    "ability_slot",
+                    "tutorial_id",
+                    "audio_set_id",
+                    "attempt_key",
+                    "scenario_event_id",
+                    "map_context_id",
+                    "pos_x",
+                    "pos_y",
+                    "pos_z",
+                    "orientation",
+                    "qualification_key",
+                    "qualification_value",
+                    "account_skip_entitlement"
+                };
+                return string.Join(
+                    " AND ",
+                    allColumns
+                        .Where(column => !allowedColumns.Contains(column, StringComparer.Ordinal))
+                        .Select(column => $"{column} IS NULL"));
+            }
+
+            var scenarioStepParameterSetConstraint =
+                "(kind IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19)) " +
+                $"AND (kind <> 1 OR (spawn_group_id IS NOT NULL AND {ScenarioStepNullColumns("spawn_group_id")})) " +
+                $"AND (kind <> 2 OR (spawn_group_id IS NOT NULL AND {ScenarioStepNullColumns("spawn_group_id")})) " +
+                $"AND (kind <> 3 OR ((((entity_class_id IS NOT NULL AND spawn_group_id IS NULL AND spawn_id IS NULL) " +
+                    $"OR (entity_class_id IS NULL AND spawn_group_id IS NOT NULL AND spawn_id IS NOT NULL)) " +
+                    $"AND {ScenarioStepNullColumns("entity_class_id", "spawn_group_id", "spawn_id")}))) " +
+                $"AND (kind <> 4 OR ((((entity_class_id IS NOT NULL AND spawn_group_id IS NULL AND spawn_id IS NULL) " +
+                    $"OR (entity_class_id IS NULL AND spawn_group_id IS NOT NULL AND spawn_id IS NOT NULL)) " +
+                    $"AND {ScenarioStepNullColumns("entity_class_id", "spawn_group_id", "spawn_id")}))) " +
+                $"AND (kind <> 5 OR (target_objective_id IS NOT NULL AND {ScenarioStepNullColumns("target_objective_id")})) " +
+                $"AND (kind <> 6 OR (target_objective_id IS NOT NULL AND {ScenarioStepNullColumns("target_objective_id")})) " +
+                $"AND (kind <> 7 OR (target_objective_id IS NOT NULL AND {ScenarioStepNullColumns("target_objective_id")})) " +
+                $"AND (kind <> 8 OR (target_objective_id IS NOT NULL AND {ScenarioStepNullColumns("target_objective_id")})) " +
+                $"AND (kind <> 9 OR (delay_milliseconds IS NOT NULL AND {ScenarioStepNullColumns("delay_milliseconds")})) " +
+                $"AND (kind <> 10 OR ({ScenarioStepNullColumns()})) " +
+                $"AND (kind <> 11 OR (reward_id IS NOT NULL AND {ScenarioStepNullColumns("reward_id")})) " +
+                $"AND (kind <> 12 OR (skill_id IS NOT NULL AND ability_id IS NOT NULL AND skill_level IS NOT NULL " +
+                    $"AND {ScenarioStepNullColumns("skill_id", "ability_id", "skill_level", "ability_slot")})) " +
+                $"AND (kind <> 13 OR (tutorial_id IS NOT NULL " +
+                    $"AND {ScenarioStepNullColumns("tutorial_id", "audio_set_id")})) " +
+                $"AND (kind <> 14 OR (target_scenario_id IS NOT NULL AND delay_milliseconds IS NOT NULL " +
+                    $"AND {ScenarioStepNullColumns("target_scenario_id", "delay_milliseconds")})) " +
+                $"AND (kind <> 15 OR ((((target_scenario_id IS NOT NULL AND attempt_key IS NULL) " +
+                    $"OR (target_scenario_id IS NULL AND attempt_key IS NOT NULL AND attempt_key <> '')) " +
+                    $"AND {ScenarioStepNullColumns("target_scenario_id", "attempt_key")}))) " +
+                $"AND (kind <> 16 OR (scenario_event_id IS NOT NULL AND {ScenarioStepNullColumns("scenario_event_id")})) " +
+                $"AND (kind <> 17 OR (map_context_id IS NOT NULL AND pos_x IS NOT NULL AND pos_y IS NOT NULL " +
+                    $"AND pos_z IS NOT NULL AND orientation IS NOT NULL " +
+                    $"AND {ScenarioStepNullColumns("map_context_id", "pos_x", "pos_y", "pos_z", "orientation")})) " +
+                $"AND (kind <> 18 OR (qualification_key IS NOT NULL AND qualification_value IS NOT NULL " +
+                    $"AND qualification_key IN (1) AND qualification_value IN ({MissionScenarioStepEntry.GrantedQualificationValue}) " +
+                    $"AND {ScenarioStepNullColumns("qualification_key", "qualification_value")})) " +
+                $"AND (kind <> 19 OR (account_skip_entitlement IS NOT NULL " +
+                    $"AND {ScenarioStepNullColumns("account_skip_entitlement")}))";
+
+            var scenarioStepNumericBoundsConstraint =
+                "(target_objective_id IS NULL OR target_objective_id > 0) " +
+                "AND (reward_id IS NULL OR reward_id > 0) " +
+                "AND (spawn_group_id IS NULL OR spawn_group_id > 0) " +
+                "AND (spawn_id IS NULL OR spawn_id > 0) " +
+                "AND (entity_class_id IS NULL OR entity_class_id > 0) " +
+                "AND (target_scenario_id IS NULL OR target_scenario_id > 0) " +
+                $"AND (delay_milliseconds IS NULL OR (delay_milliseconds >= 1 AND delay_milliseconds <= {MissionScenarioStepEntry.MaxDelayMilliseconds})) " +
+                "AND (skill_id IS NULL OR skill_id > 0) " +
+                $"AND (ability_id IS NULL OR (ability_id >= 1 AND ability_id <= {MissionScenarioStepEntry.MaxAbilityId})) " +
+                $"AND (skill_level IS NULL OR (skill_level >= 1 AND skill_level <= {MissionScenarioStepEntry.MaxSkillLevel})) " +
+                $"AND (ability_slot IS NULL OR ability_slot <= {MissionScenarioStepEntry.MaxAbilitySlot}) " +
+                "AND (tutorial_id IS NULL OR tutorial_id > 0) " +
+                "AND (audio_set_id IS NULL OR audio_set_id > 0) " +
+                "AND (attempt_key IS NULL OR attempt_key <> '') " +
+                "AND (scenario_event_id IS NULL OR scenario_event_id > 0) " +
+                "AND (map_context_id IS NULL OR map_context_id > 0)";
 
             modelBuilder.Entity<MissionContentDefinitionEntry>()
                 .HasKey(entry => new { entry.MissionId, entry.ContentRevision });
@@ -773,11 +864,45 @@ namespace Rasa.Context.World
                 .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
 
             modelBuilder.Entity<MissionScenarioStepEntry>()
+                .ToTable(table =>
+                {
+                    table.HasCheckConstraint(
+                        "CK_mission_scenario_step_kind_parameter_set",
+                        scenarioStepParameterSetConstraint);
+                    table.HasCheckConstraint(
+                        "CK_mission_scenario_step_numeric_bounds",
+                        scenarioStepNumericBoundsConstraint);
+                })
                 .HasKey(entry => new { entry.MissionId, entry.ContentRevision, entry.ScenarioId, entry.StepId });
             modelBuilder.Entity<MissionScenarioStepEntry>()
                 .HasOne(entry => entry.Scenario)
                 .WithMany(scenario => scenario.Steps)
                 .HasForeignKey(entry => new { entry.MissionId, entry.ContentRevision, entry.ScenarioId })
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .HasOne<MissionObjectiveDefinitionEntry>()
+                .WithMany()
+                .HasForeignKey(entry => new { entry.MissionId, entry.ContentRevision, entry.TargetObjectiveId })
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .HasOne<MissionRewardDefinitionEntry>()
+                .WithMany()
+                .HasForeignKey(entry => new { entry.MissionId, entry.ContentRevision, entry.RewardId })
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .HasOne<MissionSpawnGroupEntry>()
+                .WithMany()
+                .HasForeignKey(entry => new { entry.MissionId, entry.ContentRevision, entry.SpawnGroupId })
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .HasOne<MissionSpawnEntry>()
+                .WithMany()
+                .HasForeignKey(entry => new { entry.MissionId, entry.ContentRevision, entry.SpawnGroupId, entry.SpawnId })
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .HasOne<MissionScenarioEntry>()
+                .WithMany()
+                .HasForeignKey(entry => new { entry.MissionId, entry.ContentRevision, entry.TargetScenarioId })
                 .OnDelete(DeleteBehavior.Restrict);
             modelBuilder.Entity<MissionScenarioStepEntry>()
                 .Property(entry => entry.StepId)
@@ -793,6 +918,58 @@ namespace Rasa.Context.World
             modelBuilder.Entity<MissionScenarioStepEntry>()
                 .Property(entry => entry.Sequence)
                 .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .Property(entry => entry.TargetObjectiveId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .Property(entry => entry.RewardId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .Property(entry => entry.SpawnGroupId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .Property(entry => entry.SpawnId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .Property(entry => entry.EntityClassId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .Property(entry => entry.TargetScenarioId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .Property(entry => entry.DelayMilliseconds)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .Property(entry => entry.SkillId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .Property(entry => entry.AbilityId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .Property(entry => entry.SkillLevel)
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .Property(entry => entry.AbilitySlot)
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .Property(entry => entry.TutorialId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .Property(entry => entry.AudioSetId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .Property(entry => entry.ScenarioEventId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .Property(entry => entry.MapContextId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .Property(entry => entry.QualificationKey)
+                .HasConversion<byte>()
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .Property(entry => entry.QualificationValue)
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
 
             modelBuilder.Entity<MissionEvidenceEntry>()
                 .ToTable(table => table.HasCheckConstraint(

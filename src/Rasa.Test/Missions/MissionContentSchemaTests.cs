@@ -80,7 +80,6 @@ namespace Rasa.Test.Missions
             AssertDeleteBehavior(area, typeof(MissionContentDefinitionEntry), DeleteBehavior.Restrict);
             AssertDeleteBehavior(spawnGroup, typeof(MissionContentDefinitionEntry), DeleteBehavior.Restrict);
             AssertDeleteBehavior(scenario, typeof(MissionContentDefinitionEntry), DeleteBehavior.Restrict);
-            AssertDeleteBehavior(scenarioStep, typeof(MissionScenarioEntry), DeleteBehavior.Restrict);
             AssertDeleteBehavior(rewardItem, typeof(MissionRewardDefinitionEntry), DeleteBehavior.Cascade);
             AssertDeleteBehavior(spawn, typeof(MissionSpawnGroupEntry), DeleteBehavior.Cascade);
             AssertDeleteBehavior(evidence, typeof(MissionContentDefinitionEntry), DeleteBehavior.Cascade);
@@ -141,6 +140,49 @@ namespace Rasa.Test.Missions
                 "ContentRevision",
                 "ObjectiveId",
                 "IndicatorId");
+            AssertForeignKey(
+                scenarioStep,
+                typeof(MissionScenarioEntry),
+                DeleteBehavior.Restrict,
+                "MissionId",
+                "ContentRevision",
+                "ScenarioId");
+            AssertForeignKey(
+                scenarioStep,
+                typeof(MissionObjectiveDefinitionEntry),
+                DeleteBehavior.Restrict,
+                "MissionId",
+                "ContentRevision",
+                "TargetObjectiveId");
+            AssertForeignKey(
+                scenarioStep,
+                typeof(MissionRewardDefinitionEntry),
+                DeleteBehavior.Restrict,
+                "MissionId",
+                "ContentRevision",
+                "RewardId");
+            AssertForeignKey(
+                scenarioStep,
+                typeof(MissionSpawnGroupEntry),
+                DeleteBehavior.Restrict,
+                "MissionId",
+                "ContentRevision",
+                "SpawnGroupId");
+            AssertForeignKey(
+                scenarioStep,
+                typeof(MissionSpawnEntry),
+                DeleteBehavior.Restrict,
+                "MissionId",
+                "ContentRevision",
+                "SpawnGroupId",
+                "SpawnId");
+            AssertForeignKey(
+                scenarioStep,
+                typeof(MissionScenarioEntry),
+                DeleteBehavior.Restrict,
+                "MissionId",
+                "ContentRevision",
+                "TargetScenarioId");
             AssertNoForeignKey(trigger, "SubjectId");
 
             Assert.AreEqual("content_revision", content.FindProperty("ContentRevision")?.GetColumnName());
@@ -151,6 +193,29 @@ namespace Rasa.Test.Missions
             Assert.IsNull(reward.FindProperty("Kind"), "Reward definitions should no longer encode fixed/selectable shape.");
             Assert.AreEqual("selection_count", reward.FindProperty("SelectionCount")?.GetColumnName());
             Assert.AreEqual("kind", rewardItem.FindProperty("Kind")?.GetColumnName());
+            Assert.AreEqual("target_objective_id", scenarioStep.FindProperty("TargetObjectiveId")?.GetColumnName());
+            Assert.AreEqual("reward_id", scenarioStep.FindProperty("RewardId")?.GetColumnName());
+            Assert.AreEqual("spawn_group_id", scenarioStep.FindProperty("SpawnGroupId")?.GetColumnName());
+            Assert.AreEqual("spawn_id", scenarioStep.FindProperty("SpawnId")?.GetColumnName());
+            Assert.AreEqual("entity_class_id", scenarioStep.FindProperty("EntityClassId")?.GetColumnName());
+            Assert.AreEqual("target_scenario_id", scenarioStep.FindProperty("TargetScenarioId")?.GetColumnName());
+            Assert.AreEqual("delay_milliseconds", scenarioStep.FindProperty("DelayMilliseconds")?.GetColumnName());
+            Assert.AreEqual("skill_id", scenarioStep.FindProperty("SkillId")?.GetColumnName());
+            Assert.AreEqual("ability_id", scenarioStep.FindProperty("AbilityId")?.GetColumnName());
+            Assert.AreEqual("skill_level", scenarioStep.FindProperty("SkillLevel")?.GetColumnName());
+            Assert.AreEqual("ability_slot", scenarioStep.FindProperty("AbilitySlot")?.GetColumnName());
+            Assert.AreEqual("tutorial_id", scenarioStep.FindProperty("TutorialId")?.GetColumnName());
+            Assert.AreEqual("audio_set_id", scenarioStep.FindProperty("AudioSetId")?.GetColumnName());
+            Assert.AreEqual("attempt_key", scenarioStep.FindProperty("AttemptKey")?.GetColumnName());
+            Assert.AreEqual("scenario_event_id", scenarioStep.FindProperty("ScenarioEventId")?.GetColumnName());
+            Assert.AreEqual("map_context_id", scenarioStep.FindProperty("MapContextId")?.GetColumnName());
+            Assert.AreEqual("pos_x", scenarioStep.FindProperty("PosX")?.GetColumnName());
+            Assert.AreEqual("pos_y", scenarioStep.FindProperty("PosY")?.GetColumnName());
+            Assert.AreEqual("pos_z", scenarioStep.FindProperty("PosZ")?.GetColumnName());
+            Assert.AreEqual("orientation", scenarioStep.FindProperty("Orientation")?.GetColumnName());
+            Assert.AreEqual("qualification_key", scenarioStep.FindProperty("QualificationKey")?.GetColumnName());
+            Assert.AreEqual("qualification_value", scenarioStep.FindProperty("QualificationValue")?.GetColumnName());
+            Assert.AreEqual("account_skip_entitlement", scenarioStep.FindProperty("AccountSkipEntitlement")?.GetColumnName());
             Assert.IsNull(legacyReward.FindPrimaryKey(), "Legacy reward rows should remain keyless.");
         }
 
@@ -206,10 +271,16 @@ namespace Rasa.Test.Missions
             StringAssert.Contains(sql, "constraint ck_mission_evidence_source_location check");
             StringAssert.Contains(sql, "constraint ck_mission_reward_definition_selection_count check");
             StringAssert.Contains(sql, "constraint ck_mission_reward_item_kind check");
+            StringAssert.Contains(sql, "constraint ck_mission_scenario_step_kind_parameter_set check");
+            StringAssert.Contains(sql, "constraint ck_mission_scenario_step_numeric_bounds check");
             StringAssert.Contains(sql, "kind in (1, 2, 3, 4, 5)");
             StringAssert.Contains(sql, "kind in (1, 2, 3, 4, 5, 6, 7, 8)");
+            StringAssert.Contains(sql, "kind in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19)");
             StringAssert.Contains(sql, "selection_count in (0, 1)");
             StringAssert.Contains(sql, "kind in (1, 2)");
+            StringAssert.Contains(sql, "delay_milliseconds >= 1 and delay_milliseconds <= 86400000");
+            StringAssert.Contains(sql, "skill_level >= 1 and skill_level <= 5");
+            StringAssert.Contains(sql, "ability_slot is null or ability_slot <= 24");
             StringAssert.Contains(sql, "source_uri is not null or local_client_path is not null");
             StringAssert.Contains(sql, "client_counter_0_text_id");
             StringAssert.Contains(sql, "client_counter_1_text_id");
@@ -235,6 +306,21 @@ namespace Rasa.Test.Missions
             StringAssert.Contains(
                 sql,
                 "foreign key (mission_id, content_revision, objective_id, indicator_id) references mission_indicator (mission_id, content_revision, objective_id, indicator_id) on delete restrict");
+            StringAssert.Contains(
+                sql,
+                "foreign key (mission_id, content_revision, target_objective_id) references mission_objective_definition (mission_id, content_revision, objective_id) on delete restrict");
+            StringAssert.Contains(
+                sql,
+                "foreign key (mission_id, content_revision, reward_id) references mission_reward_definition (mission_id, content_revision, reward_id) on delete restrict");
+            StringAssert.Contains(
+                sql,
+                "foreign key (mission_id, content_revision, spawn_group_id) references mission_spawn_group (mission_id, content_revision, spawn_group_id) on delete restrict");
+            StringAssert.Contains(
+                sql,
+                "foreign key (mission_id, content_revision, spawn_group_id, spawn_id) references mission_spawn (mission_id, content_revision, spawn_group_id, spawn_id) on delete restrict");
+            StringAssert.Contains(
+                sql,
+                "foreign key (mission_id, content_revision, target_scenario_id) references mission_scenario (mission_id, content_revision, scenario_id) on delete restrict");
         }
 
         [TestMethod]

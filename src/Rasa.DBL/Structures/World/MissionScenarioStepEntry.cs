@@ -3,18 +3,40 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace Rasa.Structures.World
 {
+    using Rasa.Structures.Char;
+
     public enum MissionScenarioStepKind : byte
     {
-        Narrative = 1,
-        Spawn = 2,
-        Trigger = 3,
-        Cleanup = 4
+        SpawnGroup = 1,
+        DespawnGroup = 2,
+        EnableInteraction = 3,
+        DisableInteraction = 4,
+        RevealObjective = 5,
+        ActivateObjective = 6,
+        CompleteObjective = 7,
+        FailObjective = 8,
+        StartDeadline = 9,
+        CancelDeadline = 10,
+        GrantRewardPackage = 11,
+        GrantSkillAbility = 12,
+        PlayTutorial = 13,
+        ScheduleScenario = 14,
+        ResetAttempt = 15,
+        EmitScenarioEvent = 16,
+        TransferPlayer = 17,
+        SetQualification = 18,
+        SetAccountSkipEntitlement = 19
     }
 
     [Table(TableName)]
     public class MissionScenarioStepEntry
     {
         public const string TableName = "mission_scenario_step";
+        public const uint MaxDelayMilliseconds = 86_400_000;
+        public const uint MaxAbilityId = int.MaxValue;
+        public const byte MaxSkillLevel = 5;
+        public const byte MaxAbilitySlot = 24;
+        public const byte GrantedQualificationValue = 1;
 
         [Column("mission_id")]
         [Required]
@@ -44,6 +66,75 @@ namespace Rasa.Structures.World
         [Column("sequence")]
         [Required]
         public uint Sequence { get; set; }
+
+        [Column("target_objective_id")]
+        public uint? TargetObjectiveId { get; set; }
+
+        [Column("reward_id")]
+        public uint? RewardId { get; set; }
+
+        [Column("spawn_group_id")]
+        public uint? SpawnGroupId { get; set; }
+
+        [Column("spawn_id")]
+        public uint? SpawnId { get; set; }
+
+        [Column("entity_class_id")]
+        public uint? EntityClassId { get; set; }
+
+        [Column("target_scenario_id")]
+        public uint? TargetScenarioId { get; set; }
+
+        [Column("delay_milliseconds")]
+        public uint? DelayMilliseconds { get; set; }
+
+        [Column("skill_id")]
+        public uint? SkillId { get; set; }
+
+        [Column("ability_id")]
+        public uint? AbilityId { get; set; }
+
+        [Column("skill_level")]
+        public byte? SkillLevel { get; set; }
+
+        [Column("ability_slot")]
+        public byte? AbilitySlot { get; set; }
+
+        [Column("tutorial_id")]
+        public uint? TutorialId { get; set; }
+
+        [Column("audio_set_id")]
+        public uint? AudioSetId { get; set; }
+
+        [Column("attempt_key", TypeName = "varchar(64)")]
+        public string AttemptKey { get; set; }
+
+        [Column("scenario_event_id")]
+        public uint? ScenarioEventId { get; set; }
+
+        [Column("map_context_id")]
+        public uint? MapContextId { get; set; }
+
+        [Column("pos_x")]
+        public double? PosX { get; set; }
+
+        [Column("pos_y")]
+        public double? PosY { get; set; }
+
+        [Column("pos_z")]
+        public double? PosZ { get; set; }
+
+        [Column("orientation")]
+        public double? Orientation { get; set; }
+
+        [Column("qualification_key")]
+        public CharacterQualificationKey? QualificationKey { get; set; }
+
+        [Column("qualification_value")]
+        public byte? QualificationValue { get; set; }
+
+        [Column("account_skip_entitlement", TypeName = "bit")]
+        public bool? AccountSkipEntitlement { get; set; }
 
         [Column("comment", TypeName = "varchar(64)")]
         [Required]

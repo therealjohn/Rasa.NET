@@ -34,17 +34,22 @@ namespace Rasa.Structures.Missions
                     ["missing-map-context"] = 19,
                     ["missing-area"] = 20,
                     ["missing-spawn-group"] = 21,
-                    ["missing-scenario"] = 22,
-                    ["missing-scenario-step"] = 23,
-                    ["missing-reward-reference"] = 24,
-                    ["ambiguous-reward-reference"] = 25,
-                    ["missing-reward"] = 26,
-                    ["invalid-radius"] = 27,
-                    ["invalid-quantity"] = 28,
-                    ["invalid-delay"] = 29,
-                    ["invalid-reward-selection"] = 30,
-                    ["cross-revision-reference"] = 31,
-                    ["required-chain-inactive"] = 32
+                    ["missing-spawn"] = 22,
+                    ["missing-scenario"] = 23,
+                    ["missing-scenario-step"] = 24,
+                    ["missing-reward-reference"] = 25,
+                    ["ambiguous-reward-reference"] = 26,
+                    ["missing-reward"] = 27,
+                    ["invalid-radius"] = 28,
+                    ["invalid-quantity"] = 29,
+                    ["invalid-delay"] = 30,
+                    ["invalid-reward-selection"] = 31,
+                    ["unsupported-scenario-step"] = 32,
+                    ["invalid-scenario-step-shape"] = 33,
+                    ["invalid-tutorial"] = 34,
+                    ["invalid-qualification"] = 35,
+                    ["cross-revision-reference"] = 36,
+                    ["required-chain-inactive"] = 37
                 });
 
         private readonly HashSet<uint> _requiredMissionIds;
@@ -62,6 +67,8 @@ namespace Rasa.Structures.Missions
                 (diagnostics ?? Array.Empty<MissionValidationDiagnostic>())
                 .OrderBy(diagnostic => diagnostic.MissionId ?? 0U)
                 .ThenBy(diagnostic => diagnostic.ContentRevision, StringComparer.Ordinal)
+                .ThenBy(diagnostic => diagnostic.ScenarioId ?? 0U)
+                .ThenBy(diagnostic => diagnostic.StepId ?? 0U)
                 .ThenBy(diagnostic => diagnostic.ObjectiveId ?? 0U)
                 .ThenBy(diagnostic => diagnostic.TransitionId ?? 0U)
                 .ThenBy(diagnostic => diagnostic.TriggerId ?? 0U)

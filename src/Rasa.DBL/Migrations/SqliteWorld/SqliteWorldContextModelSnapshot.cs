@@ -1718,26 +1718,131 @@ namespace Rasa.Migrations.SqliteWorld
                         .HasColumnType("int(11)")
                         .HasColumnName("step_id");
 
+                    b.Property<uint?>("AbilityId")
+                        .HasColumnType("int(11)")
+                        .HasColumnName("ability_id");
+
+                    b.Property<byte?>("AbilitySlot")
+                        .HasColumnType("tinyint(3)")
+                        .HasColumnName("ability_slot");
+
+                    b.Property<bool?>("AccountSkipEntitlement")
+                        .HasColumnType("bit")
+                        .HasColumnName("account_skip_entitlement");
+
+                    b.Property<string>("AttemptKey")
+                        .HasColumnType("varchar(64)")
+                        .HasColumnName("attempt_key");
+
+                    b.Property<uint?>("AudioSetId")
+                        .HasColumnType("int(11)")
+                        .HasColumnName("audio_set_id");
+
                     b.Property<string>("Comment")
                         .IsRequired()
                         .HasColumnType("varchar(64)")
                         .HasColumnName("comment");
 
+                    b.Property<uint?>("DelayMilliseconds")
+                        .HasColumnType("int(11)")
+                        .HasColumnName("delay_milliseconds");
+
+                    b.Property<uint?>("EntityClassId")
+                        .HasColumnType("int(11)")
+                        .HasColumnName("entity_class_id");
+
                     b.Property<byte>("Kind")
                         .HasColumnType("tinyint(3)")
                         .HasColumnName("kind");
+
+                    b.Property<uint?>("MapContextId")
+                        .HasColumnType("int(11)")
+                        .HasColumnName("map_context_id");
+
+                    b.Property<double?>("Orientation")
+                        .HasColumnType("REAL")
+                        .HasColumnName("orientation");
+
+                    b.Property<double?>("PosX")
+                        .HasColumnType("REAL")
+                        .HasColumnName("pos_x");
+
+                    b.Property<double?>("PosY")
+                        .HasColumnType("REAL")
+                        .HasColumnName("pos_y");
+
+                    b.Property<double?>("PosZ")
+                        .HasColumnType("REAL")
+                        .HasColumnName("pos_z");
+
+                    b.Property<byte?>("QualificationKey")
+                        .HasColumnType("tinyint(3)")
+                        .HasColumnName("qualification_key");
+
+                    b.Property<byte?>("QualificationValue")
+                        .HasColumnType("tinyint(3)")
+                        .HasColumnName("qualification_value");
 
                     b.Property<byte>("Requirement")
                         .HasColumnType("tinyint(3)")
                         .HasColumnName("requirement");
 
+                    b.Property<uint?>("RewardId")
+                        .HasColumnType("int(11)")
+                        .HasColumnName("reward_id");
+
+                    b.Property<uint?>("ScenarioEventId")
+                        .HasColumnType("int(11)")
+                        .HasColumnName("scenario_event_id");
+
                     b.Property<uint>("Sequence")
                         .HasColumnType("int(11)")
                         .HasColumnName("sequence");
 
+                    b.Property<uint?>("SkillId")
+                        .HasColumnType("int(11)")
+                        .HasColumnName("skill_id");
+
+                    b.Property<byte?>("SkillLevel")
+                        .HasColumnType("tinyint(3)")
+                        .HasColumnName("skill_level");
+
+                    b.Property<uint?>("SpawnGroupId")
+                        .HasColumnType("int(11)")
+                        .HasColumnName("spawn_group_id");
+
+                    b.Property<uint?>("SpawnId")
+                        .HasColumnType("int(11)")
+                        .HasColumnName("spawn_id");
+
+                    b.Property<uint?>("TargetObjectiveId")
+                        .HasColumnType("int(11)")
+                        .HasColumnName("target_objective_id");
+
+                    b.Property<uint?>("TargetScenarioId")
+                        .HasColumnType("int(11)")
+                        .HasColumnName("target_scenario_id");
+
+                    b.Property<uint?>("TutorialId")
+                        .HasColumnType("int(11)")
+                        .HasColumnName("tutorial_id");
+
                     b.HasKey("MissionId", "ContentRevision", "ScenarioId", "StepId");
 
-                    b.ToTable("mission_scenario_step");
+                    b.HasIndex("MissionId", "ContentRevision", "RewardId");
+
+                    b.HasIndex("MissionId", "ContentRevision", "TargetObjectiveId");
+
+                    b.HasIndex("MissionId", "ContentRevision", "TargetScenarioId");
+
+                    b.HasIndex("MissionId", "ContentRevision", "SpawnGroupId", "SpawnId");
+
+                    b.ToTable("mission_scenario_step", t =>
+                        {
+                            t.HasCheckConstraint("CK_mission_scenario_step_kind_parameter_set", "(kind IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19)) AND (kind <> 1 OR (spawn_group_id IS NOT NULL AND target_objective_id IS NULL AND reward_id IS NULL AND spawn_id IS NULL AND entity_class_id IS NULL AND target_scenario_id IS NULL AND delay_milliseconds IS NULL AND skill_id IS NULL AND ability_id IS NULL AND skill_level IS NULL AND ability_slot IS NULL AND tutorial_id IS NULL AND audio_set_id IS NULL AND attempt_key IS NULL AND scenario_event_id IS NULL AND map_context_id IS NULL AND pos_x IS NULL AND pos_y IS NULL AND pos_z IS NULL AND orientation IS NULL AND qualification_key IS NULL AND qualification_value IS NULL AND account_skip_entitlement IS NULL)) AND (kind <> 2 OR (spawn_group_id IS NOT NULL AND target_objective_id IS NULL AND reward_id IS NULL AND spawn_id IS NULL AND entity_class_id IS NULL AND target_scenario_id IS NULL AND delay_milliseconds IS NULL AND skill_id IS NULL AND ability_id IS NULL AND skill_level IS NULL AND ability_slot IS NULL AND tutorial_id IS NULL AND audio_set_id IS NULL AND attempt_key IS NULL AND scenario_event_id IS NULL AND map_context_id IS NULL AND pos_x IS NULL AND pos_y IS NULL AND pos_z IS NULL AND orientation IS NULL AND qualification_key IS NULL AND qualification_value IS NULL AND account_skip_entitlement IS NULL)) AND (kind <> 3 OR ((((entity_class_id IS NOT NULL AND spawn_group_id IS NULL AND spawn_id IS NULL) OR (entity_class_id IS NULL AND spawn_group_id IS NOT NULL AND spawn_id IS NOT NULL)) AND target_objective_id IS NULL AND reward_id IS NULL AND target_scenario_id IS NULL AND delay_milliseconds IS NULL AND skill_id IS NULL AND ability_id IS NULL AND skill_level IS NULL AND ability_slot IS NULL AND tutorial_id IS NULL AND audio_set_id IS NULL AND attempt_key IS NULL AND scenario_event_id IS NULL AND map_context_id IS NULL AND pos_x IS NULL AND pos_y IS NULL AND pos_z IS NULL AND orientation IS NULL AND qualification_key IS NULL AND qualification_value IS NULL AND account_skip_entitlement IS NULL))) AND (kind <> 4 OR ((((entity_class_id IS NOT NULL AND spawn_group_id IS NULL AND spawn_id IS NULL) OR (entity_class_id IS NULL AND spawn_group_id IS NOT NULL AND spawn_id IS NOT NULL)) AND target_objective_id IS NULL AND reward_id IS NULL AND target_scenario_id IS NULL AND delay_milliseconds IS NULL AND skill_id IS NULL AND ability_id IS NULL AND skill_level IS NULL AND ability_slot IS NULL AND tutorial_id IS NULL AND audio_set_id IS NULL AND attempt_key IS NULL AND scenario_event_id IS NULL AND map_context_id IS NULL AND pos_x IS NULL AND pos_y IS NULL AND pos_z IS NULL AND orientation IS NULL AND qualification_key IS NULL AND qualification_value IS NULL AND account_skip_entitlement IS NULL))) AND (kind <> 5 OR (target_objective_id IS NOT NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND spawn_id IS NULL AND entity_class_id IS NULL AND target_scenario_id IS NULL AND delay_milliseconds IS NULL AND skill_id IS NULL AND ability_id IS NULL AND skill_level IS NULL AND ability_slot IS NULL AND tutorial_id IS NULL AND audio_set_id IS NULL AND attempt_key IS NULL AND scenario_event_id IS NULL AND map_context_id IS NULL AND pos_x IS NULL AND pos_y IS NULL AND pos_z IS NULL AND orientation IS NULL AND qualification_key IS NULL AND qualification_value IS NULL AND account_skip_entitlement IS NULL)) AND (kind <> 6 OR (target_objective_id IS NOT NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND spawn_id IS NULL AND entity_class_id IS NULL AND target_scenario_id IS NULL AND delay_milliseconds IS NULL AND skill_id IS NULL AND ability_id IS NULL AND skill_level IS NULL AND ability_slot IS NULL AND tutorial_id IS NULL AND audio_set_id IS NULL AND attempt_key IS NULL AND scenario_event_id IS NULL AND map_context_id IS NULL AND pos_x IS NULL AND pos_y IS NULL AND pos_z IS NULL AND orientation IS NULL AND qualification_key IS NULL AND qualification_value IS NULL AND account_skip_entitlement IS NULL)) AND (kind <> 7 OR (target_objective_id IS NOT NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND spawn_id IS NULL AND entity_class_id IS NULL AND target_scenario_id IS NULL AND delay_milliseconds IS NULL AND skill_id IS NULL AND ability_id IS NULL AND skill_level IS NULL AND ability_slot IS NULL AND tutorial_id IS NULL AND audio_set_id IS NULL AND attempt_key IS NULL AND scenario_event_id IS NULL AND map_context_id IS NULL AND pos_x IS NULL AND pos_y IS NULL AND pos_z IS NULL AND orientation IS NULL AND qualification_key IS NULL AND qualification_value IS NULL AND account_skip_entitlement IS NULL)) AND (kind <> 8 OR (target_objective_id IS NOT NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND spawn_id IS NULL AND entity_class_id IS NULL AND target_scenario_id IS NULL AND delay_milliseconds IS NULL AND skill_id IS NULL AND ability_id IS NULL AND skill_level IS NULL AND ability_slot IS NULL AND tutorial_id IS NULL AND audio_set_id IS NULL AND attempt_key IS NULL AND scenario_event_id IS NULL AND map_context_id IS NULL AND pos_x IS NULL AND pos_y IS NULL AND pos_z IS NULL AND orientation IS NULL AND qualification_key IS NULL AND qualification_value IS NULL AND account_skip_entitlement IS NULL)) AND (kind <> 9 OR (delay_milliseconds IS NOT NULL AND target_objective_id IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND spawn_id IS NULL AND entity_class_id IS NULL AND target_scenario_id IS NULL AND skill_id IS NULL AND ability_id IS NULL AND skill_level IS NULL AND ability_slot IS NULL AND tutorial_id IS NULL AND audio_set_id IS NULL AND attempt_key IS NULL AND scenario_event_id IS NULL AND map_context_id IS NULL AND pos_x IS NULL AND pos_y IS NULL AND pos_z IS NULL AND orientation IS NULL AND qualification_key IS NULL AND qualification_value IS NULL AND account_skip_entitlement IS NULL)) AND (kind <> 10 OR (target_objective_id IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND spawn_id IS NULL AND entity_class_id IS NULL AND target_scenario_id IS NULL AND delay_milliseconds IS NULL AND skill_id IS NULL AND ability_id IS NULL AND skill_level IS NULL AND ability_slot IS NULL AND tutorial_id IS NULL AND audio_set_id IS NULL AND attempt_key IS NULL AND scenario_event_id IS NULL AND map_context_id IS NULL AND pos_x IS NULL AND pos_y IS NULL AND pos_z IS NULL AND orientation IS NULL AND qualification_key IS NULL AND qualification_value IS NULL AND account_skip_entitlement IS NULL)) AND (kind <> 11 OR (reward_id IS NOT NULL AND target_objective_id IS NULL AND spawn_group_id IS NULL AND spawn_id IS NULL AND entity_class_id IS NULL AND target_scenario_id IS NULL AND delay_milliseconds IS NULL AND skill_id IS NULL AND ability_id IS NULL AND skill_level IS NULL AND ability_slot IS NULL AND tutorial_id IS NULL AND audio_set_id IS NULL AND attempt_key IS NULL AND scenario_event_id IS NULL AND map_context_id IS NULL AND pos_x IS NULL AND pos_y IS NULL AND pos_z IS NULL AND orientation IS NULL AND qualification_key IS NULL AND qualification_value IS NULL AND account_skip_entitlement IS NULL)) AND (kind <> 12 OR (skill_id IS NOT NULL AND ability_id IS NOT NULL AND skill_level IS NOT NULL AND target_objective_id IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND spawn_id IS NULL AND entity_class_id IS NULL AND target_scenario_id IS NULL AND delay_milliseconds IS NULL AND tutorial_id IS NULL AND audio_set_id IS NULL AND attempt_key IS NULL AND scenario_event_id IS NULL AND map_context_id IS NULL AND pos_x IS NULL AND pos_y IS NULL AND pos_z IS NULL AND orientation IS NULL AND qualification_key IS NULL AND qualification_value IS NULL AND account_skip_entitlement IS NULL)) AND (kind <> 13 OR (tutorial_id IS NOT NULL AND target_objective_id IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND spawn_id IS NULL AND entity_class_id IS NULL AND target_scenario_id IS NULL AND delay_milliseconds IS NULL AND skill_id IS NULL AND ability_id IS NULL AND skill_level IS NULL AND ability_slot IS NULL AND attempt_key IS NULL AND scenario_event_id IS NULL AND map_context_id IS NULL AND pos_x IS NULL AND pos_y IS NULL AND pos_z IS NULL AND orientation IS NULL AND qualification_key IS NULL AND qualification_value IS NULL AND account_skip_entitlement IS NULL)) AND (kind <> 14 OR (target_scenario_id IS NOT NULL AND delay_milliseconds IS NOT NULL AND target_objective_id IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND spawn_id IS NULL AND entity_class_id IS NULL AND skill_id IS NULL AND ability_id IS NULL AND skill_level IS NULL AND ability_slot IS NULL AND tutorial_id IS NULL AND audio_set_id IS NULL AND attempt_key IS NULL AND scenario_event_id IS NULL AND map_context_id IS NULL AND pos_x IS NULL AND pos_y IS NULL AND pos_z IS NULL AND orientation IS NULL AND qualification_key IS NULL AND qualification_value IS NULL AND account_skip_entitlement IS NULL)) AND (kind <> 15 OR ((((target_scenario_id IS NOT NULL AND attempt_key IS NULL) OR (target_scenario_id IS NULL AND attempt_key IS NOT NULL AND attempt_key <> '')) AND target_objective_id IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND spawn_id IS NULL AND entity_class_id IS NULL AND delay_milliseconds IS NULL AND skill_id IS NULL AND ability_id IS NULL AND skill_level IS NULL AND ability_slot IS NULL AND tutorial_id IS NULL AND audio_set_id IS NULL AND scenario_event_id IS NULL AND map_context_id IS NULL AND pos_x IS NULL AND pos_y IS NULL AND pos_z IS NULL AND orientation IS NULL AND qualification_key IS NULL AND qualification_value IS NULL AND account_skip_entitlement IS NULL))) AND (kind <> 16 OR (scenario_event_id IS NOT NULL AND target_objective_id IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND spawn_id IS NULL AND entity_class_id IS NULL AND target_scenario_id IS NULL AND delay_milliseconds IS NULL AND skill_id IS NULL AND ability_id IS NULL AND skill_level IS NULL AND ability_slot IS NULL AND tutorial_id IS NULL AND audio_set_id IS NULL AND attempt_key IS NULL AND map_context_id IS NULL AND pos_x IS NULL AND pos_y IS NULL AND pos_z IS NULL AND orientation IS NULL AND qualification_key IS NULL AND qualification_value IS NULL AND account_skip_entitlement IS NULL)) AND (kind <> 17 OR (map_context_id IS NOT NULL AND pos_x IS NOT NULL AND pos_y IS NOT NULL AND pos_z IS NOT NULL AND orientation IS NOT NULL AND target_objective_id IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND spawn_id IS NULL AND entity_class_id IS NULL AND target_scenario_id IS NULL AND delay_milliseconds IS NULL AND skill_id IS NULL AND ability_id IS NULL AND skill_level IS NULL AND ability_slot IS NULL AND tutorial_id IS NULL AND audio_set_id IS NULL AND attempt_key IS NULL AND scenario_event_id IS NULL AND qualification_key IS NULL AND qualification_value IS NULL AND account_skip_entitlement IS NULL)) AND (kind <> 18 OR (qualification_key IS NOT NULL AND qualification_value IS NOT NULL AND qualification_key IN (1) AND qualification_value IN (1) AND target_objective_id IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND spawn_id IS NULL AND entity_class_id IS NULL AND target_scenario_id IS NULL AND delay_milliseconds IS NULL AND skill_id IS NULL AND ability_id IS NULL AND skill_level IS NULL AND ability_slot IS NULL AND tutorial_id IS NULL AND audio_set_id IS NULL AND attempt_key IS NULL AND scenario_event_id IS NULL AND map_context_id IS NULL AND pos_x IS NULL AND pos_y IS NULL AND pos_z IS NULL AND orientation IS NULL AND account_skip_entitlement IS NULL)) AND (kind <> 19 OR (account_skip_entitlement IS NOT NULL AND target_objective_id IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND spawn_id IS NULL AND entity_class_id IS NULL AND target_scenario_id IS NULL AND delay_milliseconds IS NULL AND skill_id IS NULL AND ability_id IS NULL AND skill_level IS NULL AND ability_slot IS NULL AND tutorial_id IS NULL AND audio_set_id IS NULL AND attempt_key IS NULL AND scenario_event_id IS NULL AND map_context_id IS NULL AND pos_x IS NULL AND pos_y IS NULL AND pos_z IS NULL AND orientation IS NULL AND qualification_key IS NULL AND qualification_value IS NULL))");
+
+                            t.HasCheckConstraint("CK_mission_scenario_step_numeric_bounds", "(target_objective_id IS NULL OR target_objective_id > 0) AND (reward_id IS NULL OR reward_id > 0) AND (spawn_group_id IS NULL OR spawn_group_id > 0) AND (spawn_id IS NULL OR spawn_id > 0) AND (entity_class_id IS NULL OR entity_class_id > 0) AND (target_scenario_id IS NULL OR target_scenario_id > 0) AND (delay_milliseconds IS NULL OR (delay_milliseconds >= 1 AND delay_milliseconds <= 86400000)) AND (skill_id IS NULL OR skill_id > 0) AND (ability_id IS NULL OR (ability_id >= 1 AND ability_id <= 2147483647)) AND (skill_level IS NULL OR (skill_level >= 1 AND skill_level <= 5)) AND (ability_slot IS NULL OR ability_slot <= 24) AND (tutorial_id IS NULL OR tutorial_id > 0) AND (audio_set_id IS NULL OR audio_set_id > 0) AND (attempt_key IS NULL OR attempt_key <> '') AND (scenario_event_id IS NULL OR scenario_event_id > 0) AND (map_context_id IS NULL OR map_context_id > 0)");
+                        });
                 });
 
             modelBuilder.Entity("Rasa.Structures.World.MissionSpawnEntry", b =>
@@ -2561,11 +2666,36 @@ namespace Rasa.Migrations.SqliteWorld
 
             modelBuilder.Entity("Rasa.Structures.World.MissionScenarioStepEntry", b =>
                 {
+                    b.HasOne("Rasa.Structures.World.MissionRewardDefinitionEntry", null)
+                        .WithMany()
+                        .HasForeignKey("MissionId", "ContentRevision", "RewardId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("Rasa.Structures.World.MissionScenarioEntry", "Scenario")
                         .WithMany("Steps")
                         .HasForeignKey("MissionId", "ContentRevision", "ScenarioId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.HasOne("Rasa.Structures.World.MissionSpawnGroupEntry", null)
+                        .WithMany()
+                        .HasForeignKey("MissionId", "ContentRevision", "SpawnGroupId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Rasa.Structures.World.MissionObjectiveDefinitionEntry", null)
+                        .WithMany()
+                        .HasForeignKey("MissionId", "ContentRevision", "TargetObjectiveId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Rasa.Structures.World.MissionScenarioEntry", null)
+                        .WithMany()
+                        .HasForeignKey("MissionId", "ContentRevision", "TargetScenarioId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Rasa.Structures.World.MissionSpawnEntry", null)
+                        .WithMany()
+                        .HasForeignKey("MissionId", "ContentRevision", "SpawnGroupId", "SpawnId")
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.Navigation("Scenario");
                 });

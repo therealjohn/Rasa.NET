@@ -8,6 +8,7 @@ namespace Rasa.Test.Missions
 {
     using Rasa.Data;
     using Rasa.Managers;
+    using Rasa.Structures.Char;
     using Rasa.Structures.Missions;
     using Rasa.Structures.World;
 
@@ -18,6 +19,20 @@ namespace Rasa.Test.Missions
         public void ValidatorAcceptsACompleteOperationalGraph()
         {
             var fixture = MissionContentFixture.CreateValid();
+            var snapshot = new MissionContentLoader().Load(fixture.CreateRepository());
+            var report = new MissionContentValidator().Validate(
+                snapshot,
+                fixture.CreateWorldUnitOfWork());
+
+            Assert.AreEqual(0, report.Diagnostics.Count);
+            Assert.IsFalse(report.BlocksReadiness);
+        }
+
+        [TestMethod]
+        public void ValidatorAcceptsApprovedScenarioStepVocabularyIncludingAlternativeTargets()
+        {
+            var fixture = MissionContentFixture.CreateValid();
+            ConfigureApprovedScenarioVocabulary(fixture);
             var snapshot = new MissionContentLoader().Load(fixture.CreateRepository());
             var report = new MissionContentValidator().Validate(
                 snapshot,
@@ -56,6 +71,7 @@ namespace Rasa.Test.Missions
             fixture.Actions[0].Kind = (MissionActionKind)99;
             fixture.Indicators[0].ObjectiveId = 10;
             fixture.Indicators[0].Radius = 0;
+            fixture.ScenarioSteps[0].Kind = (MissionScenarioStepKind)99;
 
             var snapshot = new MissionContentLoader().Load(fixture.CreateRepository());
             var report = new MissionContentValidator().Validate(
@@ -68,7 +84,8 @@ namespace Rasa.Test.Missions
                     "missing-client-text",
                     "invalid-radius",
                     "unsupported-action",
-                    "missing-npc-package"
+                    "missing-npc-package",
+                    "unsupported-scenario-step"
                 },
                 report.Diagnostics.Select(diagnostic => diagnostic.Code).ToArray());
         }
@@ -485,6 +502,48 @@ namespace Rasa.Test.Missions
                 });
             }, "missing-spawn-group");
 
+            yield return Case("unsupported scenario step", fixture =>
+            {
+                fixture.ScenarioSteps[0].Kind = (MissionScenarioStepKind)99;
+            }, "unsupported-scenario-step");
+
+            yield return Case("invalid scenario step shape", fixture =>
+            {
+                fixture.ScenarioSteps[0].Kind = MissionScenarioStepKind.StartDeadline;
+                fixture.ScenarioSteps[0].ScenarioEventId = null;
+                fixture.ScenarioSteps[0].DelayMilliseconds = null;
+            }, "invalid-scenario-step-shape");
+
+            yield return Case("missing scenario step objective", fixture =>
+            {
+                fixture.ScenarioSteps[0].Kind = MissionScenarioStepKind.RevealObjective;
+                fixture.ScenarioSteps[0].ScenarioEventId = null;
+                fixture.ScenarioSteps[0].TargetObjectiveId = 999;
+            }, "missing-target");
+
+            yield return Case("missing scenario step spawn", fixture =>
+            {
+                fixture.ScenarioSteps[0].Kind = MissionScenarioStepKind.DisableInteraction;
+                fixture.ScenarioSteps[0].ScenarioEventId = null;
+                fixture.ScenarioSteps[0].SpawnGroupId = 50;
+                fixture.ScenarioSteps[0].SpawnId = 999;
+            }, "missing-spawn");
+
+            yield return Case("invalid scenario step tutorial", fixture =>
+            {
+                fixture.ScenarioSteps[0].Kind = MissionScenarioStepKind.PlayTutorial;
+                fixture.ScenarioSteps[0].ScenarioEventId = null;
+                fixture.ScenarioSteps[0].TutorialId = uint.MaxValue;
+            }, "invalid-tutorial");
+
+            yield return Case("invalid scenario step qualification", fixture =>
+            {
+                fixture.ScenarioSteps[0].Kind = MissionScenarioStepKind.SetQualification;
+                fixture.ScenarioSteps[0].ScenarioEventId = null;
+                fixture.ScenarioSteps[0].QualificationKey = CharacterQualificationKey.BootcampComplete;
+                fixture.ScenarioSteps[0].QualificationValue = 2;
+            }, "invalid-qualification");
+
             yield return Case("missing scenario", fixture =>
             {
                 fixture.Scenarios.Clear();
@@ -748,6 +807,263 @@ namespace Rasa.Test.Missions
                 transitionId: 20,
                 triggerId: 1,
                 subjectId: 501);
+        }
+
+        private static void ConfigureApprovedScenarioVocabulary(MissionContentFixture fixture)
+        {
+            fixture.ScenarioSteps.Clear();
+            fixture.ScenarioSteps.AddRange(new[]
+            {
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 1,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.SpawnGroup,
+                    Sequence = 1,
+                    SpawnGroupId = 50,
+                    Comment = "Spawn group"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 2,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.DespawnGroup,
+                    Sequence = 2,
+                    SpawnGroupId = 50,
+                    Comment = "Despawn group"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 3,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.EnableInteraction,
+                    Sequence = 3,
+                    EntityClassId = 3147,
+                    Comment = "Enable interaction by entity class"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 4,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.DisableInteraction,
+                    Sequence = 4,
+                    SpawnGroupId = 50,
+                    SpawnId = 1,
+                    Comment = "Disable interaction by spawn identity"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 5,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.RevealObjective,
+                    Sequence = 5,
+                    TargetObjectiveId = 11,
+                    Comment = "Reveal objective"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 6,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.ActivateObjective,
+                    Sequence = 6,
+                    TargetObjectiveId = 11,
+                    Comment = "Activate objective"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 7,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.CompleteObjective,
+                    Sequence = 7,
+                    TargetObjectiveId = 10,
+                    Comment = "Complete objective"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 8,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.FailObjective,
+                    Sequence = 8,
+                    TargetObjectiveId = 11,
+                    Comment = "Fail objective"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 9,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.StartDeadline,
+                    Sequence = 9,
+                    DelayMilliseconds = 30000,
+                    Comment = "Start deadline"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 10,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.CancelDeadline,
+                    Sequence = 10,
+                    Comment = "Cancel deadline"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 11,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.GrantRewardPackage,
+                    Sequence = 11,
+                    RewardId = 40,
+                    Comment = "Grant reward"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 12,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.GrantSkillAbility,
+                    Sequence = 12,
+                    SkillId = 901,
+                    AbilityId = 194,
+                    SkillLevel = 2,
+                    AbilitySlot = 3,
+                    Comment = "Grant skill ability"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 13,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.PlayTutorial,
+                    Sequence = 13,
+                    TutorialId = (uint)TutorialId.Tutmissiongiver,
+                    AudioSetId = 88,
+                    Comment = "Play tutorial"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 14,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.ScheduleScenario,
+                    Sequence = 14,
+                    TargetScenarioId = 60,
+                    DelayMilliseconds = 5000,
+                    Comment = "Schedule scenario"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 15,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.ResetAttempt,
+                    Sequence = 15,
+                    AttemptKey = "bootcamp-scout",
+                    Comment = "Reset attempt by key"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 16,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.ResetAttempt,
+                    Sequence = 16,
+                    TargetScenarioId = 60,
+                    Comment = "Reset attempt by scenario"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 17,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.EmitScenarioEvent,
+                    Sequence = 17,
+                    ScenarioEventId = 7,
+                    Comment = "Emit scenario event"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 18,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.TransferPlayer,
+                    Sequence = 18,
+                    MapContextId = 1220,
+                    PosX = 1,
+                    PosY = 2,
+                    PosZ = 3,
+                    Orientation = 1.5,
+                    Comment = "Transfer player"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 19,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.SetQualification,
+                    Sequence = 19,
+                    QualificationKey = CharacterQualificationKey.BootcampComplete,
+                    QualificationValue = 1,
+                    Comment = "Set qualification"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 20,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.SetAccountSkipEntitlement,
+                    Sequence = 20,
+                    AccountSkipEntitlement = true,
+                    Comment = "Set account skip entitlement"
+                }});
         }
 
         private static void AddProgressTransition(

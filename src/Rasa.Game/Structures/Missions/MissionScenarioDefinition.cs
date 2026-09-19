@@ -5,6 +5,8 @@ using System.Linq;
 
 namespace Rasa.Structures.Missions
 {
+    using Data;
+    using Rasa.Structures.Char;
     using Structures.World;
 
     internal sealed class MissionScenarioDefinition
@@ -44,6 +46,29 @@ namespace Rasa.Structures.Missions
         public MissionContentRequirement Requirement { get; }
         public MissionScenarioStepKind Kind { get; }
         public uint Sequence { get; }
+        public uint? TargetObjectiveId { get; }
+        public uint? RewardId { get; }
+        public uint? SpawnGroupId { get; }
+        public uint? SpawnId { get; }
+        public uint? EntityClassId { get; }
+        public uint? TargetScenarioId { get; }
+        public uint? DelayMilliseconds { get; }
+        public uint? SkillId { get; }
+        public uint? AbilityId { get; }
+        public byte? SkillLevel { get; }
+        public byte? AbilitySlot { get; }
+        public uint? TutorialId { get; }
+        public uint? AudioSetId { get; }
+        public string AttemptKey { get; }
+        public uint? ScenarioEventId { get; }
+        public uint? MapContextId { get; }
+        public double? PosX { get; }
+        public double? PosY { get; }
+        public double? PosZ { get; }
+        public double? Orientation { get; }
+        public CharacterQualificationKey? QualificationKey { get; }
+        public byte? QualificationValue { get; }
+        public bool? AccountSkipEntitlement { get; }
         public string Comment { get; }
 
         public MissionScenarioStepDefinition(MissionScenarioStepEntry entry)
@@ -55,7 +80,60 @@ namespace Rasa.Structures.Missions
             Requirement = entry.Requirement;
             Kind = entry.Kind;
             Sequence = entry.Sequence;
+            TargetObjectiveId = entry.TargetObjectiveId;
+            RewardId = entry.RewardId;
+            SpawnGroupId = entry.SpawnGroupId;
+            SpawnId = entry.SpawnId;
+            EntityClassId = entry.EntityClassId;
+            TargetScenarioId = entry.TargetScenarioId;
+            DelayMilliseconds = entry.DelayMilliseconds;
+            SkillId = entry.SkillId;
+            AbilityId = entry.AbilityId;
+            SkillLevel = entry.SkillLevel;
+            AbilitySlot = entry.AbilitySlot;
+            TutorialId = entry.TutorialId;
+            AudioSetId = entry.AudioSetId;
+            AttemptKey = entry.AttemptKey;
+            ScenarioEventId = entry.ScenarioEventId;
+            MapContextId = entry.MapContextId;
+            PosX = entry.PosX;
+            PosY = entry.PosY;
+            PosZ = entry.PosZ;
+            Orientation = entry.Orientation;
+            QualificationKey = entry.QualificationKey;
+            QualificationValue = entry.QualificationValue;
+            AccountSkipEntitlement = entry.AccountSkipEntitlement;
             Comment = entry.Comment;
+        }
+
+        public bool HasDefinedKind() =>
+            Enum.IsDefined(typeof(MissionScenarioStepKind), Kind);
+
+        public bool TryGetTutorialId(out global::Rasa.Data.TutorialId tutorialId)
+        {
+            if (TutorialId.HasValue &&
+                TutorialId.Value <= int.MaxValue &&
+                Enum.IsDefined(typeof(global::Rasa.Data.TutorialId), (int)TutorialId.Value))
+            {
+                tutorialId = (global::Rasa.Data.TutorialId)(int)TutorialId.Value;
+                return true;
+            }
+
+            tutorialId = default;
+            return false;
+        }
+
+        public bool TryGetQualificationKey(out CharacterQualificationKey qualificationKey)
+        {
+            if (QualificationKey.HasValue &&
+                Enum.IsDefined(typeof(CharacterQualificationKey), QualificationKey.Value))
+            {
+                qualificationKey = QualificationKey.Value;
+                return true;
+            }
+
+            qualificationKey = default;
+            return false;
         }
     }
 }

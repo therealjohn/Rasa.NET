@@ -6,6 +6,7 @@ namespace Rasa.Managers
 {
     using Data;
     using Repositories.World;
+    using Rasa.Structures.Char;
     using Structures.Missions;
     using Structures.World;
 
@@ -28,6 +29,11 @@ namespace Rasa.Managers
                 MissionActionKind.CompleteObjective,
                 MissionActionKind.GrantReward
             };
+
+        private const uint MaxDelayMilliseconds = MissionScenarioStepEntry.MaxDelayMilliseconds;
+        private const uint MaxAbilityId = MissionScenarioStepEntry.MaxAbilityId;
+        private const byte MaxSkillLevel = MissionScenarioStepEntry.MaxSkillLevel;
+        private const byte MaxAbilitySlot = MissionScenarioStepEntry.MaxAbilitySlot;
 
         internal MissionValidationReport Validate(
             MissionContentSnapshot snapshot,
@@ -142,7 +148,7 @@ namespace Rasa.Managers
             ValidateRewards(definition, references, diagnostics);
             ValidateAreas(definition, references, diagnostics);
             ValidateSpawnGroups(definition, references, diagnostics);
-            ValidateScenarios(definition, diagnostics);
+            ValidateScenarios(definition, references, diagnostics);
             ValidateProgressReferences(definition, references, diagnostics);
         }
 
@@ -873,6 +879,7 @@ namespace Rasa.Managers
 
         private static void ValidateScenarios(
             MissionContentDefinition definition,
+            MissionContentReferenceSet references,
             ICollection<MissionValidationDiagnostic> diagnostics)
         {
             foreach (var scenario in definition.Scenarios.Values)
@@ -884,8 +891,458 @@ namespace Rasa.Managers
                         $"scenario {scenario.ScenarioId} has no steps; author at least one step.",
                         definition.MissionId,
                         definition.ContentRevision));
+                    continue;
+                }
+
+                foreach (var step in scenario.Steps)
+                {
+                    ValidateScenarioStep(
+                        definition,
+                        references,
+                        scenario.ScenarioId,
+                        step,
+                        diagnostics);
                 }
             }
+        }
+
+        private static void ValidateScenarioStep(
+            MissionContentDefinition definition,
+            MissionContentReferenceSet references,
+            uint scenarioId,
+            MissionScenarioStepDefinition step,
+            ICollection<MissionValidationDiagnostic> diagnostics)
+        {
+            if (!step.HasDefinedKind())
+            {
+                diagnostics.Add(new MissionValidationDiagnostic(
+                    "unsupported-scenario-step",
+                    $"scenario step kind {(int)step.Kind} is unknown; use an approved discriminator.",
+                    definition.MissionId,
+                    definition.ContentRevision,
+                    scenarioId: scenarioId,
+                    stepId: step.StepId));
+                return;
+            }
+
+            switch (step.Kind)
+            {
+                case MissionScenarioStepKind.SpawnGroup:
+                case MissionScenarioStepKind.DespawnGroup:
+                    if (!step.SpawnGroupId.HasValue)
+                    {
+                        AddInvalidScenarioStepShape(
+                            definition,
+                            scenarioId,
+                            step,
+                            "spawn group steps require spawn_group_id.",
+                            diagnostics);
+                        return;
+                    }
+
+                    if (!definition.SpawnGroups.ContainsKey(step.SpawnGroupId.Value))
+                    {
+                        diagnostics.Add(new MissionValidationDiagnostic(
+                            "missing-spawn-group",
+                            $"scenario step references missing spawn group {step.SpawnGroupId.Value}.",
+                            definition.MissionId,
+                            definition.ContentRevision,
+                            scenarioId: scenarioId,
+                            stepId: step.StepId));
+                    }
+
+                    return;
+
+                case MissionScenarioStepKind.EnableInteraction:
+                case MissionScenarioStepKind.DisableInteraction:
+                    if (step.EntityClassId.HasValue)
+                    {
+                        if (!references.EntityClassIds.Contains(step.EntityClassId.Value))
+                        {
+                            diagnostics.Add(new MissionValidationDiagnostic(
+                                "missing-entity-class",
+                                $"interaction step references missing entity class {step.EntityClassId.Value}.",
+                                definition.MissionId,
+                                definition.ContentRevision,
+                                scenarioId: scenarioId,
+                                stepId: step.StepId));
+                        }
+
+                        return;
+                    }
+
+                    if (!step.SpawnGroupId.HasValue || !step.SpawnId.HasValue)
+                    {
+                        AddInvalidScenarioStepShape(
+                            definition,
+                            scenarioId,
+                            step,
+                            "interaction steps require either entity_class_id or spawn_group_id plus spawn_id.",
+                            diagnostics);
+                        return;
+                    }
+
+                    if (!definition.SpawnGroups.TryGetValue(step.SpawnGroupId.Value, out var interactionSpawnGroup))
+                    {
+                        diagnostics.Add(new MissionValidationDiagnostic(
+                            "missing-spawn-group",
+                            $"interaction step references missing spawn group {step.SpawnGroupId.Value}.",
+                            definition.MissionId,
+                            definition.ContentRevision,
+                            scenarioId: scenarioId,
+                            stepId: step.StepId));
+                        return;
+                    }
+
+                    if (!interactionSpawnGroup.Spawns.Any(spawn => spawn.SpawnId == step.SpawnId.Value))
+                    {
+                        diagnostics.Add(new MissionValidationDiagnostic(
+                            "missing-spawn",
+                            $"interaction step references missing spawn {step.SpawnId.Value} in spawn group {step.SpawnGroupId.Value}.",
+                            definition.MissionId,
+                            definition.ContentRevision,
+                            scenarioId: scenarioId,
+                            stepId: step.StepId));
+                    }
+
+                    return;
+
+                case MissionScenarioStepKind.RevealObjective:
+                case MissionScenarioStepKind.ActivateObjective:
+                case MissionScenarioStepKind.CompleteObjective:
+                case MissionScenarioStepKind.FailObjective:
+                    if (!step.TargetObjectiveId.HasValue)
+                    {
+                        AddInvalidScenarioStepShape(
+                            definition,
+                            scenarioId,
+                            step,
+                            "objective steps require target_objective_id.",
+                            diagnostics);
+                        return;
+                    }
+
+                    if (!definition.Objectives.ContainsKey(step.TargetObjectiveId.Value))
+                    {
+                        diagnostics.Add(new MissionValidationDiagnostic(
+                            "missing-target",
+                            $"scenario step references missing objective {step.TargetObjectiveId.Value}.",
+                            definition.MissionId,
+                            definition.ContentRevision,
+                            scenarioId: scenarioId,
+                            stepId: step.StepId));
+                    }
+
+                    return;
+
+                case MissionScenarioStepKind.StartDeadline:
+                    if (!step.DelayMilliseconds.HasValue)
+                    {
+                        AddInvalidScenarioStepShape(
+                            definition,
+                            scenarioId,
+                            step,
+                            "deadline start steps require delay_milliseconds.",
+                            diagnostics);
+                        return;
+                    }
+
+                    if (!HasValidDelay(step.DelayMilliseconds.Value))
+                    {
+                        diagnostics.Add(new MissionValidationDiagnostic(
+                            "invalid-delay",
+                            $"deadline delay_milliseconds {step.DelayMilliseconds.Value} must be between 1 and {MaxDelayMilliseconds}.",
+                            definition.MissionId,
+                            definition.ContentRevision,
+                            scenarioId: scenarioId,
+                            stepId: step.StepId));
+                    }
+
+                    return;
+
+                case MissionScenarioStepKind.CancelDeadline:
+                    return;
+
+                case MissionScenarioStepKind.GrantRewardPackage:
+                    if (!step.RewardId.HasValue)
+                    {
+                        AddInvalidScenarioStepShape(
+                            definition,
+                            scenarioId,
+                            step,
+                            "reward steps require reward_id.",
+                            diagnostics);
+                        return;
+                    }
+
+                    if (!definition.Rewards.ContainsKey(step.RewardId.Value))
+                    {
+                        diagnostics.Add(new MissionValidationDiagnostic(
+                            "missing-reward",
+                            $"scenario step references missing reward {step.RewardId.Value}.",
+                            definition.MissionId,
+                            definition.ContentRevision,
+                            scenarioId: scenarioId,
+                            stepId: step.StepId));
+                    }
+
+                    return;
+
+                case MissionScenarioStepKind.GrantSkillAbility:
+                    if (!step.SkillId.HasValue || !step.AbilityId.HasValue || !step.SkillLevel.HasValue)
+                    {
+                        AddInvalidScenarioStepShape(
+                            definition,
+                            scenarioId,
+                            step,
+                            "skill grant steps require skill_id, ability_id, and skill_level.",
+                            diagnostics);
+                        return;
+                    }
+
+                    if (step.SkillId.Value == 0)
+                    {
+                        AddInvalidScenarioStepShape(
+                            definition,
+                            scenarioId,
+                            step,
+                            "skill_id must be greater than zero.",
+                            diagnostics);
+                    }
+
+                    if (step.AbilityId.Value == 0 || step.AbilityId.Value > MaxAbilityId)
+                    {
+                        AddInvalidScenarioStepShape(
+                            definition,
+                            scenarioId,
+                            step,
+                            $"ability_id must be between 1 and {MaxAbilityId}.",
+                            diagnostics);
+                    }
+
+                    if (step.SkillLevel.Value is < 1 or > MaxSkillLevel)
+                    {
+                        AddInvalidScenarioStepShape(
+                            definition,
+                            scenarioId,
+                            step,
+                            $"skill_level must be between 1 and {MaxSkillLevel}.",
+                            diagnostics);
+                    }
+
+                    if (step.AbilitySlot.HasValue &&
+                        step.AbilitySlot.Value > MaxAbilitySlot)
+                    {
+                        AddInvalidScenarioStepShape(
+                            definition,
+                            scenarioId,
+                            step,
+                            $"ability_slot must be between 0 and {MaxAbilitySlot} when it is authored.",
+                            diagnostics);
+                    }
+
+                    return;
+
+                case MissionScenarioStepKind.PlayTutorial:
+                    if (!step.TutorialId.HasValue)
+                    {
+                        AddInvalidScenarioStepShape(
+                            definition,
+                            scenarioId,
+                            step,
+                            "tutorial steps require tutorial_id.",
+                            diagnostics);
+                        return;
+                    }
+
+                    if (!step.TryGetTutorialId(out _))
+                    {
+                        diagnostics.Add(new MissionValidationDiagnostic(
+                            "invalid-tutorial",
+                            $"tutorial step references unknown tutorial_id {step.TutorialId.Value}.",
+                            definition.MissionId,
+                            definition.ContentRevision,
+                            scenarioId: scenarioId,
+                            stepId: step.StepId));
+                    }
+
+                    if (step.AudioSetId.HasValue && step.AudioSetId.Value == 0)
+                    {
+                        AddInvalidScenarioStepShape(
+                            definition,
+                            scenarioId,
+                            step,
+                            "audio_set_id must be greater than zero when it is authored.",
+                            diagnostics);
+                    }
+
+                    return;
+
+                case MissionScenarioStepKind.ScheduleScenario:
+                    if (!step.TargetScenarioId.HasValue || !step.DelayMilliseconds.HasValue)
+                    {
+                        AddInvalidScenarioStepShape(
+                            definition,
+                            scenarioId,
+                            step,
+                            "scheduled scenario steps require target_scenario_id and delay_milliseconds.",
+                            diagnostics);
+                        return;
+                    }
+
+                    if (!definition.Scenarios.ContainsKey(step.TargetScenarioId.Value))
+                    {
+                        diagnostics.Add(new MissionValidationDiagnostic(
+                            "missing-scenario",
+                            $"scheduled scenario step references missing scenario {step.TargetScenarioId.Value}.",
+                            definition.MissionId,
+                            definition.ContentRevision,
+                            scenarioId: scenarioId,
+                            stepId: step.StepId));
+                    }
+
+                    if (!HasValidDelay(step.DelayMilliseconds.Value))
+                    {
+                        diagnostics.Add(new MissionValidationDiagnostic(
+                            "invalid-delay",
+                            $"scenario delay_milliseconds {step.DelayMilliseconds.Value} must be between 1 and {MaxDelayMilliseconds}.",
+                            definition.MissionId,
+                            definition.ContentRevision,
+                            scenarioId: scenarioId,
+                            stepId: step.StepId));
+                    }
+
+                    return;
+
+                case MissionScenarioStepKind.ResetAttempt:
+                    var hasScenarioTarget = step.TargetScenarioId.HasValue;
+                    var hasAttemptKey = !string.IsNullOrWhiteSpace(step.AttemptKey);
+                    if (hasScenarioTarget == hasAttemptKey)
+                    {
+                        AddInvalidScenarioStepShape(
+                            definition,
+                            scenarioId,
+                            step,
+                            "reset attempt steps require exactly one of target_scenario_id or attempt_key.",
+                            diagnostics);
+                        return;
+                    }
+
+                    if (hasScenarioTarget && !definition.Scenarios.ContainsKey(step.TargetScenarioId.Value))
+                    {
+                        diagnostics.Add(new MissionValidationDiagnostic(
+                            "missing-scenario",
+                            $"reset attempt step references missing scenario {step.TargetScenarioId.Value}.",
+                            definition.MissionId,
+                            definition.ContentRevision,
+                            scenarioId: scenarioId,
+                            stepId: step.StepId));
+                    }
+
+                    return;
+
+                case MissionScenarioStepKind.EmitScenarioEvent:
+                    if (!step.ScenarioEventId.HasValue || step.ScenarioEventId.Value == 0)
+                    {
+                        AddInvalidScenarioStepShape(
+                            definition,
+                            scenarioId,
+                            step,
+                            "scenario event steps require scenario_event_id.",
+                            diagnostics);
+                    }
+
+                    return;
+
+                case MissionScenarioStepKind.TransferPlayer:
+                    if (!step.MapContextId.HasValue ||
+                        !step.PosX.HasValue ||
+                        !step.PosY.HasValue ||
+                        !step.PosZ.HasValue ||
+                        !step.Orientation.HasValue)
+                    {
+                        AddInvalidScenarioStepShape(
+                            definition,
+                            scenarioId,
+                            step,
+                            "transfer steps require map_context_id, pos_x, pos_y, pos_z, and orientation.",
+                            diagnostics);
+                        return;
+                    }
+
+                    if (!references.MapContextIds.Contains(step.MapContextId.Value))
+                    {
+                        diagnostics.Add(new MissionValidationDiagnostic(
+                            "missing-map-context",
+                            $"transfer step references missing map_context {step.MapContextId.Value}.",
+                            definition.MissionId,
+                            definition.ContentRevision,
+                            scenarioId: scenarioId,
+                            stepId: step.StepId));
+                    }
+
+                    return;
+
+                case MissionScenarioStepKind.SetQualification:
+                    if (!step.QualificationKey.HasValue || !step.QualificationValue.HasValue)
+                    {
+                        AddInvalidScenarioStepShape(
+                            definition,
+                            scenarioId,
+                            step,
+                            "qualification steps require qualification_key and qualification_value.",
+                            diagnostics);
+                        return;
+                    }
+
+                    if (!step.TryGetQualificationKey(out var qualificationKey) ||
+                        qualificationKey != CharacterQualificationKey.BootcampComplete ||
+                        step.QualificationValue.Value != MissionScenarioStepEntry.GrantedQualificationValue)
+                    {
+                        diagnostics.Add(new MissionValidationDiagnostic(
+                            "invalid-qualification",
+                            $"qualification step requires the approved pair BootcampComplete={MissionScenarioStepEntry.GrantedQualificationValue}.",
+                            definition.MissionId,
+                            definition.ContentRevision,
+                            scenarioId: scenarioId,
+                            stepId: step.StepId));
+                    }
+
+                    return;
+
+                case MissionScenarioStepKind.SetAccountSkipEntitlement:
+                    if (!step.AccountSkipEntitlement.HasValue)
+                    {
+                        AddInvalidScenarioStepShape(
+                            definition,
+                            scenarioId,
+                            step,
+                            "account skip entitlement steps require account_skip_entitlement.",
+                            diagnostics);
+                    }
+
+                    return;
+            }
+        }
+
+        private static bool HasValidDelay(uint delayMilliseconds) =>
+            delayMilliseconds >= 1 && delayMilliseconds <= MaxDelayMilliseconds;
+
+        private static void AddInvalidScenarioStepShape(
+            MissionContentDefinition definition,
+            uint scenarioId,
+            MissionScenarioStepDefinition step,
+            string message,
+            ICollection<MissionValidationDiagnostic> diagnostics)
+        {
+            (diagnostics ?? throw new ArgumentNullException(nameof(diagnostics))).Add(
+                new MissionValidationDiagnostic(
+                    "invalid-scenario-step-shape",
+                    message,
+                    definition.MissionId,
+                    definition.ContentRevision,
+                    scenarioId: scenarioId,
+                    stepId: step.StepId));
         }
 
         private sealed class MissionContentReferenceSet

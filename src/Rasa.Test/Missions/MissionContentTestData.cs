@@ -303,9 +303,10 @@ namespace Rasa.Test.Missions
                 ScenarioId = 60,
                 StepId = 1,
                 Requirement = MissionContentRequirement.Required,
-                Kind = MissionScenarioStepKind.Narrative,
+                Kind = MissionScenarioStepKind.EmitScenarioEvent,
                 Sequence = 1,
-                Comment = "Intro"
+                ScenarioEventId = 1,
+                Comment = "Intro event"
             });
 
             fixture.Evidence.Add(new MissionEvidenceEntry
@@ -786,6 +787,29 @@ namespace Rasa.Test.Missions
                 Requirement = entry.Requirement,
                 Kind = entry.Kind,
                 Sequence = entry.Sequence,
+                TargetObjectiveId = entry.TargetObjectiveId,
+                RewardId = entry.RewardId,
+                SpawnGroupId = entry.SpawnGroupId,
+                SpawnId = entry.SpawnId,
+                EntityClassId = entry.EntityClassId,
+                TargetScenarioId = entry.TargetScenarioId,
+                DelayMilliseconds = entry.DelayMilliseconds,
+                SkillId = entry.SkillId,
+                AbilityId = entry.AbilityId,
+                SkillLevel = entry.SkillLevel,
+                AbilitySlot = entry.AbilitySlot,
+                TutorialId = entry.TutorialId,
+                AudioSetId = entry.AudioSetId,
+                AttemptKey = entry.AttemptKey,
+                ScenarioEventId = entry.ScenarioEventId,
+                MapContextId = entry.MapContextId,
+                PosX = entry.PosX,
+                PosY = entry.PosY,
+                PosZ = entry.PosZ,
+                Orientation = entry.Orientation,
+                QualificationKey = entry.QualificationKey,
+                QualificationValue = entry.QualificationValue,
+                AccountSkipEntitlement = entry.AccountSkipEntitlement,
                 Comment = entry.Comment
             };
 

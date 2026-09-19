@@ -8,6 +8,8 @@ namespace Rasa.Structures.Missions
         public string Message { get; }
         public uint? MissionId { get; }
         public string ContentRevision { get; }
+        public uint? ScenarioId { get; }
+        public uint? StepId { get; }
         public uint? ObjectiveId { get; }
         public uint? TransitionId { get; }
         public uint? TriggerId { get; }
@@ -21,12 +23,16 @@ namespace Rasa.Structures.Missions
             uint? objectiveId = null,
             uint? transitionId = null,
             uint? triggerId = null,
-            uint? actionId = null)
+            uint? actionId = null,
+            uint? scenarioId = null,
+            uint? stepId = null)
         {
             Code = code ?? throw new ArgumentNullException(nameof(code));
             Message = message ?? throw new ArgumentNullException(nameof(message));
             MissionId = missionId;
             ContentRevision = contentRevision;
+            ScenarioId = scenarioId;
+            StepId = stepId;
             ObjectiveId = objectiveId;
             TransitionId = transitionId;
             TriggerId = triggerId;
@@ -40,6 +46,10 @@ namespace Rasa.Structures.Missions
                 : "Mission content";
             if (!string.IsNullOrWhiteSpace(ContentRevision))
                 prefix += $"@{ContentRevision}";
+            if (ScenarioId.HasValue)
+                prefix += $" scenario {ScenarioId.Value}";
+            if (StepId.HasValue)
+                prefix += $" step {StepId.Value}";
             if (ObjectiveId.HasValue)
                 prefix += $" objective {ObjectiveId.Value}";
             if (TransitionId.HasValue)
