@@ -899,6 +899,7 @@ namespace Rasa.Managers
             }
 
             map.PerformRecovery.Clear();
+            map.QueuedMissiles.Clear();
             map.DynamicObjects.Clear();
             map.ControlPoints.Clear();
             map.FootLockers.Clear();

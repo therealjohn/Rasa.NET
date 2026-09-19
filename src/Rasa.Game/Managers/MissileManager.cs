@@ -53,17 +53,7 @@ namespace Rasa.Managers
         /// or summon, so this is reachable by pressing fire before re-targeting.
         /// </summary>
         private static bool IsOnMap(MapChannel mapChannel, Actor actor)
-        {
-            if (actor == null || mapChannel == null ||
-                actor.MapContextId != mapChannel.MapInfo.MapContextId)
-                return false;
-
-            return actor switch
-            {
-                Manifestation player => player.MapChannel == mapChannel,
-                _ => actor.RuntimeMapChannel == mapChannel
-            };
-        }
+            => MapInstanceScope.Contains(mapChannel, actor);
 
         /// <summary>
         /// Marks an actor as being in a fight, if it is a player. Creatures have their own notion

@@ -35,6 +35,7 @@ namespace Rasa.Managers
         private readonly MissionManager _missionManager;
         private const string Deployment11StartingExperienceRevision = "deployment_11";
         private const string LegacyStartingExperienceRevision = "legacy";
+        private const uint BootcampPrivateMapContextId = 1985;
 
         public const ulong SelectionPodStartEntityId = 100;
         public const byte MaxSelectionPods = 16;
@@ -730,6 +731,8 @@ namespace Rasa.Managers
                     Logger.WriteLog(LogType.Debug,
                         $"Character {charactersBySlot.Id} was deleted with {listings} auction(s) running; the listings were taken down with it.");
 
+                ReleaseOwnedPrivateStartingExperienceRuntime(charactersBySlot.Id);
+
                 // Client.Player still points at the character that was just deleted - it is left
                 // loaded when the player returns to character selection. Client.SaveCharacter
                 // skips a player whose Id is 0 and otherwise looks the row up with
@@ -787,9 +790,33 @@ namespace Rasa.Managers
             unitOfWork.Complete();
 
             client.Player = CreateCharacterManifestation(client, character);
-            client.Player.MapChannel = MapChannelManager.Instance.FindByContextId(client.Player.MapContextId);
+            var startingExperience = unitOfWork.CharacterStartingExperience.Get(character.Id);
+            client.Player.MapChannel = ResolveReconnectMapChannel(character, startingExperience);
             client.LoadingMap = client.Player.MapContextId;
             MapChannelManager.Instance.PassClientToMapInstance(client);
+        }
+
+        internal static void ReleaseOwnedPrivateStartingExperienceRuntime(uint characterId)
+        {
+            if (characterId == 0)
+                return;
+
+            MapChannelManager.Instance.ReleaseOwnedPrivateInstances(characterId);
+        }
+
+        private static MapChannel ResolveReconnectMapChannel(
+            CharacterEntry character,
+            CharacterStartingExperienceEntry startingExperience)
+        {
+            if (character?.MapContextId == BootcampPrivateMapContextId &&
+                startingExperience?.State == CharacterStartingExperienceState.Bootcamp)
+                return MapChannelManager.Instance.GetOrCreatePrivateInstance(
+                           BootcampPrivateMapContextId,
+                           character.Id) ??
+                       MapChannelManager.Instance.FindByContextId(
+                           BootcampPrivateMapContextId);
+
+            return MapChannelManager.Instance.FindByContextId(character?.MapContextId ?? 0);
         }
 
         private void SendCharacterCreateFailed(Client client, CreateCharacterResult result)

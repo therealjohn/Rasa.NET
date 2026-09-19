@@ -13,6 +13,8 @@ namespace Rasa.Test.World
     using Rasa.Game;
     using Rasa.Game.Handlers;
     using Rasa.Managers;
+    using Rasa.Packets.LootDispenser.Client;
+    using Rasa.Packets.MapChannel.Client;
     using Rasa.Packets;
     using Rasa.Packets.MapChannel.Server;
     using Rasa.Packets.Protocol;
@@ -150,17 +152,139 @@ namespace Rasa.Test.World
         }
 
         [TestMethod]
-        public void ReleasingOwnedInstanceUnregistersOwnedEntitiesAndQueuesAndReconnectCreatesANewRuntime()
+        public void CrossInstanceUseAndRecoveryRequireExactPrivateMapIdentity()
         {
             var service = new PrivateMapInstanceService();
             var maps = new MapChannelManager(null, privateInstances: service);
-            var publicMap = CreateMap();
+            var publicMap = CreateMap(1985);
+            maps.MapChannelArray.Add(publicMap.MapInfo.MapContextId, publicMap);
+            var first = maps.GetOrCreatePrivateInstance(publicMap.MapInfo.MapContextId, 7);
+            var second = maps.GetOrCreatePrivateInstance(publicMap.MapInfo.MapContextId, 8);
+            var firstClient = CreateClient(first, 7);
+            var secondClient = CreateClient(second, 8);
+            var controlPoint = new DynamicObject
+            {
+                MapContextId = second.MapInfo.MapContextId,
+                Position = Vector3.Zero,
+                DynamicObjectType = DynamicObjectType.ControlPoint,
+                Faction = Factions.AFS,
+                StateId = UseObjectState.CpointStateFactionAOwned
+            };
+            second.ControlPoints.Add(1, controlPoint);
+            CellManager.Instance.AddToWorld(second, controlPoint);
+            controlPoint.IsInWorld = true;
+            var objects = new DynamicObjectManager(null, maps, updateCharacter: (_, _, _) => { },
+                disconnect: _ => Assert.Fail("Cross-instance use should be ignored."));
+            using var singletons = new ManagerInstances(objects);
+
+            objects.RequestUseObjectPacket(firstClient, new RequestUseObjectPacket
+            {
+                ActionId = ActionId.UseObject,
+                ActionArgId = DynamicObjectManager.ControlPointUseArgId,
+                EntityId = controlPoint.EntityId
+            });
+
+            Assert.AreEqual(0, controlPoint.TriggeredByPlayers.Count);
+            Assert.AreEqual(0, WorldTestContext.Drain(firstClient).Count);
+
+            controlPoint.TriggeredByPlayers.Add(firstClient);
+            objects.CaptureControlPointRecovery(second, new ActionData(
+                firstClient.Player,
+                ActionId.UseObject,
+                DynamicObjectManager.ControlPointUseArgId,
+                0));
+
+            Assert.AreEqual(Factions.AFS, controlPoint.Faction);
+            Assert.AreEqual(UseObjectState.CpointStateFactionAOwned, controlPoint.StateId);
+            Assert.AreEqual(0, controlPoint.TriggeredByPlayers.Count);
+
+            CellManager.Instance.RemoveFromWorld(second, controlPoint);
+            CleanupClient(firstClient);
+            CleanupClient(secondClient);
+        }
+
+        [TestMethod]
+        public void CrossInstanceDamageLootAndDespawnCannotReachOtherPrivateMaps()
+        {
+            var service = new PrivateMapInstanceService();
+            var maps = new MapChannelManager(null, privateInstances: service);
+            var publicMap = CreateMap(1985);
+            maps.MapChannelArray.Add(publicMap.MapInfo.MapContextId, publicMap);
+            var first = maps.GetOrCreatePrivateInstance(publicMap.MapInfo.MapContextId, 7);
+            var second = maps.GetOrCreatePrivateInstance(publicMap.MapInfo.MapContextId, 8);
+            var firstClient = CreateClient(first, 7);
+            var target = new Creature
+            {
+                EntityClass = EntityClasses.HumanBaseMale,
+                MapContextId = second.MapInfo.MapContextId,
+                Position = Vector3.Zero,
+                State = CharacterState.Normal,
+                Faction = Factions.Bane,
+                AppearanceData = new Dictionary<EquipmentData, AppearanceData>(),
+                Attributes = new Dictionary<Attributes, ActorAttributes>
+                {
+                    [Attributes.Health] = new(Attributes.Health, 100, 100, 100, 0, 0),
+                    [Attributes.Armor] = new(Attributes.Armor, 0, 0, 0, 0, 0)
+                }
+            };
+            CellManager.Instance.AddToWorld(second, target);
+
+            MissileManager.Instance.MissileLaunch(first, new ActionData(
+                firstClient.Player,
+                ActionId.WeaponAttack,
+                133,
+                target.EntityId,
+                0), 55);
+
+            Assert.AreEqual(0, first.QueuedMissiles.Count);
+            Assert.AreEqual(100, target.Attributes[Attributes.Health].Current);
+
+            var loot = new LootDispenser
+            {
+                Owner = firstClient.Player.EntityId,
+                OwnerClient = firstClient,
+                Player = firstClient.Player,
+                Map = second,
+                Corpse = target,
+                CharacterId = firstClient.Player.Id,
+                IsLootable = true
+            };
+            target.State = CharacterState.Dead;
+            target.Attributes[Attributes.Health].Current = 0;
+            target.CorpseLootEntityId = loot.EntityId;
+            second.LootDispensers.Add(loot.EntityId, loot);
+            var looting = new LootDispenserManager(null, _ => 20);
+
+            looting.RequestCorpseLooting(firstClient,
+                new RequestCorpseLootingPacket { EntityId = loot.EntityId });
+
+            Assert.AreEqual(0UL, loot.CurrentLooter);
+            Assert.AreEqual(0, WorldTestContext.Drain(firstClient).Count);
+
+            Assert.IsFalse(CellManager.Instance.RemoveCreatureFromWorld(first, target));
+            Assert.IsTrue(EntityManager.Instance.Creatures.ContainsKey(target.EntityId));
+            Assert.AreSame(second, target.RuntimeMapChannel);
+
+            second.LootDispensers.Remove(loot.EntityId);
+            target.CorpseLootEntityId = 0;
+            CellManager.Instance.RemoveCreatureFromWorld(second, target);
+            CleanupClient(firstClient);
+        }
+
+        [TestMethod]
+        public void ReleasingOwnedInstanceUnregistersOwnedEntitiesQueuesAndMissilesAndReconnectCreatesANewRuntime()
+        {
+            var service = new PrivateMapInstanceService();
+            var maps = new MapChannelManager(null, privateInstances: service);
+            var publicMap = CreateMap(1985);
             maps.MapChannelArray.Add(publicMap.MapInfo.MapContextId, publicMap);
             var owned = maps.GetOrCreatePrivateInstance(publicMap.MapInfo.MapContextId, 7);
             var loadingClient = CreateClient(owned, 7);
             loadingClient.State = ClientState.Loading;
             owned.ClientList.Add(loadingClient);
             owned.QueuedClients.Enqueue(loadingClient);
+            owned.PerformRecovery.Add(new ActionData(loadingClient.Player, ActionId.UseObject, 0, 0));
+            owned.QueuedMissiles.Add(new Missile());
             var creature = new Creature
             {
                 EntityClass = EntityClasses.HumanBaseMale,
@@ -187,6 +311,8 @@ namespace Rasa.Test.World
             Assert.IsNull(maps.FindByContextAndInstance(publicMap.MapInfo.MapContextId, owned.InstanceId));
             Assert.AreEqual(0, owned.ClientList.Count);
             Assert.AreEqual(0, owned.QueuedClients.Count);
+            Assert.AreEqual(0, owned.PerformRecovery.Count);
+            Assert.AreEqual(0, owned.QueuedMissiles.Count);
             Assert.AreEqual(0, owned.MapCellInfo.Cells.Count);
             Assert.IsFalse(EntityManager.Instance.RegisteredEntities.ContainsKey(creature.EntityId));
             Assert.IsFalse(EntityManager.Instance.Creatures.ContainsKey(creature.EntityId));
@@ -201,7 +327,7 @@ namespace Rasa.Test.World
             CleanupClient(loadingClient);
         }
 
-        private static MapChannel CreateMap(uint contextId = 1220) => new()
+        private static MapChannel CreateMap(uint contextId = 1985) => new()
         {
             MapInfo = new MapInfo(contextId, "fixture", 1556, 0),
             ClientList = new List<Client>(),

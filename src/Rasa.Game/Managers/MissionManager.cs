@@ -1974,17 +1974,7 @@ namespace Rasa.Managers
             ulong npcEntityId,
             out Creature npc)
         {
-            npc = null;
-            if (!EntityManager.Instance.RegisteredEntities.TryGetValue(npcEntityId, out var entityType) ||
-                entityType != EntityType.Creature ||
-                !EntityManager.Instance.Creatures.TryGetValue(npcEntityId, out var candidate) ||
-                candidate.MapContextId != player.MapChannel.MapInfo.MapContextId ||
-                !player.MapChannel.MapCellInfo.Cells.Values.Any(
-                    cell => cell.CreatureList.Any(creature => ReferenceEquals(creature, candidate))))
-                return false;
-
-            npc = candidate;
-            return true;
+            return MapInstanceScope.TryGetCreature(player?.MapChannel, npcEntityId, out npc);
         }
 
         private static bool Reject(string message)

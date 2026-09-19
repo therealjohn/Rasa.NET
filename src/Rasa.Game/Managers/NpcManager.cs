@@ -142,9 +142,12 @@ namespace Rasa.Managers
 
         public void RequestNpcConverse(Client client, RequestNPCConversePacket packet)
         {
-            var creature = EntityManager.Instance.GetCreature(packet.EntityId);
-
-            if (creature == null)
+            if (client?.Player?.MapChannel == null ||
+                !MapInstanceScope.TryGetCreature(
+                    client.Player.MapChannel,
+                    packet.EntityId,
+                    out var creature) ||
+                creature.Npc == null)
                 return;
 
             var convoDataDict = Missions

@@ -713,6 +713,7 @@ namespace Rasa.Test.Missions
                 DbId = dbId,
                 Npc = new Npc { NpcPackageId = npcPackageId ?? dbId },
                 MapContextId = map.MapInfo.MapContextId,
+                RuntimeMapChannel = map,
                 Position = Vector3.Zero,
                 EntityClass = EntityClasses.HumanBaseMale
             };

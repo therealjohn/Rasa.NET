@@ -556,6 +556,50 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
+        public void NpcConversationIgnoresNpcInAnotherPrivate1985Instance()
+        {
+            using var context = MissionTestContext.WithObjectiveMission(selectableReward: false);
+            CreatePrivateBootcampMaps(context, out _, out var second);
+            var npc = context.AddNpc(88, second);
+            var npcManager = CreateNpcManager(context, out var singleton, out var previous);
+            try
+            {
+                npcManager.RequestNpcConverse(context.Client,
+                    new RequestNPCConversePacket { EntityId = npc.EntityId });
+
+                Assert.AreEqual(0, context.Drain().Count);
+            }
+            finally
+            {
+                singleton.SetValue(null, previous);
+            }
+        }
+
+        [TestMethod]
+        public void CompletingNpcObjectiveRequiresNpcFromPlayersPrivate1985Instance()
+        {
+            using var context = MissionTestContext.WithObjectiveMission();
+            CreatePrivateBootcampMaps(context, out var first, out var second);
+            var giver = context.AddNpc(77, first);
+            var objectiveNpc = context.AddNpc(500, second, npcPackageId: 700);
+            Assert.IsTrue(context.Manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            context.Drain();
+
+            Assert.IsFalse(context.Manager.TryCompleteNpcObjective(
+                context.Client,
+                objectiveNpc.EntityId,
+                321,
+                5,
+                11));
+
+            Assert.AreEqual(MissionObjectiveState.Incomplete,
+                context.Client.Player.Missions[321].Objectives[5].State);
+            Assert.AreEqual((byte)MissionObjectiveState.Incomplete,
+                context.ReadProgress(321).Missions[321].Objectives[5].State);
+            Assert.AreEqual(0, context.Drain().Count);
+        }
+
+        [TestMethod]
         public void MissionConversationClassificationProjectsDataAndStatusFromOneResult()
         {
             using var context = MissionTestContext.WithObjectiveMission(selectableReward: false);
@@ -1091,8 +1135,30 @@ namespace Rasa.Test.Missions
                 typeof(NpcManager),
                 BindingFlags.Instance | BindingFlags.NonPublic,
                 binder: null,
-                args: new object[] { context },
+                args: new object[] { context, context.Manager },
                 culture: null)!;
+        }
+
+        private static MapChannelManager CreatePrivateBootcampMaps(
+            MissionTestContext context,
+            out MapChannel first,
+            out MapChannel second)
+        {
+            context.Map.MapInfo = new MapInfo(1985, "bootcamp_fixture", 1556, 0);
+            context.Client.Player.MapContextId = 1985;
+            var maps = new MapChannelManager(null, privateInstances: new PrivateMapInstanceService());
+            maps.MapChannelArray.Add(1985, context.Map);
+            first = maps.GetOrCreatePrivateInstance(1985, context.Client.Player.Id);
+            second = maps.GetOrCreatePrivateInstance(1985, context.Client.Player.Id + 1);
+
+            CellManager.Instance.RemoveFromWorld(context.Client);
+            context.Map.ClientList.Remove(context.Client);
+            context.Client.Player.MapChannel = first;
+            context.Client.Player.MapContextId = 1985;
+            first.ClientList.Add(context.Client);
+            CellManager.Instance.AddToWorld(context.Client);
+            context.Drain();
+            return maps;
         }
 
         private sealed class MissionContentLoadingFactory : IGameUnitOfWorkFactory

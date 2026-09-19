@@ -69,8 +69,13 @@ namespace Rasa.Managers
         /// <summary>Whether an actor is on the object's map and near enough to use it.</summary>
         private static bool IsInUseRange(Actor actor, DynamicObject obj)
         {
-            return obj.MapContextId == actor.MapContextId
-                   && Vector3.Distance(actor.Position, obj.Position) <= MaxUseDistance;
+            var mapChannel = actor switch
+            {
+                Manifestation player => player.MapChannel,
+                _ => actor?.RuntimeMapChannel
+            };
+            return MapInstanceScope.Share(mapChannel, actor, obj) &&
+                   Vector3.Distance(actor.Position, obj.Position) <= MaxUseDistance;
         }
 
         public static DynamicObjectManager Instance
@@ -144,10 +149,10 @@ namespace Rasa.Managers
             // only that the player be in the object's TriggeredByPlayers list. An object on
             // another map left them in that list for good, which holds their connection open in
             // the server's memory long after they have gone.
-            if (obj.MapContextId != client.Player.MapContextId)
+            if (!MapInstanceScope.Contains(client.Player.MapChannel, obj))
             {
                 Logger.WriteLog(LogType.Security,
-                    $"{client.Player.FamilyName} asked to use object {packet.EntityId}, which is on map {obj.MapContextId} and not on {client.Player.MapContextId}. Ignored.");
+                    $"{client.Player.FamilyName} asked to use object {packet.EntityId}, which is not on the current map instance. Ignored.");
                 return;
             }
 

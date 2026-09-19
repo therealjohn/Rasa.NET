@@ -413,17 +413,7 @@ namespace Rasa.Managers
         }
 
         private static bool IsOnMap(MapChannel mapChannel, Actor actor)
-        {
-            if (actor == null || mapChannel == null ||
-                actor.MapContextId != mapChannel.MapInfo.MapContextId)
-                return false;
-
-            return actor switch
-            {
-                Manifestation player => player.MapChannel == mapChannel,
-                _ => actor.RuntimeMapChannel == mapChannel
-            };
-        }
+            => MapInstanceScope.Contains(mapChannel, actor);
 
         /// <summary>
         /// Who a player's damage may land on: creatures that are not AFS. Other players are not

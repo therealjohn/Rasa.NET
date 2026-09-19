@@ -25,12 +25,20 @@ namespace Rasa.Test.Gameplay
     using Rasa.Packets.Game.Client;
     using Rasa.Repositories.Char;
     using Rasa.Repositories.Char.Character;
+    using Rasa.Repositories.Char.CharacterAbilityDrawer;
     using Rasa.Repositories.Char.CharacterAppearance;
     using Rasa.Repositories.Char.CharacterInventory;
     using Rasa.Repositories.Char.CharacterLockbox;
     using Rasa.Repositories.Char.CharacterLogos;
+    using Rasa.Repositories.Char.CharacterMission;
+    using Rasa.Repositories.Char.CharacterMissionDeadline;
+    using Rasa.Repositories.Char.CharacterMissionProgress;
+    using Rasa.Repositories.Char.CharacterMissionScenario;
+    using Rasa.Repositories.Char.CharacterSkills;
     using Rasa.Repositories.Char.CharacterStartingExperience;
     using Rasa.Repositories.Char.CharacterTeleporter;
+    using Rasa.Repositories.Char.CharacterTitle;
+    using Rasa.Repositories.Char.Clan;
     using Rasa.Repositories.Char.GameAccount;
     using Rasa.Repositories.Char.Items;
     using Rasa.Repositories.UnitOfWork;
@@ -143,6 +151,92 @@ namespace Rasa.Test.Gameplay
             Assert.AreEqual(CharacterStartingExperienceState.Legacy, startingExperience.State);
         }
 
+        [TestMethod]
+        public void SwitchingToBootcampCharacterCreatesOwnedPrivate1985Instance()
+        {
+            using var context = new CharacterCreationContext();
+            context.SeedAccount(21);
+            var characterId = context.SeedCharacter(21, 1, "Bootcamp", mapContextId: 1985);
+            context.SeedStartingExperience(characterId, CharacterStartingExperienceState.Bootcamp);
+            var client = context.CreateClient(21);
+            var maps = new MapChannelManager(context, privateInstances: new PrivateMapInstanceService());
+            maps.MapChannelArray.Add(1985, CreatePublicMap(1985));
+            using var scope = new MapChannelManagerScope(maps);
+
+            new CharacterManager(context).RequestSwitchToCharacterInSlot(
+                client,
+                new RequestSwitchToCharacterInSlotPacket { SlotNum = 1 });
+
+            Assert.IsNotNull(client.Player.MapChannel);
+            Assert.IsTrue(client.Player.MapChannel.IsPrivateInstance);
+            Assert.AreEqual(1985U, client.Player.MapChannel.MapInfo.MapContextId);
+            Assert.AreEqual(characterId, client.Player.MapChannel.OwnerCharacterId);
+            Assert.AreSame(client.Player.MapChannel,
+                maps.FindOwnedPrivateInstance(1985, characterId));
+            Assert.AreEqual(ClientState.Loading, client.State);
+        }
+
+        [TestMethod]
+        public void BootcampReconnectRecreatesEquivalentOwnedPrivate1985RuntimeAfterRelease()
+        {
+            using var context = new CharacterCreationContext();
+            context.SeedAccount(22);
+            var characterId = context.SeedCharacter(22, 1, "Reconnect", mapContextId: 1985);
+            context.SeedStartingExperience(characterId, CharacterStartingExperienceState.Bootcamp);
+            var maps = new MapChannelManager(context, privateInstances: new PrivateMapInstanceService());
+            maps.MapChannelArray.Add(1985, CreatePublicMap(1985));
+            using var scope = new MapChannelManagerScope(maps);
+
+            var firstClient = context.CreateClient(22);
+            new CharacterManager(context).RequestSwitchToCharacterInSlot(
+                firstClient,
+                new RequestSwitchToCharacterInSlotPacket { SlotNum = 1 });
+            var firstRuntime = firstClient.Player.MapChannel;
+
+            maps.ReleaseOwnedPrivateInstances(characterId);
+
+            var secondClient = context.CreateClient(22);
+            new CharacterManager(context).RequestSwitchToCharacterInSlot(
+                secondClient,
+                new RequestSwitchToCharacterInSlotPacket { SlotNum = 1 });
+
+            Assert.AreNotSame(firstRuntime, secondClient.Player.MapChannel);
+            Assert.IsTrue(secondClient.Player.MapChannel.IsPrivateInstance);
+            Assert.AreEqual(1985U, secondClient.Player.MapChannel.MapInfo.MapContextId);
+            Assert.AreEqual(characterId, secondClient.Player.MapChannel.OwnerCharacterId);
+            Assert.AreSame(secondClient.Player.MapChannel,
+                maps.FindOwnedPrivateInstance(1985, characterId));
+        }
+
+        [TestMethod]
+        public void DeletingCharacterReleasesOwnedPrivateInstances()
+        {
+            using var context = new CharacterCreationContext();
+            context.SeedAccount(23);
+            var characterId = context.SeedCharacter(23, 1, "DeleteMe", mapContextId: 1985);
+            context.SeedStartingExperience(characterId, CharacterStartingExperienceState.Bootcamp);
+            var maps = new MapChannelManager(context, privateInstances: new PrivateMapInstanceService());
+            maps.MapChannelArray.Add(1985, CreatePublicMap(1985));
+            var owned = maps.GetOrCreatePrivateInstance(1985, characterId);
+            owned.QueuedClients.Enqueue(new Client(context, new ClientPacketHandler())
+            {
+                State = ClientState.Loading
+            });
+            owned.QueuedMissiles.Add(new Missile());
+            using var scope = new MapChannelManagerScope(maps);
+            var client = context.CreateClient(23);
+
+            new CharacterManager(context).RequestDeleteCharacterInSlot(
+                client,
+                new RequestDeleteCharacterInSlotPacket { Slot = 1 });
+
+            Assert.IsNull(maps.FindOwnedPrivateInstance(1985, characterId));
+            Assert.AreEqual(0, owned.QueuedClients.Count);
+            Assert.AreEqual(0, owned.QueuedMissiles.Count);
+            using var verify = context.Open();
+            Assert.IsNull(new GameAccountRepository(verify).Get(23).GetCharacterBySlot(1));
+        }
+
         private static RequestCreateCharacterInSlotPacket CreatePacket(
             byte slot,
             string familyName,
@@ -179,6 +273,13 @@ namespace Rasa.Test.Gameplay
             (uint?)typeof(CharacterManager)
                 .GetMethod("InternalCreate", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .Invoke(manager, new object[] { client, packet, unitOfWork });
+
+        private static MapChannel CreatePublicMap(uint contextId) => new()
+        {
+            MapInfo = new MapInfo(contextId, "bootcamp_fixture", 1, 0),
+            ClientList = new List<Client>(),
+            PlayerLimit = 128
+        };
 
         private sealed class CharacterCreationContext : IGameUnitOfWorkFactory, IDisposable
         {
@@ -236,7 +337,8 @@ namespace Rasa.Test.Gameplay
                 uint accountId,
                 byte slot,
                 string name,
-                uint cloneCredits = 0)
+                uint cloneCredits = 0,
+                uint mapContextId = 1220)
             {
                 using var context = Open();
                 var character = new CharacterEntry
@@ -258,7 +360,7 @@ namespace Rasa.Test.Gameplay
                     Mind = 0,
                     Spirit = 0,
                     CloneCredits = cloneCredits,
-                    MapContextId = 1220,
+                    MapContextId = mapContextId,
                     CoordX = 1,
                     CoordY = 2,
                     CoordZ = 3,
@@ -274,6 +376,17 @@ namespace Rasa.Test.Gameplay
                 context.CharacterEntries.Add(character);
                 context.SaveChanges();
                 return character.Id;
+            }
+
+            internal void SeedStartingExperience(
+                uint characterId,
+                CharacterStartingExperienceState state,
+                string revision = "deployment_11")
+            {
+                using var context = Open();
+                context.CharacterStartingExperienceEntries.Add(
+                    new CharacterStartingExperienceEntry(characterId, revision, state));
+                context.SaveChanges();
             }
 
             internal Client CreateClient(uint accountId)
@@ -295,23 +408,23 @@ namespace Rasa.Test.Gameplay
                     gameAccounts: new GameAccountRepository(context),
                     censoredWords: null,
                     characters: new CharacterRepository(context),
-                    characterAbilityDrawers: null,
+                    characterAbilityDrawers: new CharacterAbilityDrawerRepository(context),
                     characterAppearances: new CharacterAppearanceRepository(context),
                     characterInventories: new CharacterInventoryRepository(context),
                     characterLockboxes: new CharacterLockboxRepository(context),
                     characterLogoses: new CharacterLogosRepository(context),
-                    characterMissions: null,
-                    characterMissionDeadlines: null,
-                    characterMissionProgress: null,
-                    characterMissionScenario: null,
+                    characterMissions: new CharacterMissionRepository(context),
+                    characterMissionDeadlines: new CharacterMissionDeadlineRepository(context),
+                    characterMissionProgress: new CharacterMissionProgressRepository(context),
+                    characterMissionScenario: new CharacterMissionScenarioRepository(context),
                     characterOptions: null,
                     characterQualifications: null,
-                    characterSkills: null,
+                    characterSkills: new CharacterSkillsRepository(context),
                     characterStartingExperience: new CharacterStartingExperienceRepository(context),
                     characterTeleporters: new CharacterTeleporterRepository(context),
-                    characterTitles: null,
+                    characterTitles: new CharacterTitleRepository(context),
                     auctions: null,
-                    clans: null,
+                    clans: new ClanRepository(context),
                     clanInventories: null,
                     clanMembers: null,
                     clanLockboxLogs: null,
@@ -375,6 +488,24 @@ namespace Rasa.Test.Gameplay
                         MaxHitPoints = 100,
                         StackSize = 50000
                     });
+            }
+        }
+
+        private sealed class MapChannelManagerScope : IDisposable
+        {
+            private readonly FieldInfo _singleton = typeof(MapChannelManager)
+                .GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+            private readonly object _previous;
+
+            internal MapChannelManagerScope(MapChannelManager current)
+            {
+                _previous = _singleton.GetValue(null);
+                _singleton.SetValue(null, current);
+            }
+
+            public void Dispose()
+            {
+                _singleton.SetValue(null, _previous);
             }
         }
     }

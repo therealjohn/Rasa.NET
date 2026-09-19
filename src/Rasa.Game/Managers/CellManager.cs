@@ -200,7 +200,7 @@ namespace Rasa.Managers
 
         internal bool RemoveCreatureFromWorld(MapChannel mapChannel, Creature creature)
         {
-            if (creature == null)
+            if (!MapInstanceScope.Contains(mapChannel, creature))
                 return false;
 
             var isRegistered = EntityManager.Instance.Creatures.TryGetValue(creature.EntityId, out var registered) &&
@@ -257,7 +257,7 @@ namespace Rasa.Managers
 
         public void RemoveFromWorld(MapChannel mapChannel, DynamicObject dynObject)
         {
-            if (dynObject == null)
+            if (!MapInstanceScope.Contains(mapChannel, dynObject))
                 return;
 
             // unregister object entity
