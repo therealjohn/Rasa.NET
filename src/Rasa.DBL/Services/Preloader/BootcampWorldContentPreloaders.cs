@@ -284,7 +284,7 @@ namespace Rasa.Services.Preloader
             yield return ProgressTrigger(1994, 1, 1, 1, ProgressCreatureKilled, TizzikGiCreatureId, "Defeat Tizzik");
             yield return ConversationTrigger(1994, 3, 1, 1, 2561, 1, "Youngblood debrief");
 
-            yield return ConversationTrigger(1995, 2, 1, 1, 2584, 1, "Wounded survivor briefing");
+            yield return AreaTrigger(1995, 2, 1, 435, "Missing-team search area");
             yield return ProgressTrigger(1995, 3, 1, 1, ProgressInteractionUsed, 24990, "Recover Conrad's bomb");
             yield return ProgressTrigger(1995, 1, 1, 1, ProgressInteractionUsed, 24911, "Plant the dropship bomb");
             yield return TimerTrigger(1995, 1, 2, 1, 600U, "Dropship timer expired");
@@ -357,7 +357,7 @@ namespace Rasa.Services.Preloader
             yield return CompleteAction(1994, 3, 1, 1, 3, "Complete Youngblood debrief");
             yield return RewardAction(1994, 3, 1, 2, 1, "Reference mission reward");
 
-            yield return CompleteAction(1995, 2, 1, 1, 2, "Complete wounded survivor");
+            yield return CompleteAction(1995, 2, 1, 1, 2, "Complete missing-team search");
             yield return StartScenarioAction(1995, 2, 1, 2, 1, "Start the crash site scene");
             yield return RevealAction(1995, 2, 1, 3, 3, "Reveal Conrad corpse");
             yield return ActivateAction(1995, 2, 1, 4, 3, "Activate Conrad corpse");
@@ -504,10 +504,11 @@ namespace Rasa.Services.Preloader
             yield return RevealObjectiveStep(1994, 4, 2, 3, "Reveal Youngblood debrief");
             yield return ActivateObjectiveStep(1994, 4, 3, 3, "Activate Youngblood debrief");
 
-            yield return SpawnDynamicObjectStep(1995, 1, 1, "bootcamp-conrad-corpse", 24990, -102.4, 85.69, 66.8, 0.0, true, "Spawn Conrad corpse");
-            yield return SpawnDynamicObjectStep(1995, 1, 2, "bootcamp-dropship-debris", 24911, -225.35, 99.60, -70.52, 0.0, true, "Spawn dropship debris", CallingForReinforcementsPlantWindupMilliseconds);
+            yield return SpawnGroupStep(1995, 1, 1, 1, "Spawn wounded survivor");
+            yield return SpawnDynamicObjectStep(1995, 1, 2, "bootcamp-conrad-corpse", 24990, -102.4, 85.69, 66.8, 0.0, true, "Spawn Conrad corpse");
+            yield return SpawnDynamicObjectStep(1995, 1, 3, "bootcamp-dropship-debris", 24911, -225.35, 99.60, -70.52, 0.0, true, "Spawn dropship debris", CallingForReinforcementsPlantWindupMilliseconds);
 
-            yield return CancelDeadlineStep(1995, 3, 1, "Cancel the planted charge deadline");
+            yield return SatisfyDeadlineStep(1995, 3, 1, "Satisfy the planted charge deadline");
             yield return DisableInteractionStep(1995, 3, 2, 24911, "Disable the planted dropship charge");
             yield return ScheduleScenarioStep(1995, 3, 3, 2, CallingForReinforcementsFuseMilliseconds, "Schedule the detonation");
 
@@ -528,7 +529,7 @@ namespace Rasa.Services.Preloader
             yield return QualificationStep(1995, 6, 2, CharacterQualificationKey.BootcampComplete, MissionScenarioStepEntry.GrantedQualificationValue, "Mark Bootcamp complete");
             yield return SkipEntitlementStep(1995, 6, 3, true, "Unlock account bootcamp skip");
 
-            yield return CancelDeadlineStep(2005, 1, 1, "Cancel the retry charge deadline");
+            yield return SatisfyDeadlineStep(2005, 1, 1, "Satisfy the retry charge deadline");
             yield return DisableInteractionStep(2005, 1, 2, 24911, "Disable the retry charge interaction");
             yield return ScheduleScenarioStep(2005, 1, 3, 2, CallingForReinforcementsFuseMilliseconds, "Schedule the retry detonation");
 
@@ -590,7 +591,7 @@ namespace Rasa.Services.Preloader
 
             yield return Evidence(1995, 1, MissionEvidenceOwnerKind.Mission, 1995, MissionEvidenceSourceKind.Client, null,
                 @"C:\Users\johmil\Projects\trpython\data\generated\client\objectiveconversation.pyo_dis", 1.0,
-                "objectiveconversation binds wounded survivor 2584 and Van Valkenberg 2564");
+                "objectiveconversation still binds Van Valkenberg 2564; the missing-team search area now authoritatively drives the wounded survivor scene");
             yield return Evidence(1995, 2, MissionEvidenceOwnerKind.Objective, 2, MissionEvidenceSourceKind.Reconstruction,
                 "https://raw.githubusercontent.com/Blizz127/tabula-rasa-server/2f0cbbdfe4bb8440286261b205f78d75fca85d0c/docs/evidence/bootcamp-d11-positions.json",
                 @"C:\Users\johmil\Projects\trpython\data\generated\client\language\english\missionobjectiveindicatorlanguage.pyo_dis", 0.7,

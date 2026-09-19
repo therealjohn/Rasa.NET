@@ -218,6 +218,51 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
+        public void BootcampMissionContentUsesAreaDiscoveryAndSatisfiedDeadlinesForTheFinale()
+        {
+            WithDisposableSqliteWorld((context, _) =>
+            {
+                context.Database.Migrate();
+
+                var snapshot = LoadSnapshot(context);
+                var finalMission = snapshot.Definitions[1995];
+                var retryMission = snapshot.Definitions[2005];
+
+                var scoutTransition = finalMission.Transitions[(2U, 1U)];
+                var scoutTrigger = scoutTransition.Triggers.Single();
+                Assert.AreEqual(MissionTriggerKind.AreaEntered, scoutTrigger.Kind);
+                Assert.AreEqual(435U, scoutTrigger.AreaId);
+                CollectionAssert.AreEquivalent(
+                    new[]
+                    {
+                        MissionActionKind.CompleteObjective,
+                        MissionActionKind.StartScenario,
+                        MissionActionKind.RevealObjective,
+                        MissionActionKind.ActivateObjective
+                    },
+                    scoutTransition.Actions.Select(action => action.Kind).ToArray());
+
+                var crashSiteScene = finalMission.Scenarios[1];
+                Assert.IsTrue(crashSiteScene.Steps.Any(step =>
+                    step.Kind == MissionScenarioStepKind.SpawnGroup &&
+                    step.SpawnGroupId == 1U));
+                Assert.IsTrue(crashSiteScene.Steps.Any(step =>
+                    step.Kind == MissionScenarioStepKind.SpawnDynamicObject &&
+                    step.DynamicObjectKey == "bootcamp-conrad-corpse"));
+                Assert.IsTrue(crashSiteScene.Steps.Any(step =>
+                    step.Kind == MissionScenarioStepKind.SpawnDynamicObject &&
+                    step.DynamicObjectKey == "bootcamp-dropship-debris"));
+
+                Assert.AreEqual(
+                    MissionScenarioStepKind.SatisfyDeadline,
+                    finalMission.Scenarios[3].Steps.First().Kind);
+                Assert.AreEqual(
+                    MissionScenarioStepKind.SatisfyDeadline,
+                    retryMission.Scenarios[1].Steps.First().Kind);
+            });
+        }
+
+        [TestMethod]
         public void BootcampMissionContentKeepsClient1992ObjectivesAndAddsReconstructedMcAllisterHandoff()
         {
             WithDisposableSqliteWorld((context, _) =>

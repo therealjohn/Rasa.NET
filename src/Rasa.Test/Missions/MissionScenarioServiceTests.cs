@@ -441,7 +441,7 @@ namespace Rasa.Test.Missions
             using var unit = context.CreateChar();
             var deadline = unit.CharacterMissionDeadlines.Get(context.Client.Player.Id, 321);
             Assert.IsNotNull(deadline);
-            Assert.AreEqual(CharacterMissionDeadlineState.Cancelled, deadline.State);
+            Assert.AreEqual(CharacterMissionDeadlineState.Satisfied, deadline.State);
             Assert.AreEqual(ClientState.Teleporting, context.Client.State);
             Assert.IsNotNull(context.Client.PendingTransfer);
             Assert.AreEqual(1221U, context.Client.PendingTransfer.DestinationMap.MapInfo.MapContextId);
@@ -1318,7 +1318,7 @@ namespace Rasa.Test.Missions
                     ClientBodyTextId = 2202,
                     Ordinal = 2,
                     InitialState = (byte)MissionObjectiveState.Inactive,
-                    IsRequired = true,
+                    IsRequired = false,
                     Comment = "Follow-up objective"
                 },
                 new MissionObjectiveDefinitionEntry
@@ -1431,9 +1431,9 @@ namespace Rasa.Test.Missions
                     ScenarioId = 60,
                     StepId = 6,
                     Requirement = MissionContentRequirement.Required,
-                    Kind = MissionScenarioStepKind.CancelDeadline,
+                    Kind = MissionScenarioStepKind.SatisfyDeadline,
                     Sequence = 6,
-                    Comment = "Cancel deadline"
+                    Comment = "Satisfy deadline"
                 },
                 new MissionScenarioStepEntry
                 {

@@ -16,6 +16,7 @@ namespace Rasa.Test.Missions
     [DoNotParallelize]
     public class BootcampCallingForReinforcementsTests
     {
+        private const uint MissingScoutAreaId = 435;
         private static readonly TimeSpan BombDeadline = TimeSpan.FromMinutes(10);
         private static readonly TimeSpan ArrivalDelay = TimeSpan.FromSeconds(2);
 
@@ -42,6 +43,52 @@ namespace Rasa.Test.Missions
             var dropship = FindScenarioObject(harness, "bootcamp-dropship-debris");
             Assert.AreEqual(1400U, dropship.WindupTime);
             Assert.AreEqual(MissionObjectiveState.Incomplete, harness.Client.Player.Missions[1995].Objectives[1].State);
+        }
+
+        [TestMethod]
+        public void MissingScoutAreaStartsTheCrashSiteSceneOnlyInTheOwnedInstanceAndRebuildsItAfterReconnect()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create();
+            var youngblood = harness.AddNpc(
+                BootcampRuntimeTestHarness.CaptainYoungbloodCreatureId,
+                2561);
+
+            harness.SeedMission(1, 1994, (uint)MissionState.Completed, completeable: true);
+
+            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+                harness.Client,
+                youngblood.EntityId,
+                1995));
+            Assert.IsNull(BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, 2584));
+            Assert.IsNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-conrad-corpse"));
+            Assert.IsNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-dropship-debris"));
+
+            Assert.IsTrue(harness.Manager.RecordProgress(
+                harness.Client,
+                MissionProgressEvent.Area(1995, MissingScoutAreaId)));
+
+            Assert.IsNotNull(BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, 2584));
+            Assert.IsNotNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-conrad-corpse"));
+            Assert.IsNotNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-dropship-debris"));
+            Assert.AreEqual(
+                MissionObjectiveState.Completed,
+                harness.Client.Player.Missions[1995].Objectives[2].State);
+            Assert.AreEqual(
+                MissionObjectiveState.Incomplete,
+                harness.Client.Player.Missions[1995].Objectives[3].State);
+
+            var foreignMap = harness.Maps.GetOrCreatePrivateInstance(
+                BootcampRuntimeTestHarness.BootcampMapContextId,
+                999);
+            Assert.IsNull(BootcampRuntimeTestHarness.FindNpcByPackage(foreignMap, 2584));
+            Assert.IsNull(BootcampRuntimeTestHarness.FindScenarioObject(foreignMap, "bootcamp-conrad-corpse"));
+            Assert.IsNull(BootcampRuntimeTestHarness.FindScenarioObject(foreignMap, "bootcamp-dropship-debris"));
+
+            harness.ReconnectFresh();
+
+            Assert.IsNotNull(BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, 2584));
+            Assert.IsNotNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-conrad-corpse"));
+            Assert.IsNotNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-dropship-debris"));
         }
 
         [TestMethod]
@@ -97,7 +144,7 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(
                 MissionObjectiveState.Incomplete,
                 harness.Client.Player.Missions[1995].Objectives[1].State);
-            Assert.AreEqual(CharacterMissionDeadlineState.Cancelled, ReadDeadline(harness, 1995).State);
+            Assert.AreEqual(CharacterMissionDeadlineState.Satisfied, ReadDeadline(harness, 1995).State);
 
             harness.UtcNow = dueAt + TimeSpan.FromSeconds(1);
 
@@ -150,7 +197,6 @@ namespace Rasa.Test.Missions
             var youngblood = harness.AddNpc(
                 BootcampRuntimeTestHarness.CaptainYoungbloodCreatureId,
                 2561);
-            var woundedSurvivor = harness.AddNpc(510208, 2584);
 
             harness.SeedMission(1, 1994, (uint)MissionState.Completed, completeable: true);
 
@@ -158,12 +204,9 @@ namespace Rasa.Test.Missions
                 harness.Client,
                 youngblood.EntityId,
                 1995));
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+            Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Client,
-                woundedSurvivor.EntityId,
-                1995,
-                2,
-                1));
+                MissionProgressEvent.Area(1995, MissingScoutAreaId)));
 
             return youngblood;
         }

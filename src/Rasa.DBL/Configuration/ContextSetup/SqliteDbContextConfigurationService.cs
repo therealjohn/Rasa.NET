@@ -1,5 +1,4 @@
 ﻿using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace Rasa.Configuration.ContextSetup
 {
@@ -18,8 +17,6 @@ namespace Rasa.Configuration.ContextSetup
         {
             var connectionString = _connectionStringFactory.Create(configuration);
             dbContextOptionsBuilder.UseSqlite(connectionString);
-            dbContextOptionsBuilder.ConfigureWarnings(warnings =>
-                warnings.Ignore(RelationalEventId.PendingModelChangesWarning));
         }
     }
 }

@@ -34,6 +34,7 @@ namespace Rasa.Test.Missions
     [DoNotParallelize]
     public class BootcampMissionRuntimeTests
     {
+        private const uint MissingScoutAreaId = 435;
         private const uint BootcampMapContextId = 1985;
         private const uint WildernessMapContextId = 1220;
         private static readonly TimeSpan FuseDelay = TimeSpan.FromSeconds(5);
@@ -45,7 +46,6 @@ namespace Rasa.Test.Missions
         {
             using var harness = CreateHarness();
             var youngblood = harness.AddNpc(510207, 2561);
-            var woundedSurvivor = harness.AddNpc(510208, 2584);
 
             harness.SeedMission(1, 1994, (uint)MissionState.Completed, true);
 
@@ -62,15 +62,13 @@ namespace Rasa.Test.Missions
                 (1U, MissionObjectiveState.Inactive),
                 (4U, MissionObjectiveState.Inactive));
 
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+            Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Context.Client,
-                woundedSurvivor.EntityId,
-                1995,
-                2,
-                1));
+                MissionProgressEvent.Area(1995, MissingScoutAreaId)));
             Assert.AreEqual(
                 MissionObjectiveState.Incomplete,
                 harness.Context.Client.Player.Missions[1995].Objectives[3].State);
+            Assert.IsNotNull(FindNpcByPackage(harness.BootcampMap, 2584));
             Assert.IsNotNull(FindScenarioObject(harness.BootcampMap, "bootcamp-conrad-corpse"));
             Assert.IsNotNull(FindScenarioObject(harness.BootcampMap, "bootcamp-dropship-debris"));
 
@@ -105,7 +103,7 @@ namespace Rasa.Test.Missions
             Assert.IsNull(FindNpcByPackage(harness.BootcampMap, 2564));
             using (var unit = harness.Context.CreateChar())
                 Assert.AreEqual(
-                    CharacterMissionDeadlineState.Cancelled,
+                    CharacterMissionDeadlineState.Satisfied,
                     unit.CharacterMissionDeadlines.Get(harness.Context.Client.Player.Id, 1995).State);
 
             Assert.IsFalse(harness.Manager.TickScenarios(harness.Context.Client));
@@ -145,7 +143,6 @@ namespace Rasa.Test.Missions
         {
             using var harness = CreateHarness();
             var youngblood = harness.AddNpc(510207, 2561);
-            var woundedSurvivor = harness.AddNpc(510208, 2584);
 
             harness.SeedMission(1, 1994, (uint)MissionState.Completed, true);
 
@@ -155,12 +152,9 @@ namespace Rasa.Test.Missions
                 1995));
             AssertMissionNotAdvertised(harness.Manager, harness.Context.Client.Player, youngblood, 2005);
 
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+            Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Context.Client,
-                woundedSurvivor.EntityId,
-                1995,
-                2,
-                1));
+                MissionProgressEvent.Area(1995, MissingScoutAreaId)));
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Context.Client,
                 MissionProgressEvent.Interaction(24990)));
@@ -180,19 +174,15 @@ namespace Rasa.Test.Missions
         {
             using var harness = CreateHarness();
             var youngblood = harness.AddNpc(510207, 2561);
-            var woundedSurvivor = harness.AddNpc(510208, 2584);
 
             harness.SeedMission(1, 1994, (uint)MissionState.Completed, true);
             Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
                 harness.Context.Client,
                 youngblood.EntityId,
                 1995));
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+            Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Context.Client,
-                woundedSurvivor.EntityId,
-                1995,
-                2,
-                1));
+                MissionProgressEvent.Area(1995, MissingScoutAreaId)));
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Context.Client,
                 MissionProgressEvent.Interaction(24990)));
@@ -358,7 +348,7 @@ namespace Rasa.Test.Missions
             MissionManager manager = null;
             var now = new DateTime(2026, 9, 19, 12, 0, 0, DateTimeKind.Utc);
             var creatures = new CreatureManager(null, new ManifestationManager(context));
-            foreach (var creatureId in new[] { 39U, 50U, 510209U })
+            foreach (var creatureId in new[] { 39U, 50U, 510208U, 510209U })
             {
                 creatures.LoadedCreatures[creatureId] = new Creature
                 {
@@ -366,7 +356,11 @@ namespace Rasa.Test.Missions
                     EntityClass = (EntityClasses)4001,
                     Npc = new Npc
                     {
-                        NpcPackageId = creatureId == 510209U ? 2564U : creatureId
+                        NpcPackageId = creatureId == 510208U
+                            ? 2584U
+                            : creatureId == 510209U
+                                ? 2564U
+                                : creatureId
                     },
                     AppearanceData = new Dictionary<EquipmentData, AppearanceData>()
                 };

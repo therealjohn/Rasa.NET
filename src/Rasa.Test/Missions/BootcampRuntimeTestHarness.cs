@@ -98,6 +98,7 @@ namespace Rasa.Test.Missions
                          39U,
                          50U,
                          CaptainYoungbloodCreatureId,
+                         510208U,
                          CorporalVanValkenbergCreatureId,
                          TizzikGiCreatureId,
                          PracticeDummyCreatureId,
@@ -112,6 +113,8 @@ namespace Rasa.Test.Missions
                     {
                         NpcPackageId = creatureId == CaptainYoungbloodCreatureId
                             ? 2561U
+                            : creatureId == 510208U
+                                ? 2584U
                             : creatureId == CorporalVanValkenbergCreatureId
                                 ? 2564U
                                 : creatureId
@@ -486,6 +489,7 @@ namespace Rasa.Test.Missions
                              39U,
                              50U,
                              CaptainYoungbloodCreatureId,
+                             510208U,
                              CorporalVanValkenbergCreatureId,
                              TizzikGiCreatureId,
                              PracticeDummyCreatureId,
@@ -500,6 +504,8 @@ namespace Rasa.Test.Missions
                         {
                             NpcPackageId = creatureId == CaptainYoungbloodCreatureId
                                 ? 2561U
+                                : creatureId == 510208U
+                                    ? 2584U
                                 : creatureId == CorporalVanValkenbergCreatureId
                                     ? 2564U
                                     : creatureId

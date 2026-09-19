@@ -15,6 +15,7 @@ namespace Rasa.Test.Missions
     [DoNotParallelize]
     public class BootcampBombRetryTests
     {
+        private const uint MissingScoutAreaId = 435;
         private static readonly TimeSpan BombDeadline = TimeSpan.FromMinutes(10);
         private static readonly TimeSpan FuseDelay = TimeSpan.FromSeconds(5);
         private static readonly TimeSpan ArrivalDelay = TimeSpan.FromSeconds(2);
@@ -125,12 +126,60 @@ namespace Rasa.Test.Missions
                 harness.Client.Player.Missions[2005].Objectives[4].State);
         }
 
+        [TestMethod]
+        public void RetryReconnectDuringFusePreservesTheSatisfiedDeadlineAndPendingDetonation()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create();
+            StartTimedFinale(harness);
+            harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
+            harness.UtcNow += BombDeadline + TimeSpan.FromSeconds(1);
+            Assert.IsTrue(harness.Manager.EvaluateDeadlines(harness.Client));
+
+            var youngblood = BootcampRuntimeTestHarness.FindCreature(
+                harness.BootcampMap,
+                BootcampRuntimeTestHarness.CaptainYoungbloodCreatureId);
+            Assert.IsNotNull(youngblood);
+            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+                harness.Client,
+                youngblood.EntityId,
+                2005));
+
+            var deadline = ReadDeadline(harness, 2005);
+            harness.UtcNow = deadline.DueAtUtc - FuseDelay;
+
+            var dropship = FindScenarioObject(harness, "bootcamp-dropship-debris");
+            harness.UseObjectAndRecover(dropship);
+            Assert.AreEqual(CharacterMissionDeadlineState.Satisfied, ReadDeadline(harness, 2005).State);
+
+            harness.UtcNow += FuseDelay - TimeSpan.FromMilliseconds(1);
+            harness.ReconnectFresh();
+
+            Assert.AreEqual(CharacterMissionDeadlineState.Satisfied, ReadDeadline(harness, 2005).State);
+            Assert.AreEqual(
+                MissionObjectiveState.Incomplete,
+                harness.Client.Player.Missions[2005].Objectives[1].State);
+            Assert.IsFalse(harness.Manager.EvaluateDeadlines(harness.Client));
+            Assert.IsFalse(harness.Manager.TickScenarios(harness.Client));
+
+            harness.UtcNow += TimeSpan.FromMilliseconds(2);
+            Assert.IsTrue(harness.Manager.TickScenarios(harness.Client));
+            Assert.AreEqual(
+                MissionObjectiveState.Completed,
+                harness.Client.Player.Missions[2005].Objectives[1].State);
+
+            harness.UtcNow += ArrivalDelay;
+            Assert.IsTrue(harness.Manager.TickScenarios(harness.Client));
+            Assert.AreEqual(
+                MissionObjectiveState.Incomplete,
+                harness.Client.Player.Missions[2005].Objectives[4].State);
+            Assert.IsNotNull(BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, 2564));
+        }
+
         private static void StartTimedFinale(BootcampRuntimeTestHarness.Harness harness)
         {
             var youngblood = harness.AddNpc(
                 BootcampRuntimeTestHarness.CaptainYoungbloodCreatureId,
                 2561);
-            var woundedSurvivor = harness.AddNpc(510208, 2584);
 
             harness.SeedMission(1, 1994, (uint)MissionState.Completed, completeable: true);
 
@@ -138,12 +187,9 @@ namespace Rasa.Test.Missions
                 harness.Client,
                 youngblood.EntityId,
                 1995));
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+            Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Client,
-                woundedSurvivor.EntityId,
-                1995,
-                2,
-                1));
+                MissionProgressEvent.Area(1995, MissingScoutAreaId)));
         }
 
         private static DynamicObject FindScenarioObject(

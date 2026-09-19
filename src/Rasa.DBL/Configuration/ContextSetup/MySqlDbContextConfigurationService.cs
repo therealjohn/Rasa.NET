@@ -1,7 +1,6 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace Rasa.Configuration.ContextSetup
@@ -50,8 +49,6 @@ namespace Rasa.Configuration.ContextSetup
             }
 
             dbContextOptionsBuilder.UseMySql(connectionString, serverVersion);
-            dbContextOptionsBuilder.ConfigureWarnings(warnings =>
-                warnings.Ignore(RelationalEventId.PendingModelChangesWarning));
             dbContextOptionsBuilder.ReplaceService<IHistoryRepository, MySqlMigrationHistoryRepository>();
         }
     }
