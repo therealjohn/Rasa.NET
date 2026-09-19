@@ -32,12 +32,35 @@ namespace Rasa.Test.Missions
 
             harness.SeedMission(harness.Client.Player.Id, BootcampRuntimeTestHarness.MissionInitiation, (uint)MissionState.Completed, false);
 
+            Assert.IsFalse(harness.Manager.TryAcceptNpcMission(
+                harness.Client,
+                delessio.EntityId,
+                BootcampRuntimeTestHarness.MissionGearingUp));
             Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
                 harness.Client,
                 mcAllister.EntityId,
                 BootcampRuntimeTestHarness.MissionGearingUp));
+            var gained = harness.Context.Drain().OfType<MissionGainedPacket>().Single();
+            CollectionAssert.AreEqual(
+                new[]
+                {
+                    (10U, (uint)1, MissionObjectiveState.Completed),
+                    (4U, (uint)2, MissionObjectiveState.Incomplete),
+                    (1U, (uint)3, MissionObjectiveState.Inactive),
+                    (2U, (uint)4, MissionObjectiveState.Inactive),
+                    (5U, (uint)5, MissionObjectiveState.Inactive),
+                    (6U, (uint)6, MissionObjectiveState.Inactive),
+                    (3U, (uint)7, MissionObjectiveState.Inactive),
+                    (9U, (uint)8, MissionObjectiveState.Inactive),
+                    (8U, (uint)9, MissionObjectiveState.Inactive),
+                    (7U, (uint)10, MissionObjectiveState.Inactive)
+                },
+                gained.MissionInfo.ObjectivesList
+                    .Select(objective => (objective.ObjectiveId, objective.Ordinal, objective.State))
+                    .ToArray());
             AssertMissionOrder(
                 harness.Client.Player.Missions[BootcampRuntimeTestHarness.MissionGearingUp],
+                (10U, MissionObjectiveState.Completed),
                 (4U, MissionObjectiveState.Incomplete),
                 (1U, MissionObjectiveState.Inactive),
                 (2U, MissionObjectiveState.Inactive),
@@ -47,6 +70,13 @@ namespace Rasa.Test.Missions
                 (9U, MissionObjectiveState.Inactive),
                 (8U, MissionObjectiveState.Inactive),
                 (7U, MissionObjectiveState.Inactive));
+            Assert.IsFalse(harness.Manager.TryAcceptNpcMission(
+                harness.Client,
+                mcAllister.EntityId,
+                BootcampRuntimeTestHarness.MissionGearingUp));
+            Assert.AreEqual(
+                0,
+                harness.Context.Drain().OfType<MissionGainedPacket>().Count());
 
             Assert.IsFalse(harness.Manager.TryCompleteNpcObjective(
                 harness.Client,
@@ -65,6 +95,18 @@ namespace Rasa.Test.Missions
                 "bootcamp-equipment-crate"));
 
             harness.Reconnect();
+            AssertMissionOrder(
+                harness.Client.Player.Missions[BootcampRuntimeTestHarness.MissionGearingUp],
+                (10U, MissionObjectiveState.Completed),
+                (4U, MissionObjectiveState.Completed),
+                (1U, MissionObjectiveState.Incomplete),
+                (2U, MissionObjectiveState.Inactive),
+                (5U, MissionObjectiveState.Inactive),
+                (6U, MissionObjectiveState.Inactive),
+                (3U, MissionObjectiveState.Inactive),
+                (9U, MissionObjectiveState.Inactive),
+                (8U, MissionObjectiveState.Inactive),
+                (7U, MissionObjectiveState.Inactive));
             Assert.IsNotNull(BootcampRuntimeTestHarness.FindScenarioObject(
                 harness.BootcampMap,
                 "bootcamp-equipment-crate"));
@@ -101,6 +143,7 @@ namespace Rasa.Test.Missions
             harness.Reconnect();
             AssertMissionOrder(
                 harness.Client.Player.Missions[BootcampRuntimeTestHarness.MissionGearingUp],
+                (10U, MissionObjectiveState.Completed),
                 (4U, MissionObjectiveState.Completed),
                 (1U, MissionObjectiveState.Completed),
                 (2U, MissionObjectiveState.Completed),

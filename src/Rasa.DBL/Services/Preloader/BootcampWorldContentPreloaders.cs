@@ -162,15 +162,16 @@ namespace Rasa.Services.Preloader
             yield return Objective(1990, 1, 21148, 21149, 1, "Approach the Eloh Hologram");
             yield return Objective(1990, 2, 21150, 21151, 2, "Approach the Eloh Hologram", initialState: ObjectiveInactiveState);
 
-            yield return Objective(1992, 4, 21482, 21483, 1, "Speak to Captain Delessio");
-            yield return Objective(1992, 1, 21174, 21175, 2, "Get your gear from the nearby crate", initialState: ObjectiveInactiveState);
-            yield return Objective(1992, 2, 21176, 21177, 3, "Equip the gear", initialState: ObjectiveInactiveState);
-            yield return Objective(1992, 5, 21485, 21486, 4, "Speak to Captain Delessio", initialState: ObjectiveInactiveState);
-            yield return Objective(1992, 6, 21489, 21490, 5, "Speak to Corporal Hartmann by the Firing Range", initialState: ObjectiveInactiveState);
-            yield return Objective(1992, 3, 21178, 21179, 6, "Shoot the Practice Dummy", initialState: ObjectiveInactiveState);
-            yield return Objective(1992, 9, 21663, 21664, 7, "Speak to Corporal Hartmann", initialState: ObjectiveInactiveState);
-            yield return Objective(1992, 8, 21666, 21667, 8, "Use Lightning on the Target Dummy", initialState: ObjectiveInactiveState);
-            yield return Objective(1992, 7, 21492, 21493, 9, "Speak to Corporal Hartmann", initialState: ObjectiveInactiveState);
+            yield return Objective(1992, 10, 21165, 21166, 1, "McAllister handoff acceptance", initialState: ObjectiveCompletedState);
+            yield return Objective(1992, 4, 21482, 21483, 2, "Speak to Captain Delessio");
+            yield return Objective(1992, 1, 21174, 21175, 3, "Get your gear from the nearby crate", initialState: ObjectiveInactiveState);
+            yield return Objective(1992, 2, 21176, 21177, 4, "Equip the gear", initialState: ObjectiveInactiveState);
+            yield return Objective(1992, 5, 21485, 21486, 5, "Speak to Captain Delessio", initialState: ObjectiveInactiveState);
+            yield return Objective(1992, 6, 21489, 21490, 6, "Speak to Corporal Hartmann by the Firing Range", initialState: ObjectiveInactiveState);
+            yield return Objective(1992, 3, 21178, 21179, 7, "Shoot the Practice Dummy", initialState: ObjectiveInactiveState);
+            yield return Objective(1992, 9, 21663, 21664, 8, "Speak to Corporal Hartmann", initialState: ObjectiveInactiveState);
+            yield return Objective(1992, 8, 21666, 21667, 9, "Use Lightning on the Target Dummy", initialState: ObjectiveInactiveState);
+            yield return Objective(1992, 7, 21492, 21493, 10, "Speak to Corporal Hartmann", initialState: ObjectiveInactiveState);
 
             yield return Objective(1994, 4, 21670, 21671, 1, "Speak to Corporal DeSimone");
             yield return Objective(1994, 2, 21336, 21337, 2, "Find a way out of the cave", initialState: ObjectiveInactiveState);
@@ -493,11 +494,15 @@ namespace Rasa.Services.Preloader
             yield return Evidence(1992, 1, MissionEvidenceOwnerKind.Mission, 1992, MissionEvidenceSourceKind.Client, null,
                 @"C:\Users\johmil\Projects\trpython\data\generated\client\objectiveconversation.pyo_dis", 1.0,
                 "objectiveconversation binds packages 2560 and 2563 for 1992 conversations");
-            yield return Evidence(1992, 2, MissionEvidenceOwnerKind.Reward, 58, MissionEvidenceSourceKind.Reconstruction,
+            yield return Evidence(1992, 2, MissionEvidenceOwnerKind.Objective, 10, MissionEvidenceSourceKind.Reconstruction,
+                null,
+                @"C:\Users\johmil\Projects\trpython\data\generated\client\missionconversation.pyo_dis", 0.8,
+                "client objectiveconversation has no McAllister row for 1992, so objective 10 reconstructs the McAllister handoff from missionconversation 1992/1-4 and missiontextlanguage 21165/21166 without renumbering client objectives");
+            yield return Evidence(1992, 3, MissionEvidenceOwnerKind.Reward, 58, MissionEvidenceSourceKind.Reconstruction,
                 "https://raw.githubusercontent.com/Blizz127/tabula-rasa-server/2f0cbbdfe4bb8440286261b205f78d75fca85d0c/docs/evidence/bootcamp-d11-reconstruction-manifest.json",
                 @"C:\Users\johmil\Projects\trpython\data\generated\client\language\english\modulenamelanguage.pyo_dis", 0.55,
                 "crate item templates 13066/13096/13156/13186/13713 are compatible level-1 analogues; maker variants unresolved");
-            yield return Evidence(1992, 3, MissionEvidenceOwnerKind.Scenario, 1, MissionEvidenceSourceKind.Reconstruction,
+            yield return Evidence(1992, 4, MissionEvidenceOwnerKind.Scenario, 1, MissionEvidenceSourceKind.Reconstruction,
                 "https://raw.githubusercontent.com/Blizz127/tabula-rasa-server/2f0cbbdfe4bb8440286261b205f78d75fca85d0c/docs/evidence/bootcamp-d11-positions.json",
                 @"C:\Users\johmil\Projects\trpython\data\generated\client\missionobjective.pyo_dis", 0.75,
                 "position_key=object.supply_crate, object.practice_dummy, npc.hartmann; measured and navmesh-snapped");

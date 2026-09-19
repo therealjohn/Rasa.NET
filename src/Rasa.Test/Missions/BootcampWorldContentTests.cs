@@ -190,6 +190,7 @@ namespace Rasa.Test.Missions
 
                 AssertObjectiveStates(snapshot, 1990, (1U, MissionObjectiveState.Incomplete), (2U, MissionObjectiveState.Inactive));
                 AssertObjectiveStates(snapshot, 1992,
+                    (10U, MissionObjectiveState.Completed),
                     (4U, MissionObjectiveState.Incomplete),
                     (1U, MissionObjectiveState.Inactive),
                     (2U, MissionObjectiveState.Inactive),
@@ -212,6 +213,36 @@ namespace Rasa.Test.Missions
                 AssertObjectiveStates(snapshot, 2005,
                     (1U, MissionObjectiveState.Incomplete),
                     (4U, MissionObjectiveState.Inactive));
+            });
+        }
+
+        [TestMethod]
+        public void BootcampMissionContentKeepsClient1992ObjectivesAndAddsReconstructedMcAllisterHandoff()
+        {
+            WithDisposableSqliteWorld((context, _) =>
+            {
+                context.Database.Migrate();
+
+                var snapshot = LoadSnapshot(context);
+                var orderedObjectiveIds = snapshot.Definitions[1992].Mission.Objectives.Values
+                    .OrderBy(objective => objective.Ordinal)
+                    .Select(objective => objective.ObjectiveId)
+                    .ToArray();
+                CollectionAssert.AreEqual(
+                    new uint[] { 10, 4, 1, 2, 5, 6, 3, 9, 8, 7 },
+                    orderedObjectiveIds);
+
+                var reconstructedHandoff = context.MissionEvidenceEntries.Single(entry =>
+                    entry.MissionId == 1992 &&
+                    entry.ContentRevision == BootcampRevision &&
+                    entry.OwnerKind == MissionEvidenceOwnerKind.Objective &&
+                    entry.OwnerId == 10);
+                Assert.AreEqual(
+                    MissionEvidenceSourceKind.Reconstruction,
+                    reconstructedHandoff.SourceKind);
+                StringAssert.Contains(
+                    reconstructedHandoff.ReconstructionNote,
+                    "McAllister handoff");
             });
         }
 
