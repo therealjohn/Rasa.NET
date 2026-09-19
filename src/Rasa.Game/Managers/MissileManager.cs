@@ -54,7 +54,15 @@ namespace Rasa.Managers
         /// </summary>
         private static bool IsOnMap(MapChannel mapChannel, Actor actor)
         {
-            return actor != null && actor.MapContextId == mapChannel.MapInfo.MapContextId;
+            if (actor == null || mapChannel == null ||
+                actor.MapContextId != mapChannel.MapInfo.MapContextId)
+                return false;
+
+            return actor switch
+            {
+                Manifestation player => player.MapChannel == mapChannel,
+                _ => actor.RuntimeMapChannel == mapChannel
+            };
         }
 
         /// <summary>

@@ -837,8 +837,17 @@ namespace Rasa.Managers
                     client.Player.Disconected || client.Player.RemoveFromMap || client.Player.LogoutActive ||
                     !CellManager.Instance.IsInWorld(client) ||
                     !Teleporters.TryGetValue(packet.WaypointId, out var teleporter) ||
-                    teleporter.ObjectData is not WaypointInfo info ||
-                    !Maps.MapChannelArray.TryGetValue(teleporter.MapContextId, out var destinationMap))
+                    teleporter.ObjectData is not WaypointInfo info)
+                {
+                    RejectTravel(client, "Invalid waypoint or player state.");
+                    return;
+                }
+
+                var destinationMap = teleporter.RuntimeMapChannel ??
+                    (packet.MapInstanceId > 1
+                        ? Maps.FindByContextAndInstance(teleporter.MapContextId, packet.MapInstanceId)
+                        : Maps.FindByContextId(teleporter.MapContextId));
+                if (destinationMap == null)
                 {
                     RejectTravel(client, "Invalid waypoint or player state.");
                     return;
@@ -1055,7 +1064,8 @@ namespace Rasa.Managers
         {
             foreach (var dropship in Dropships.Values.Where(ship => ship.Client == client).ToArray())
             {
-                if (Maps.MapChannelArray.TryGetValue(dropship.MapContextId, out var map))
+                var map = dropship.RuntimeMapChannel ?? Maps.FindByContextId(dropship.MapContextId);
+                if (map != null)
                     CellManager.Instance.RemoveFromWorld(map, dropship);
                 Dropships.Remove(dropship.EntityId);
             }
@@ -1063,7 +1073,9 @@ namespace Rasa.Managers
 
         internal void PlayerEnterWaypoint(DynamicObject obj)
         {
-            var mapChannel = Maps.FindByContextId(obj.MapContextId);
+            var mapChannel = obj.RuntimeMapChannel;
+            if (mapChannel == null)
+                return;
             if (!CellManager.TryGetCellCoordinates(obj.Position, out var x, out var z))
             {
                 Logger.WriteLog(LogType.Error, $"Invalid waypoint position for {obj.EntityId}.");
@@ -1111,7 +1123,7 @@ namespace Rasa.Managers
                 var client = obj.TriggeredByPlayers[i];
 
                 if (client.State != ClientState.Ingame ||
-                    client.Player?.MapChannel?.MapInfo.MapContextId != obj.MapContextId ||
+                    client.Player?.MapChannel != obj.RuntimeMapChannel ||
                     !client.Player.IsNear2m(obj))
                 {
                     obj.TriggeredByPlayers.RemoveAt(i);

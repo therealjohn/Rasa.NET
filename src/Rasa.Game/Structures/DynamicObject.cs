@@ -21,6 +21,7 @@ namespace Rasa.Structures
         public Vector3 Position { get; set; }
         public double Rotation { get; set; }
         public uint MapContextId { get; set; }
+        public MapChannel RuntimeMapChannel { get; set; }
         public Factions Faction { get; set; }
         public long RespawnTime { get; set; }
         public DynamicObjectType DynamicObjectType { get; set; }

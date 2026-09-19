@@ -9,6 +9,8 @@ namespace Rasa.Structures
         // ToDo
         public MapInfo MapInfo { get; set; }
         public uint InstanceId { get; set; } = 1;
+        public bool IsPrivateInstance { get; set; }
+        public uint OwnerCharacterId { get; set; }
         // timers
         //public int TimerClientEffectUpdate { get; set; }
         //public int TimerMissileUpdate { get; set; }

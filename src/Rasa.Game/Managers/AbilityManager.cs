@@ -409,7 +409,20 @@ namespace Rasa.Managers
             };
 
             // Entity ids are global, cells are per map: a target on another map is not here.
-            return target != null && target.MapContextId == mapChannel.MapInfo.MapContextId ? target : null;
+            return IsOnMap(mapChannel, target) ? target : null;
+        }
+
+        private static bool IsOnMap(MapChannel mapChannel, Actor actor)
+        {
+            if (actor == null || mapChannel == null ||
+                actor.MapContextId != mapChannel.MapInfo.MapContextId)
+                return false;
+
+            return actor switch
+            {
+                Manifestation player => player.MapChannel == mapChannel,
+                _ => actor.RuntimeMapChannel == mapChannel
+            };
         }
 
         /// <summary>
@@ -933,6 +946,7 @@ namespace Rasa.Managers
                 .Where(candidate => candidate != null &&
                                     candidate.EntityId != primary.EntityId &&
                                     candidate.MapContextId == mapChannel.MapInfo.MapContextId &&
+                                    candidate.RuntimeMapChannel == mapChannel &&
                                     candidate.State != CharacterState.Dead &&
                                     EntityManager.Instance.GetEntityType(candidate.EntityId) == EntityType.Creature &&
                                     EntityManager.Instance.Creatures.TryGetValue(candidate.EntityId, out var registered) &&
@@ -961,8 +975,9 @@ namespace Rasa.Managers
             return target is Creature creature &&
                    mapChannel != null &&
                    player != null &&
-                   creature.MapContextId == mapChannel.MapInfo.MapContextId &&
-                   EntityManager.Instance.GetEntityType(creature.EntityId) == EntityType.Creature &&
+            creature.MapContextId == mapChannel.MapInfo.MapContextId &&
+            creature.RuntimeMapChannel == mapChannel &&
+            EntityManager.Instance.GetEntityType(creature.EntityId) == EntityType.Creature &&
                    EntityManager.Instance.Creatures.TryGetValue(
                        creature.EntityId, out var registered) &&
                    ReferenceEquals(creature, registered) &&

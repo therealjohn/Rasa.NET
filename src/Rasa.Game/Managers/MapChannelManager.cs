@@ -32,6 +32,7 @@ namespace Rasa.Managers
         private readonly Action<Client, bool> _refreshStats;
         private readonly Action<Client> _assignPlayer;
         private readonly Action<Client> _enterMapChannels;
+        private readonly PrivateMapInstanceService _privateInstances;
         public static MapChannelManager Instance
         {
             get
@@ -52,7 +53,8 @@ namespace Rasa.Managers
         public MapChannelManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory,
             Func<long> clock = null, Action<Client, CharacterUpdate, object> updateCharacter = null,
             Action<Client> disconnect = null, Action<Client, bool> refreshStats = null,
-            Action<Client> assignPlayer = null, Action<Client> enterMapChannels = null)
+            Action<Client> assignPlayer = null, Action<Client> enterMapChannels = null,
+            PrivateMapInstanceService privateInstances = null)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
             _clock = clock ?? (() => Environment.TickCount64);
@@ -63,6 +65,7 @@ namespace Rasa.Managers
                 ManifestationManager.Instance.UpdateStatsValues(client, fullReset));
             _assignPlayer = assignPlayer ?? ManifestationManager.Instance.AssignPlayer;
             _enterMapChannels = enterMapChannels ?? CommunicatorManager.Instance.PlayerEnterMap;
+            _privateInstances = privateInstances ?? PrivateMapInstanceService.Instance;
         }
 
         /// <summary>
@@ -125,6 +128,32 @@ namespace Rasa.Managers
         public MapChannel FindByContextId(uint contextId)
         {
             return MapChannelArray.TryGetValue(contextId, out var mapChannel) ? mapChannel : null;
+        }
+
+        public MapChannel FindByContextAndInstance(uint contextId, uint instanceId)
+        {
+            if (instanceId <= 1)
+                return FindByContextId(contextId);
+
+            return _privateInstances.FindByContextAndInstance(contextId, instanceId);
+        }
+
+        public MapChannel FindOwnedPrivateInstance(uint contextId, uint ownerCharacterId)
+        {
+            return _privateInstances.FindOwnedInstance(contextId, ownerCharacterId);
+        }
+
+        public MapChannel GetOrCreatePrivateInstance(uint contextId, uint ownerCharacterId)
+        {
+            return !MapChannelArray.TryGetValue(contextId, out var template)
+                ? null
+                : _privateInstances.GetOrCreate(template, ownerCharacterId);
+        }
+
+        public void ReleaseOwnedPrivateInstances(uint ownerCharacterId)
+        {
+            foreach (var map in _privateInstances.ReleaseOwned(ownerCharacterId))
+                CleanupPrivateMapChannel(map);
         }
 
         public Dictionary<int, AbilityDrawerData> GetPlayerAbilities(uint characterId)
@@ -201,9 +230,11 @@ namespace Rasa.Managers
             if (Timer.IsTriggered("AutoFire"))
                 ManifestationManager.Instance.AutoFireTimerDoWork(delta);
 
-            foreach (var t in MapChannelArray)
+            foreach (var mapChannel in MapChannelArray.Values
+                         .Concat(_privateInstances.Snapshot())
+                         .Distinct()
+                         .ToArray())
             {
-                var mapChannel = t.Value;
 
                 mapChannel.MapChannelElapsed += delta;
                 DynamicObjectManager.Instance.DropshipsWorker(mapChannel, delta);
@@ -348,7 +379,7 @@ namespace Rasa.Managers
                     return;
                 }
 
-                var mapChannel = MapChannelArray[client.LoadingMap];
+                var mapChannel = client.Player.MapChannel;
                 if (!DynamicObjectManager.Instance.CompleteMapLoadTransfer(client))
                     return;
 
@@ -555,7 +586,7 @@ namespace Rasa.Managers
             DynamicObjectManager.Instance.CleanupClientDropships(client);
             CommunicatorManager.Instance.LeaveMapChannels(client);
 
-            foreach (var map in MapChannelArray.Values)
+            foreach (var map in MapChannelArray.Values.Concat(_privateInstances.Snapshot()).Distinct())
             {
                 CellManager.Instance.DetachClient(map, client);
                 map.ClientList.RemoveAll(member => member == client);
@@ -775,6 +806,10 @@ namespace Rasa.Managers
                 if (mapChannel.ClientList.Contains(client) || mapChannel.QueuedClients.Contains(client))
                     return;
 
+            foreach (var mapChannel in _privateInstances.Snapshot())
+                if (mapChannel.ClientList.Contains(client) || mapChannel.QueuedClients.Contains(client))
+                    return;
+
             player.RemoveFromMap = false;
 
             try
@@ -808,6 +843,69 @@ namespace Rasa.Managers
             var map = new MapInstance(new MapInfo(1220, "adv_foreas_concordia_wilderness", 1556, 0));
 
             return map;
+        }
+
+        private static void CleanupPrivateMapChannel(MapChannel map)
+        {
+            if (map == null)
+                return;
+
+            foreach (var queued in map.QueuedClients.ToArray())
+            {
+                RemoveQueuedClient(map, queued);
+                if (queued?.Player?.MapChannel == map)
+                {
+                    queued.Player.MapChannel = null;
+                    queued.Player.RuntimeMapChannel = null;
+                    queued.Player.Cells = new uint[5, 5];
+                }
+            }
+
+            foreach (var client in map.ClientList.Distinct().ToArray())
+            {
+                CellManager.Instance.DetachClient(map, client);
+                if (client?.Player?.MapChannel == map)
+                {
+                    client.Player.MapChannel = null;
+                    client.Player.RuntimeMapChannel = null;
+                    client.Player.Cells = new uint[5, 5];
+                }
+            }
+            map.ClientList.Clear();
+
+            foreach (var creature in map.MapCellInfo.Cells.Values
+                         .SelectMany(cell => cell.CreatureList)
+                         .Distinct()
+                         .ToArray())
+                CellManager.Instance.RemoveCreatureFromWorld(map, creature);
+
+            var dynamicObjects = map.MapCellInfo.Cells.Values
+                .SelectMany(cell => cell.DynamicObjectList)
+                .Concat(map.DynamicObjects)
+                .Concat(map.ControlPoints.Values)
+                .Concat(map.FootLockers.Values)
+                .Concat(map.Teleporters.Values)
+                .Concat(map.Kraftwerks.Values)
+                .Distinct()
+                .ToArray();
+            foreach (var dynamicObject in dynamicObjects)
+                CellManager.Instance.RemoveFromWorld(map, dynamicObject);
+
+            foreach (var loot in map.LootDispensers.Values.ToArray())
+            {
+                foreach (var item in loot.LootItems)
+                    if (item?.Item != null)
+                        EntityManager.Instance.ReleaseEntity(item.Item.EntityId, EntityType.Item);
+            }
+
+            map.PerformRecovery.Clear();
+            map.DynamicObjects.Clear();
+            map.ControlPoints.Clear();
+            map.FootLockers.Clear();
+            map.Teleporters.Clear();
+            map.Kraftwerks.Clear();
+            map.LootDispensers.Clear();
+            map.MapCellInfo.Cells.Clear();
         }
     }
 }

@@ -516,7 +516,9 @@ namespace Rasa.Managers
 
         public void UpdateCreatureAppearance(Creature creature)
         {
-            var mapChannel = MapChannelManager.Instance.MapChannelArray[creature.MapContextId];
+            var mapChannel = creature?.RuntimeMapChannel;
+            if (mapChannel == null)
+                return;
             CellManager.Instance.CellCallMethod(mapChannel, creature, new AppearanceDataPacket(creature.AppearanceData));
         }
 

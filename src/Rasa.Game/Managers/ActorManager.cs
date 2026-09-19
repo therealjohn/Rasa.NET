@@ -164,7 +164,11 @@ namespace Rasa.Managers
 
             health.Current += applied;
 
-            var mapChannel = MapChannelManager.Instance.FindByContextId(target.MapContextId);
+            var mapChannel = target switch
+            {
+                Manifestation player => player.MapChannel,
+                _ => target.RuntimeMapChannel
+            };
 
             // No map means nobody can see them, which is not a reason to refuse the heal - the
             // health is still theirs. It is a reason not to try to broadcast it.
@@ -330,7 +334,11 @@ namespace Rasa.Managers
 
             armor.Current += applied;
 
-            var mapChannel = MapChannelManager.Instance.FindByContextId(target.MapContextId);
+            var mapChannel = target switch
+            {
+                Manifestation player => player.MapChannel,
+                _ => target.RuntimeMapChannel
+            };
 
             if (mapChannel != null)
                 CellManager.Instance.CellCallMethod(mapChannel, target, new UpdateArmorPacket(armor, target.EntityId));

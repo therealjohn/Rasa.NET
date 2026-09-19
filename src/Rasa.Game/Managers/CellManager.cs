@@ -49,6 +49,7 @@ namespace Rasa.Managers
         {
             if (creature == null)
                 return;
+            creature.RuntimeMapChannel = mapChannel;
             // register creature entity
             EntityManager.Instance.RegisterEntity(creature.EntityId, EntityType.Creature);
             EntityManager.Instance.RegisterCreature(creature);
@@ -124,6 +125,7 @@ namespace Rasa.Managers
         {
             if (dynamicObject == null)
                 return;
+            dynamicObject.RuntimeMapChannel = mapChannel;
 
             // register object entity
             EntityManager.Instance.RegisterEntity(dynamicObject.EntityId, EntityType.Object);
@@ -171,6 +173,7 @@ namespace Rasa.Managers
             client.Player.MapChannel.MapCellInfo.Cells[cellMatrix[2, 2]].ClientList.Add(client);
             // add cellMatrix to client
             client.Player.Cells = cellMatrix;
+            client.Player.RuntimeMapChannel = client.Player.MapChannel;
 
             // notify client about players, creatures, objects
             var ListOfClients = GetClientsInCells(client.Player.MapChannel, cellMatrix);
@@ -212,6 +215,7 @@ namespace Rasa.Managers
 
             LootDispenserManager.Instance.RemoveForCreature(mapChannel, creature);
             EntityManager.Instance.ReleaseEntity(creature.EntityId, EntityType.Creature);
+            creature.RuntimeMapChannel = null;
             if (creature.State == CharacterState.Dead && creature.SpawnPool != null)
                 SpawnPoolManager.Instance.DecreaseDeadCreatureCount(creature.SpawnPool);
             return true;
@@ -260,6 +264,7 @@ namespace Rasa.Managers
             EntityManager.Instance.UnregisterEntity(dynObject.EntityId);
             EntityManager.Instance.UnregisterDynamicObject(dynObject.EntityId);
             EntityManager.Instance.FreeEntity(dynObject.EntityId);
+            dynObject.RuntimeMapChannel = null;
 
             var cellX = (uint)((dynObject.Position.X / CellSize) + CellBias);
             var cellZ = (uint)((dynObject.Position.Z / CellSize) + CellBias);
@@ -322,7 +327,10 @@ namespace Rasa.Managers
             foreach (var cell in memberships)
                 cell.ClientList.RemoveAll(player => player == client);
             if (client.Player.MapChannel == map)
+            {
                 client.Player.Cells = new uint[5, 5];
+                client.Player.RuntimeMapChannel = null;
+            }
         }
 
         public void UpdateVisibility(MapChannel mapChannel)
@@ -509,10 +517,13 @@ namespace Rasa.Managers
         #region SendPackets
         internal void CellMoveObject(Creature creature, Movement movementData)
         {
+            var mapChannel = creature?.RuntimeMapChannel;
+            if (mapChannel == null)
+                return;
+
             // calculate initial cell(x, z)
             var cellPosX = (uint)(creature.Position.X / CellSize + CellBias);
             var cellPosZ = (uint)(creature.Position.Z / CellSize + CellBias);
-            var mapChannel = MapChannelManager.Instance.FindByContextId(creature.MapContextId);
 
             // create matrix
             var cellMatrix = CreateCellMatrix(mapChannel, cellPosX, cellPosZ);
@@ -523,7 +534,9 @@ namespace Rasa.Managers
 
         internal void CellCallMethod(DynamicObject obj, PythonPacket packet)
         {
-            var mapChannel = MapChannelManager.Instance.FindByContextId(obj.MapContextId);
+            var mapChannel = obj?.RuntimeMapChannel;
+            if (mapChannel == null)
+                return;
             CellCallMethod(mapChannel, obj, packet);
         }
 
@@ -539,10 +552,13 @@ namespace Rasa.Managers
 
         internal void CellCallMethod(Creature creature, PythonPacket packet)
         {
+            var mapChannel = creature?.RuntimeMapChannel;
+            if (mapChannel == null)
+                return;
+
             // calculate initial cell(x, z)
             var cellPosX = (uint)(creature.Position.X / CellSize + CellBias);
             var cellPosZ = (uint)(creature.Position.Z / CellSize + CellBias);
-            var mapChannel = MapChannelManager.Instance.FindByContextId(creature.MapContextId);
 
             // create matrix
             var cellMatrix = CreateCellMatrix(mapChannel, cellPosX, cellPosZ);
