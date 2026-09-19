@@ -355,9 +355,6 @@ namespace Rasa.Managers
                 }
             }
 
-            // give basic items
-            GiveBasicItems(client, characterId);
-
             // give first lockbox tab
             if (unitOfWork.CharacterLockboxes.Get(client.AccountEntry.Id) == null)
                 unitOfWork.CharacterLockboxes.Add(client.AccountEntry.Id);
@@ -656,18 +653,6 @@ namespace Rasa.Managers
             var databaseEntry = appearanceData.GetDatabaseEntry();
             databaseEntry.Class = unitOfWork.Equipment.GetItemClass(appearanceData.Class);
             return databaseEntry;
-        }
-
-        private void GiveBasicItems(Client client, uint characterId)
-        {
-            using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
-            unitOfWork.CharacterInventories.AddInvItem(client.AccountEntry.Id, characterId, (int)InventoryType.Personal, 0, unitOfWork.Items.CreateItem(new Item(145, 1, EntityClassManager.Instance.LoadedEntityClasses[ItemManager.Instance.ItemTemplateItemClass[17131]].ItemClassInfo.MaxHitPoints, 2139062144)));
-            unitOfWork.CharacterInventories.AddInvItem(client.AccountEntry.Id, characterId, (int)InventoryType.Personal, 50, unitOfWork.Items.CreateItem(new Item(28, 100, EntityClassManager.Instance.LoadedEntityClasses[ItemManager.Instance.ItemTemplateItemClass[28]].ItemClassInfo.MaxHitPoints, 2139062144)));
-            unitOfWork.CharacterInventories.AddInvItem(client.AccountEntry.Id, characterId, (int)InventoryType.Personal, 1, unitOfWork.Items.CreateItem(new Item(13126, 1, EntityClassManager.Instance.LoadedEntityClasses[ItemManager.Instance.ItemTemplateItemClass[13126]].ItemClassInfo.MaxHitPoints, 2139062144)));
-            unitOfWork.CharacterInventories.AddInvItem(client.AccountEntry.Id, characterId, (int)InventoryType.Personal, 2, unitOfWork.Items.CreateItem(new Item(13186, 1, EntityClassManager.Instance.LoadedEntityClasses[ItemManager.Instance.ItemTemplateItemClass[13186]].ItemClassInfo.MaxHitPoints, 2139062144)));
-            unitOfWork.CharacterInventories.AddInvItem(client.AccountEntry.Id, characterId, (int)InventoryType.Personal, 3, unitOfWork.Items.CreateItem(new Item(13156, 1, EntityClassManager.Instance.LoadedEntityClasses[ItemManager.Instance.ItemTemplateItemClass[13156]].ItemClassInfo.MaxHitPoints, 2139062144)));
-            //unitOfWork.CharacterInventories.AddInvItem(client.AccountEntry.Id, characterId, (int)InventoryType.Personal, 4, unitOfWork.Items.CreateItem(new Item(13066, 1, EntityClassManager.Instance.LoadedEntityClasses[ItemManager.Instance.ItemTemplateItemClass[13066]].ItemClassInfo.MaxHitPoints, 2139062144)));
-            //unitOfWork.CharacterInventories.AddInvItem(client.AccountEntry.Id, characterId, (int)InventoryType.Personal, 5, unitOfWork.Items.CreateItem(new Item(13096, 1, EntityClassManager.Instance.LoadedEntityClasses[ItemManager.Instance.ItemTemplateItemClass[13096]].ItemClassInfo.MaxHitPoints, 2139062144)));
         }
 
         /// <summary>

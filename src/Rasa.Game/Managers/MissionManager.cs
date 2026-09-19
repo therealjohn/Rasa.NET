@@ -288,6 +288,7 @@ namespace Rasa.Managers
     public class MissionManager
     {
         private const int MissionLogCapacity = 30;
+        private const uint InitiationMissionId = 1990;
         private static MissionManager _instance;
         private static readonly object InstanceLock = new();
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
@@ -1789,7 +1790,8 @@ namespace Rasa.Managers
                 if (!IsActivePlayer(client) ||
                     !TryGetOperationalMission(missionId, out _) ||
                     !client.Player.Missions.TryGetValue(missionId, out var log) ||
-                    log.State != MissionState.Active)
+                    log.State != MissionState.Active ||
+                    missionId == InitiationMissionId)
                     return false;
 
                 try

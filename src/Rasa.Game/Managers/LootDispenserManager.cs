@@ -123,6 +123,9 @@ namespace Rasa.Managers
         /// <summary>How long a corpse with nothing left on it stays in the world.</summary>
         public const long EmptyCorpseMs = 20000;
 
+        /// <summary>How long a non-lootable mission scenario corpse stays before its spawn pool may rebuild it.</summary>
+        public const long ScenarioActorCorpseMs = 1000;
+
         /// <summary>How long a corpse that still has something on it stays.</summary>
         public const long LootableCorpseMs = 120000;
 
@@ -176,6 +179,16 @@ namespace Rasa.Managers
             Creature creature,
             long deadTime)
         {
+            if (creature?.SpawnPool?.ScenarioKey != null)
+            {
+                var lifetime = Math.Max(
+                    ScenarioActorCorpseMs,
+                    creature.SpawnPool.RespawnTime > 0
+                        ? creature.SpawnPool.RespawnTime
+                        : ScenarioActorCorpseMs);
+                return Math.Max(deadTime, creature.Controller?.DeadTime ?? 0) >= lifetime;
+            }
+
             if (creature.CorpseLootEntityId == 0 ||
                 !mapChannel.LootDispensers.TryGetValue(
                     creature.CorpseLootEntityId, out var loot))

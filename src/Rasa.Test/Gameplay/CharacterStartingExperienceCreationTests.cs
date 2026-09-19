@@ -95,6 +95,28 @@ namespace Rasa.Test.Gameplay
         }
 
         [TestMethod]
+        public void CreatingCharacterDoesNotGrantNormalStartInventoryItems()
+        {
+            using var context = new CharacterCreationContext();
+            context.SeedAccount(181);
+            var client = context.CreateClient(181);
+
+            new CharacterManager(context).RequestCreateCharacterInSlot(
+                client,
+                CreatePacket(slot: 1, familyName: "Fixture", characterName: "NoGear"));
+
+            using var verify = context.Open();
+            var character = new GameAccountRepository(verify).Get(181).GetCharacterBySlot(1);
+            Assert.IsNotNull(character);
+            Assert.AreEqual(
+                0,
+                verify.CharacterInventoryEntries.Count(entry =>
+                    entry.CharacterId == character.Id &&
+                    entry.InventoryType == (uint)InventoryType.Personal));
+            Assert.IsNotNull(new CharacterLockboxRepository(verify).Get(181));
+        }
+
+        [TestMethod]
         public void CharacterCreationTransactionRollbackRemovesCharacterAppearancesAndStartingExperience()
         {
             using var context = new CharacterCreationContext();

@@ -137,6 +137,8 @@ namespace Rasa.Managers
             if (creature.State == CharacterState.Dead)
                 return; // creature already dead
 
+            var isScenarioActor = creature?.SpawnPool?.ScenarioKey != null;
+
             // kill creature
             var stateIds = new List<CharacterState> { CharacterState.Dead };
 
@@ -165,19 +167,22 @@ namespace Rasa.Managers
 
             if (client != null)
             {
-                // give experience
-                var experience = creature.Level * 100; // base experience
-                var experienceRange = creature.Level * 10;
-                experience += (uint)(new Random().Next() % (experienceRange * 2 + 1)) - experienceRange;
+                if (!isScenarioActor)
+                {
+                    // give experience
+                    var experience = creature.Level * 100; // base experience
+                    var experienceRange = creature.Level * 10;
+                    experience += (uint)(new Random().Next() % (experienceRange * 2 + 1)) - experienceRange;
 
-                // todo: Depending on level difference reduce experience
-                _manifestationManager.GainExperience(client, experience);
+                    // todo: Depending on level difference reduce experience
+                    _manifestationManager.GainExperience(client, experience);
 
-                // Adrenaline is earned here and nowhere else: it does not regenerate. See
-                // ManifestationManager.AdrenalinePerKillPercent.
-                _manifestationManager.GainAdrenaline(
-                    client,
-                    _manifestationManager.AdrenalineForKill(client));
+                    // Adrenaline is earned here and nowhere else: it does not regenerate. See
+                    // ManifestationManager.AdrenalinePerKillPercent.
+                    _manifestationManager.GainAdrenaline(
+                        client,
+                        _manifestationManager.AdrenalineForKill(client));
+                }
             }
 
             // The corpse is harvestable by whoever earned it, a fixed number of times. Set here
@@ -189,17 +194,23 @@ namespace Rasa.Managers
             // Creature back on its feet, so a claim left over from a previous life would still be
             // sitting there the next time it died to something that was not a player, and that
             // player would be handed a corpse they did not earn.
-            creature.HarvestOwnerEntityId = client?.Player.EntityId ?? 0;
-            creature.HarvestAttemptsLeft = client != null ? Harvest.AttemptsPerCorpse : 0;
+            creature.HarvestOwnerEntityId = !isScenarioActor && client != null
+                ? client.Player.EntityId
+                : 0;
+            creature.HarvestAttemptsLeft = !isScenarioActor && client != null
+                ? Harvest.AttemptsPerCorpse
+                : 0;
 
             // spawn loot
-            if (killedBy != null && client != null)
+            if (killedBy != null && client != null && !isScenarioActor)
             {
                 LootDispenserManager.Instance.Loot(client, creature);
+            }
+
+            if (client != null)
                 (_missionManager ?? MissionManager.Instance).RecordProgress(
                     client,
                     MissionProgressEvent.Creature(creature.DbId));
-            }
         }
 
         public Creature CreateCreature(uint dbId, SpawnPool spawnPool)

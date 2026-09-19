@@ -142,7 +142,7 @@ namespace Rasa.Services.Preloader
 
         internal static IEnumerable<object[]> MissionDefinitions()
         {
-            yield return new object[] { 1990U, Revision, MissionContentRequirement.Required, 21132U, 0U, MajorMcAllisterCreatureId, 1U, (byte)1, (byte)1, false, false, "Initiation" };
+            yield return new object[] { 1990U, Revision, MissionContentRequirement.Required, 21132U, MajorMcAllisterCreatureId, MajorMcAllisterCreatureId, 1U, (byte)1, (byte)1, false, false, "Initiation" };
             yield return new object[] { 1992U, Revision, MissionContentRequirement.Required, 21164U, MajorMcAllisterCreatureId, CorporalDeSimoneCreatureId, 1U, (byte)1, (byte)1, false, false, "Gearing Up for Battle" };
             yield return new object[] { 1994U, Revision, MissionContentRequirement.Required, 21235U, CorporalDeSimoneCreatureId, CaptainYoungbloodCreatureId, 1U, (byte)1, (byte)1, false, false, "Capture the Flag" };
             yield return new object[] { 1995U, Revision, MissionContentRequirement.Required, 21240U, CaptainYoungbloodCreatureId, CommanderRogersCreatureId, 2U, (byte)1, (byte)1, false, false, "Calling for Reinforcements" };
@@ -151,7 +151,7 @@ namespace Rasa.Services.Preloader
 
         internal static IEnumerable<object[]> MissionPrerequisites()
         {
-            yield return new object[] { 1992U, Revision, 1U, MissionContentRequirement.Required, MissionPrerequisiteKind.MissionCompleted, 1990U, MissionCompletedState, null, null, null, "Requires Initiation" };
+            yield return new object[] { 1992U, Revision, 1U, MissionContentRequirement.Required, MissionPrerequisiteKind.MissionCompleted, 1990U, null, null, null, null, "Requires Initiation" };
             yield return new object[] { 1994U, Revision, 1U, MissionContentRequirement.Required, MissionPrerequisiteKind.MissionCompleted, 1992U, MissionCompletedState, null, null, null, "Requires Gearing Up for Battle" };
             yield return new object[] { 1995U, Revision, 1U, MissionContentRequirement.Required, MissionPrerequisiteKind.MissionCompleted, 1994U, MissionCompletedState, null, null, null, "Requires Capture the Flag" };
             yield return new object[] { 2005U, Revision, 1U, MissionContentRequirement.Optional, MissionPrerequisiteKind.MissionAccepted, 1995U, MissionFailedState, null, null, null, "Retry after final mission fails" };
@@ -194,6 +194,10 @@ namespace Rasa.Services.Preloader
             yield return Transition(1992, 4, 1, "Delessio greeting");
             yield return Transition(1992, 1, 1, "Equipment crate");
             yield return Transition(1992, 2, 1, "Equip first crate item");
+            yield return Transition(1992, 2, 2, "Equip crate gloves");
+            yield return Transition(1992, 2, 3, "Equip crate legs");
+            yield return Transition(1992, 2, 4, "Equip crate vest");
+            yield return Transition(1992, 2, 5, "Equip crate weapon");
             yield return Transition(1992, 5, 1, "Delessio follow-up");
             yield return Transition(1992, 6, 1, "Hartmann greeting");
             yield return Transition(1992, 3, 1, "Firearm dummy destroyed");
@@ -225,6 +229,10 @@ namespace Rasa.Services.Preloader
             yield return ConversationTrigger(1992, 4, 1, 1, 2560, 1, "Delessio instructions");
             yield return ProgressTrigger(1992, 1, 1, 1, ProgressInteractionUsed, 7862, "Use equipment crate");
             yield return ProgressTrigger(1992, 2, 1, 1, ProgressItemEquipped, 13066, "Equip Astra boots", sourceSpawnResolved: true);
+            yield return ProgressTrigger(1992, 2, 2, 1, ProgressItemEquipped, 13096, "Equip Recruit gloves", sourceSpawnResolved: true);
+            yield return ProgressTrigger(1992, 2, 3, 1, ProgressItemEquipped, 13156, "Equip Recruit legs", sourceSpawnResolved: true);
+            yield return ProgressTrigger(1992, 2, 4, 1, ProgressItemEquipped, 13186, "Equip Recruit vest", sourceSpawnResolved: true);
+            yield return ProgressTrigger(1992, 2, 5, 1, ProgressItemEquipped, 13713, "Equip Shinobi rifle", sourceSpawnResolved: true);
             yield return ConversationTrigger(1992, 5, 1, 1, 2560, 1, "Return to Delessio");
             yield return ConversationTrigger(1992, 6, 1, 1, 2563, 1, "Report to Hartmann");
             yield return ProgressTrigger(1992, 3, 1, 1, ProgressCreatureKilled, PracticeDummyCreatureId, "Destroy the practice dummy");
@@ -265,18 +273,32 @@ namespace Rasa.Services.Preloader
             yield return CompleteAction(1992, 2, 1, 1, 2, "Complete equip gear");
             yield return RevealAction(1992, 2, 1, 2, 5, "Reveal Delessio follow-up");
             yield return ActivateAction(1992, 2, 1, 3, 5, "Activate Delessio follow-up");
+            yield return CompleteAction(1992, 2, 2, 1, 2, "Complete equip gloves");
+            yield return RevealAction(1992, 2, 2, 2, 5, "Reveal Delessio follow-up from gloves");
+            yield return ActivateAction(1992, 2, 2, 3, 5, "Activate Delessio follow-up from gloves");
+            yield return CompleteAction(1992, 2, 3, 1, 2, "Complete equip legs");
+            yield return RevealAction(1992, 2, 3, 2, 5, "Reveal Delessio follow-up from legs");
+            yield return ActivateAction(1992, 2, 3, 3, 5, "Activate Delessio follow-up from legs");
+            yield return CompleteAction(1992, 2, 4, 1, 2, "Complete equip vest");
+            yield return RevealAction(1992, 2, 4, 2, 5, "Reveal Delessio follow-up from vest");
+            yield return ActivateAction(1992, 2, 4, 3, 5, "Activate Delessio follow-up from vest");
+            yield return CompleteAction(1992, 2, 5, 1, 2, "Complete equip weapon");
+            yield return RevealAction(1992, 2, 5, 2, 5, "Reveal Delessio follow-up from weapon");
+            yield return ActivateAction(1992, 2, 5, 3, 5, "Activate Delessio follow-up from weapon");
             yield return CompleteAction(1992, 5, 1, 1, 5, "Complete Delessio follow-up");
             yield return RevealAction(1992, 5, 1, 2, 6, "Reveal Hartmann greeting");
             yield return ActivateAction(1992, 5, 1, 3, 6, "Activate Hartmann greeting");
             yield return CompleteAction(1992, 6, 1, 1, 6, "Complete Hartmann greeting");
-            yield return RevealAction(1992, 6, 1, 2, 3, "Reveal practice dummy");
-            yield return ActivateAction(1992, 6, 1, 3, 3, "Activate practice dummy");
+            yield return StartScenarioAction(1992, 6, 1, 2, 3, "Start practice dummy scene");
+            yield return RevealAction(1992, 6, 1, 3, 3, "Reveal practice dummy");
+            yield return ActivateAction(1992, 6, 1, 4, 3, "Activate practice dummy");
             yield return CompleteAction(1992, 3, 1, 1, 3, "Complete practice dummy");
             yield return RevealAction(1992, 3, 1, 2, 9, "Reveal Hartmann Lightning setup");
             yield return ActivateAction(1992, 3, 1, 3, 9, "Activate Hartmann Lightning setup");
             yield return CompleteAction(1992, 9, 1, 1, 9, "Complete Hartmann Lightning setup");
-            yield return RevealAction(1992, 9, 1, 2, 8, "Reveal Lightning dummy");
-            yield return ActivateAction(1992, 9, 1, 3, 8, "Activate Lightning dummy");
+            yield return StartScenarioAction(1992, 9, 1, 2, 4, "Start Lightning training scene");
+            yield return RevealAction(1992, 9, 1, 3, 8, "Reveal Lightning dummy");
+            yield return ActivateAction(1992, 9, 1, 4, 8, "Activate Lightning dummy");
             yield return CompleteAction(1992, 8, 1, 1, 8, "Complete Lightning dummy");
             yield return RevealAction(1992, 8, 1, 2, 7, "Reveal Hartmann completion");
             yield return ActivateAction(1992, 8, 1, 3, 7, "Activate Hartmann completion");
@@ -403,7 +425,9 @@ namespace Rasa.Services.Preloader
         internal static IEnumerable<object[]> MissionScenarios()
         {
             yield return Scenario(1992, 1, "bootcamp-1992-crate", "1992 equipment crate scene");
-            yield return Scenario(1992, 2, "bootcamp-1992-loadout", "1992 loadout and range scene");
+            yield return Scenario(1992, 2, "bootcamp-1992-loadout", "1992 loadout scene");
+            yield return Scenario(1992, 3, "bootcamp-1992-firearm", "1992 firearm range scene");
+            yield return Scenario(1992, 4, "bootcamp-1992-lightning", "1992 Lightning range scene");
             yield return Scenario(1994, 1, "bootcamp-1994-world", "1994 world content");
             yield return Scenario(1995, 1, "bootcamp-1995-world", "1995 missing-team scene");
             yield return Scenario(1995, 2, "bootcamp-1995-exit", "1995 exit handoff");
@@ -418,8 +442,11 @@ namespace Rasa.Services.Preloader
         {
             yield return SpawnDynamicObjectStep(1992, 1, 1, "bootcamp-equipment-crate", 7862, 397.3, 114.0, 173.7, 0.0, true, "Spawn equipment crate");
             yield return GrantRewardPackageStep(1992, 2, 1, 58, "Grant crate loadout");
-            yield return SpawnGroupStep(1992, 2, 2, 1, "Spawn practice dummy");
-            yield return SpawnGroupStep(1992, 2, 3, 2, "Spawn Lightning dummy");
+            yield return DespawnDynamicObjectStep(1992, 2, 2, "bootcamp-equipment-crate", "Remove used equipment crate");
+            yield return SpawnGroupStep(1992, 3, 1, 1, "Spawn practice dummy");
+            yield return GrantSkillAbilityStep(1992, 4, 1, 49U, 194U, 1, 0, "Grant Recruit Lightning");
+            yield return PlayTutorialStep(1992, 4, 2, 10000015U, null, "Prompt the player to use Lightning");
+            yield return SpawnGroupStep(1992, 4, 3, 2, "Spawn Lightning dummy");
 
             yield return SpawnGroupStep(1994, 1, 1, 1, "Spawn escort group");
             yield return SpawnGroupStep(1994, 1, 2, 2, "Spawn Tizzik encounter");
@@ -745,6 +772,20 @@ namespace Rasa.Services.Preloader
                 null, null, null, null, null, null, null, null, null, comment
             };
 
+        private static object[] DespawnDynamicObjectStep(
+            uint missionId,
+            uint scenarioId,
+            uint stepId,
+            string key,
+            string comment) =>
+            new object[]
+            {
+                missionId, Revision, scenarioId, stepId, MissionContentRequirement.Required,
+                MissionScenarioStepKind.DespawnDynamicObject, stepId, null, null, null, null,
+                key, null, null, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, comment
+            };
+
         private static object[] GrantRewardPackageStep(
             uint missionId,
             uint scenarioId,
@@ -756,6 +797,38 @@ namespace Rasa.Services.Preloader
                 missionId, Revision, scenarioId, stepId, MissionContentRequirement.Required,
                 MissionScenarioStepKind.GrantRewardPackage, stepId, null, rewardId, null, null,
                 null, null, null, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, comment
+            };
+
+        private static object[] GrantSkillAbilityStep(
+            uint missionId,
+            uint scenarioId,
+            uint stepId,
+            uint skillId,
+            uint abilityId,
+            byte skillLevel,
+            byte abilitySlot,
+            string comment) =>
+            new object[]
+            {
+                missionId, Revision, scenarioId, stepId, MissionContentRequirement.Required,
+                MissionScenarioStepKind.GrantSkillAbility, stepId, null, null, null, null,
+                null, null, null, null, skillId, abilityId, skillLevel, abilitySlot, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, comment
+            };
+
+        private static object[] PlayTutorialStep(
+            uint missionId,
+            uint scenarioId,
+            uint stepId,
+            uint tutorialId,
+            uint? audioSetId,
+            string comment) =>
+            new object[]
+            {
+                missionId, Revision, scenarioId, stepId, MissionContentRequirement.Required,
+                MissionScenarioStepKind.PlayTutorial, stepId, null, null, null, null,
+                null, null, null, null, null, null, null, null, tutorialId, audioSetId, null, null,
                 null, null, null, null, null, null, null, null, null, comment
             };
 
