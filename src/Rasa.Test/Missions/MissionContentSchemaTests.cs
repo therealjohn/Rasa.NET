@@ -231,6 +231,43 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
+        [DataRow(typeof(SqliteWorldContext),
+            "update mission_reward_definition set selection_count = case kind when 2 then 1 else 0 end",
+            "update mission_reward_item set kind = case when exists (select 1 from mission_reward_definition reward where reward.mission_id = mission_reward_item.mission_id and reward.content_revision = mission_reward_item.content_revision and reward.reward_id = mission_reward_item.reward_id and reward.kind = 2) then 2 else 1 end")]
+        [DataRow(typeof(MySqlWorldContext),
+            "update mission_reward_definition set selection_count = case kind when 2 then 1 else 0 end",
+            "update mission_reward_item inner join mission_reward_definition reward on reward.mission_id = mission_reward_item.mission_id and reward.content_revision = mission_reward_item.content_revision and reward.reward_id = mission_reward_item.reward_id set mission_reward_item.kind = case reward.kind when 2 then 2 else 1 end")]
+        public void MissionContentRewardShapeMigrationConvertsLegacyKindsBeforeDroppingDefinitionKind(
+            Type contextType,
+            string expectedSelectionCountSql,
+            string expectedRewardItemSql)
+        {
+            using var context = CreateContext(contextType, "unused");
+            var assembly = context.GetService<IMigrationsAssembly>();
+            var migration = assembly.Migrations.Values
+                .Select(type => assembly.CreateMigration(type, context.Database.ProviderName))
+                .Single(candidate => candidate.GetType().Name == "MissionContentRewardShape");
+
+            var sqlOperations = migration.UpOperations
+                .Select((operation, index) => (operation, index))
+                .Where(item => item.operation is SqlOperation)
+                .Select(item => (((SqlOperation)item.operation).Sql, item.index))
+                .ToArray();
+            var selectionCountUpdate = sqlOperations.Single(item =>
+                NormalizeSql(item.Sql).Contains(expectedSelectionCountSql, StringComparison.Ordinal));
+            var rewardItemUpdate = sqlOperations.Single(item =>
+                NormalizeSql(item.Sql).Contains(expectedRewardItemSql, StringComparison.Ordinal));
+            var dropKind = migration.UpOperations
+                .Select((operation, index) => (operation, index))
+                .Single(item => item.operation is DropColumnOperation column &&
+                    column.Table == "mission_reward_definition" &&
+                    column.Name == "kind");
+
+            Assert.IsTrue(selectionCountUpdate.index < dropKind.index, contextType.Name);
+            Assert.IsTrue(rewardItemUpdate.index < dropKind.index, contextType.Name);
+        }
+
+        [TestMethod]
         public void SqliteMissionContentMigrationEnforcesDiscriminatorEvidenceAndCrossLinkConstraints()
         {
             WithDisposableSqliteWorld((context, database) =>

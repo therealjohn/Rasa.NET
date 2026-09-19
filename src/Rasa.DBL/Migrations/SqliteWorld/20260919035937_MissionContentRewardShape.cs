@@ -24,6 +24,19 @@ namespace Rasa.Migrations.SqliteWorld
                 nullable: false,
                 defaultValue: (byte)1);
 
+            migrationBuilder.Sql(
+                "UPDATE mission_reward_definition " +
+                "SET selection_count = CASE kind WHEN 2 THEN 1 ELSE 0 END;");
+
+            migrationBuilder.Sql(
+                "UPDATE mission_reward_item " +
+                "SET kind = CASE " +
+                "WHEN EXISTS (SELECT 1 FROM mission_reward_definition reward " +
+                "WHERE reward.mission_id = mission_reward_item.mission_id " +
+                "AND reward.content_revision = mission_reward_item.content_revision " +
+                "AND reward.reward_id = mission_reward_item.reward_id " +
+                "AND reward.kind = 2) THEN 2 ELSE 1 END;");
+
             migrationBuilder.AddCheckConstraint(
                 name: "CK_mission_reward_item_kind",
                 table: "mission_reward_item",
