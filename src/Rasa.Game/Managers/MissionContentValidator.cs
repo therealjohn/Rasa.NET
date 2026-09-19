@@ -86,7 +86,7 @@ namespace Rasa.Managers
             var creatureClasses = (unitOfWork?.Creatures?.Get() ?? new List<CreatureEntry>())
                 .ToDictionary(entry => entry.Id, entry => entry.ClassId);
             return new MissionContentReferenceSet(
-                (unitOfWork?.NpcPackages?.Get() ?? new List<NpcPackageEntry>()).Select(entry => entry.Id),
+                (unitOfWork?.NpcPackages?.Get() ?? new List<NpcPackageEntry>()).Select(entry => entry.PackageId),
                 itemTemplateClasses,
                 (unitOfWork?.EntityClasses?.Get() ?? new List<EntityClassEntry>()).Select(entry => entry.Id),
                 creatureClasses,
