@@ -50,6 +50,7 @@ namespace Rasa.Managers
 
         /// <inheritdoc cref="FootlockerUseArgId"/>
         public const uint ControlPointUseArgId = 7;
+        internal const uint DefaultScenarioUseWindupMs = 10000;
 
         /// <summary>
         /// How far from an object a player may be and still use it.
@@ -248,11 +249,14 @@ namespace Rasa.Managers
                     }
                 case DynamicObjectType.Logos:
                     {
-                        var actionData = new ActionData(client.Player, packet.ActionId, packet.ActionArgId, 10000);
+                        var windupTime = obj.WindupTime == 0
+                            ? DefaultScenarioUseWindupMs
+                            : obj.WindupTime;
+                        var actionData = new ActionData(client.Player, packet.ActionId, packet.ActionArgId, windupTime);
                         actionData.SourceId = obj.EntityId;
 
                         client.CallMethod(client.Player.EntityId, new PerformWindupPacket(PerformType.TwoArgs, packet.ActionId, packet.ActionArgId));
-                        client.CallMethod(packet.EntityId, new UsePacket(client.Player.EntityId, obj.StateId, 10000));
+                        client.CallMethod(packet.EntityId, new UsePacket(client.Player.EntityId, obj.StateId, (int)windupTime));
                         client.Player.MapChannel.PerformRecovery.Add(actionData);
 
                         obj.TriggeredByPlayers.Add(client);
@@ -387,7 +391,8 @@ namespace Rasa.Managers
             Vector3 position,
             double rotation,
             string scenarioKey,
-            bool enabled)
+            bool enabled,
+            uint? windupTime = null)
         {
             var dynamicObject = new DynamicObject
             {
@@ -399,7 +404,7 @@ namespace Rasa.Managers
                 DynamicObjectType = DynamicObjectType.Logos,
                 StateId = UseObjectState.IdStateActive,
                 IsEnabled = enabled,
-                WindupTime = 10000,
+                WindupTime = windupTime.GetValueOrDefault(DefaultScenarioUseWindupMs),
                 ScenarioKey = scenarioKey
             };
             return dynamicObject;
@@ -752,30 +757,29 @@ namespace Rasa.Managers
 
                         Logger.WriteLog(LogType.Debug, $"Action Exicuted");
                         obj.TriggeredByPlayers.Remove(client);
-                        CellManager.Instance.CellCallMethod(obj, new UsableInfoPacket(true, obj.StateId, 0, 10000, 0));
+                        CellManager.Instance.CellCallMethod(
+                            obj,
+                            new UsableInfoPacket(
+                                true,
+                                obj.StateId,
+                                0,
+                                obj.WindupTime == 0 ? DefaultScenarioUseWindupMs : obj.WindupTime,
+                                0));
 
                         var logosId = 0u;
                         foreach (var entry in mapChannel.DynamicObjects)
                         {
-                            var logos = entry as Logos;
-                            if (action.SourceId == logos.EntityId)
-                            {
-                                logosId = logos.Id;
-                                break;
-                            }
+                            if (entry is not Logos logos ||
+                                action.SourceId != logos.EntityId)
+                                continue;
+
+                            logosId = logos.Id;
+                            break;
                         }
 
-                        var haveLogos = false;
-                        foreach (var logos in client.Player.Logos)
-                        {
-                            if (logos == logosId)
-                            {
-                                haveLogos = true;
-                                break;
-                            }
-                        }
-
-                        if (!haveLogos)
+                        var haveLogos = logosId != 0 &&
+                                        client.Player.Logos.Any(logos => logos == logosId);
+                        if (logosId != 0 && !haveLogos)
                             CharacterManager.Instance.UpdateCharacter(client, CharacterUpdate.Logos, logosId);
                         (_missionManager ?? MissionManager.Instance).RecordProgress(
                             client,

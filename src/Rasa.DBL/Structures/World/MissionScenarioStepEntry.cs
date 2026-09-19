@@ -28,7 +28,8 @@ namespace Rasa.Structures.World
         SetAccountSkipEntitlement = 19,
         SpawnDynamicObject = 20,
         DespawnDynamicObject = 21,
-        EscortSpawnGroup = 22
+        EscortSpawnGroup = 22,
+        SatisfyDeadline = 23
     }
 
     [Table(TableName)]

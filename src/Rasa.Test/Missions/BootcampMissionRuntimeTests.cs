@@ -37,6 +37,7 @@ namespace Rasa.Test.Missions
         private const uint BootcampMapContextId = 1985;
         private const uint WildernessMapContextId = 1220;
         private static readonly TimeSpan FuseDelay = TimeSpan.FromSeconds(5);
+        private static readonly TimeSpan ArrivalDelay = TimeSpan.FromSeconds(2);
         private static readonly TimeSpan BombDeadline = TimeSpan.FromMinutes(10);
 
         [TestMethod]
@@ -104,11 +105,18 @@ namespace Rasa.Test.Missions
             Assert.IsNull(FindNpcByPackage(harness.BootcampMap, 2564));
             using (var unit = harness.Context.CreateChar())
                 Assert.AreEqual(
-                    CharacterMissionDeadlineState.Satisfied,
+                    CharacterMissionDeadlineState.Cancelled,
                     unit.CharacterMissionDeadlines.Get(harness.Context.Client.Player.Id, 1995).State);
 
             Assert.IsFalse(harness.Manager.TickScenarios(harness.Context.Client));
             harness.UtcNow += FuseDelay;
+            Assert.IsTrue(harness.Manager.TickScenarios(harness.Context.Client));
+            Assert.AreEqual(
+                MissionObjectiveState.Inactive,
+                harness.Context.Client.Player.Missions[1995].Objectives[4].State);
+            Assert.IsNull(FindNpcByPackage(harness.BootcampMap, 2564));
+
+            harness.UtcNow += ArrivalDelay;
             Assert.IsTrue(harness.Manager.TickScenarios(harness.Context.Client));
 
             Assert.AreEqual(
@@ -222,6 +230,13 @@ namespace Rasa.Test.Missions
                 retryMission.Objectives[4].State);
 
             harness.UtcNow += FuseDelay;
+            Assert.IsTrue(harness.Manager.TickScenarios(harness.Context.Client));
+            Assert.AreEqual(
+                MissionObjectiveState.Inactive,
+                retryMission.Objectives[4].State);
+            Assert.IsNull(FindNpcByPackage(harness.BootcampMap, 2564, missionId: 2005));
+
+            harness.UtcNow += ArrivalDelay;
             Assert.IsTrue(harness.Manager.TickScenarios(harness.Context.Client));
             Assert.AreEqual(
                 MissionObjectiveState.Incomplete,

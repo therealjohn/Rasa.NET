@@ -1169,6 +1169,7 @@ namespace Rasa.Managers
                     return;
 
                 case MissionScenarioStepKind.CancelDeadline:
+                case MissionScenarioStepKind.SatisfyDeadline:
                     return;
 
                 case MissionScenarioStepKind.GrantRewardPackage:

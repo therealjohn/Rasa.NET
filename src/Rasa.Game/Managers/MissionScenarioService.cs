@@ -342,6 +342,10 @@ namespace Rasa.Managers
                     PlanCancelDeadline(context);
                     return;
 
+                case MissionScenarioStepKind.SatisfyDeadline:
+                    PlanSatisfyDeadline(context);
+                    return;
+
                 case MissionScenarioStepKind.GrantRewardPackage:
                     PlanRewardPackage(context, step);
                     return;
@@ -475,7 +479,8 @@ namespace Rasa.Managers
                     (EntityClasses)step.EntityClassId.Value,
                     position,
                     step.Orientation.Value,
-                    enabled));
+                    enabled,
+                    step.DelayMilliseconds));
         }
 
         private void PlanDespawnDynamicObject(
@@ -574,6 +579,18 @@ namespace Rasa.Managers
                     context.Client.Player.Id,
                     context.MissionDefinition.MissionId,
                     CharacterMissionDeadlineState.Cancelled);
+        }
+
+        private static void PlanSatisfyDeadline(MissionActionContext context)
+        {
+            var existing = context.UnitOfWork.CharacterMissionDeadlines.Get(
+                context.Client.Player.Id,
+                context.MissionDefinition.MissionId);
+            if (existing?.State == CharacterMissionDeadlineState.Active)
+                context.UnitOfWork.CharacterMissionDeadlines.SetState(
+                    context.Client.Player.Id,
+                    context.MissionDefinition.MissionId,
+                    CharacterMissionDeadlineState.Satisfied);
         }
 
         private void PlanRewardPackage(
@@ -863,7 +880,8 @@ namespace Rasa.Managers
                             (float)step.PosY.Value,
                             (float)step.PosZ.Value),
                         step.Orientation.Value,
-                        step.InitialInteractionEnabled ?? true);
+                        step.InitialInteractionEnabled ?? true,
+                        step.DelayMilliseconds);
                     return;
 
                 case MissionScenarioStepKind.DespawnDynamicObject:
@@ -1062,7 +1080,8 @@ namespace Rasa.Managers
             EntityClasses entityClassId,
             Vector3 position,
             double rotation,
-            bool enabled)
+            bool enabled,
+            uint? windupTime)
         {
             if (mapChannel == null || string.IsNullOrWhiteSpace(runtimeKey))
                 return;
@@ -1089,7 +1108,8 @@ namespace Rasa.Managers
                 position,
                 rotation,
                 runtimeKey,
-                enabled);
+                enabled,
+                windupTime);
             mapChannel.DynamicObjects.Add(dynamicObject);
             CellManager.Instance.AddToWorld(mapChannel, dynamicObject);
             registry.DynamicObjectsByKey[runtimeKey] = dynamicObject;

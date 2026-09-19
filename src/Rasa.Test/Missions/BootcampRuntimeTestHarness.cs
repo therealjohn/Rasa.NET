@@ -20,6 +20,7 @@ namespace Rasa.Test.Missions
     using Configuration.ContextSetup;
     using Context;
     using Context.World;
+    using Rasa.Packets.MapChannel.Client;
     using Rasa.Data;
     using Rasa.Game;
     using Rasa.Managers;
@@ -28,6 +29,7 @@ namespace Rasa.Test.Missions
     using Rasa.Services.DbContext;
     using Rasa.Structures;
     using Rasa.Structures.Char;
+    using Rasa.Structures.Interfaces;
     using Rasa.Structures.World;
 
     internal static class BootcampRuntimeTestHarness
@@ -598,6 +600,51 @@ namespace Rasa.Test.Missions
                         .Count(entry =>
                             entry.AbilityId == (int)ActionId.AaRecruitLightning &&
                             entry.AbilityLevel == 1));
+            }
+
+            internal void MovePlayerTo(Vector3 position)
+            {
+                Client.Player.Position = position;
+            }
+
+            internal void MovePlayerTo(IHasPosition target)
+            {
+                if (target != null)
+                    MovePlayerTo(target.Position);
+            }
+
+            internal void BeginUseObject(
+                DynamicObject dynamicObject,
+                uint actionArgId = DynamicObjectManager.LogosUseArgId)
+            {
+                if (dynamicObject == null)
+                    throw new ArgumentNullException(nameof(dynamicObject));
+
+                MovePlayerTo(dynamicObject);
+                DynamicObjectManager.Instance.RequestUseObjectPacket(
+                    Client,
+                    new RequestUseObjectPacket
+                    {
+                        ActionId = ActionId.UseObject,
+                        ActionArgId = actionArgId,
+                        EntityId = dynamicObject.EntityId
+                    });
+            }
+
+            internal void AdvanceRecovery(long deltaMilliseconds)
+            {
+                ActorActionManager.Instance.DoWork(
+                    Client.Player.MapChannel ?? BootcampMap,
+                    deltaMilliseconds);
+            }
+
+            internal void UseObjectAndRecover(
+                DynamicObject dynamicObject,
+                long? deltaMilliseconds = null,
+                uint actionArgId = DynamicObjectManager.LogosUseArgId)
+            {
+                BeginUseObject(dynamicObject, actionArgId);
+                AdvanceRecovery(deltaMilliseconds ?? dynamicObject.WindupTime);
             }
 
             private void AddNpcToCurrentMap(uint dbId, uint? npcPackageId)

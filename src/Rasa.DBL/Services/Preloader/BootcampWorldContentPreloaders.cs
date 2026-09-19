@@ -55,6 +55,9 @@ namespace Rasa.Services.Preloader
         private const uint CaptureTheFlagPromotionRewardId = 59;
         private const uint CaptureTheFlagPromotionExperience = 43000;
         private const uint CaptureTheFlagYoungbloodDelayMilliseconds = 7000;
+        private const uint CallingForReinforcementsPlantWindupMilliseconds = 1400;
+        private const uint CallingForReinforcementsFuseMilliseconds = 5000;
+        private const uint CallingForReinforcementsArrivalDelayMilliseconds = 2000;
 
         internal static void Insert(
             MigrationBuilder migrationBuilder,
@@ -248,11 +251,11 @@ namespace Rasa.Services.Preloader
 
             yield return Transition(1995, 2, 1, "Wounded survivor");
             yield return Transition(1995, 3, 1, "Conrad corpse");
-            yield return Transition(1995, 1, 1, "Dropship charge");
+            yield return Transition(1995, 1, 1, ObjectiveIncompleteState, "Dropship charge");
             yield return Transition(1995, 1, 2, ObjectiveFailedState, "Dropship timeout");
             yield return Transition(1995, 4, 1, "Van Valkenberg");
 
-            yield return Transition(2005, 1, 1, "Retry dropship charge");
+            yield return Transition(2005, 1, 1, ObjectiveIncompleteState, "Retry dropship charge");
             yield return Transition(2005, 1, 2, ObjectiveFailedState, "Retry timeout");
             yield return Transition(2005, 4, 1, "Retry Van Valkenberg");
         }
@@ -361,15 +364,15 @@ namespace Rasa.Services.Preloader
             yield return CompleteAction(1995, 3, 1, 1, 3, "Complete Conrad corpse");
             yield return RevealAction(1995, 3, 1, 2, 1, "Reveal dropship charge");
             yield return ActivateAction(1995, 3, 1, 3, 1, "Activate dropship charge");
-            yield return CompleteAction(1995, 1, 1, 1, 1, "Complete dropship charge");
-            yield return StartScenarioAction(1995, 1, 1, 2, 3, "Begin the extraction fuse");
+            yield return StartScenarioAction(1995, 1, 1, 1, 3, "Begin the extraction fuse");
+            yield return StartScenarioAction(1995, 1, 2, 1, 5, "Reset the failed final attempt");
             yield return CompleteAction(1995, 4, 1, 1, 4, "Complete Van Valkenberg handoff");
-            yield return StartScenarioAction(1995, 4, 1, 2, 5, "Transfer to Alia Das");
+            yield return StartScenarioAction(1995, 4, 1, 2, 6, "Transfer to Alia Das");
 
-            yield return CompleteAction(2005, 1, 1, 1, 1, "Complete retry dropship charge");
-            yield return StartScenarioAction(2005, 1, 1, 2, 1, "Begin the retry extraction fuse");
+            yield return StartScenarioAction(2005, 1, 1, 1, 1, "Begin the retry extraction fuse");
+            yield return StartScenarioAction(2005, 1, 2, 1, 4, "Reset the failed retry attempt");
             yield return CompleteAction(2005, 4, 1, 1, 4, "Complete retry handoff");
-            yield return StartScenarioAction(2005, 4, 1, 2, 3, "Transfer retry to Alia Das");
+            yield return StartScenarioAction(2005, 4, 1, 2, 5, "Transfer retry to Alia Das");
         }
 
         internal static IEnumerable<object[]> MissionRewards()
@@ -470,12 +473,16 @@ namespace Rasa.Services.Preloader
             yield return Scenario(1994, 3, "bootcamp-1994-youngblood-delay", "1994 delayed Youngblood");
             yield return Scenario(1994, 4, "bootcamp-1994-youngblood-arrival", "1994 Youngblood arrival");
             yield return Scenario(1995, 1, "bootcamp-1995-world", "1995 missing-team scene");
-            yield return Scenario(1995, 2, "bootcamp-1995-exit", "1995 exit handoff");
+            yield return Scenario(1995, 2, "bootcamp-1995-detonation", "1995 detonation");
             yield return Scenario(1995, 3, "bootcamp-1995-fuse", "1995 extraction fuse");
-            yield return Scenario(1995, 5, "bootcamp-1995-transfer", "1995 transfer handoff");
+            yield return Scenario(1995, 4, "bootcamp-1995-exit", "1995 exit handoff");
+            yield return Scenario(1995, 5, "bootcamp-1995-reset", "1995 reset after failure");
+            yield return Scenario(1995, 6, "bootcamp-1995-transfer", "1995 transfer handoff");
             yield return Scenario(2005, 1, "bootcamp-2005-fuse", "2005 retry fuse");
-            yield return Scenario(2005, 2, "bootcamp-2005-exit", "2005 retry exit handoff");
-            yield return Scenario(2005, 3, "bootcamp-2005-transfer", "2005 retry transfer");
+            yield return Scenario(2005, 2, "bootcamp-2005-detonation", "2005 retry detonation");
+            yield return Scenario(2005, 3, "bootcamp-2005-exit", "2005 retry exit handoff");
+            yield return Scenario(2005, 4, "bootcamp-2005-reset", "2005 retry reset");
+            yield return Scenario(2005, 5, "bootcamp-2005-transfer", "2005 retry transfer");
         }
 
         internal static IEnumerable<object[]> MissionScenarioSteps()
@@ -498,31 +505,49 @@ namespace Rasa.Services.Preloader
             yield return ActivateObjectiveStep(1994, 4, 3, 3, "Activate Youngblood debrief");
 
             yield return SpawnDynamicObjectStep(1995, 1, 1, "bootcamp-conrad-corpse", 24990, -102.4, 85.69, 66.8, 0.0, true, "Spawn Conrad corpse");
-            yield return SpawnDynamicObjectStep(1995, 1, 2, "bootcamp-dropship-debris", 24911, -225.35, 99.60, -70.52, 0.0, true, "Spawn dropship debris");
+            yield return SpawnDynamicObjectStep(1995, 1, 2, "bootcamp-dropship-debris", 24911, -225.35, 99.60, -70.52, 0.0, true, "Spawn dropship debris", CallingForReinforcementsPlantWindupMilliseconds);
 
-            yield return SpawnGroupStep(1995, 2, 1, 2, "Spawn reinforcements");
-            yield return SpawnGroupStep(1995, 2, 2, 3, "Spawn Van Valkenberg");
-            yield return RevealObjectiveStep(1995, 2, 3, 4, "Reveal Van Valkenberg handoff");
-            yield return ActivateObjectiveStep(1995, 2, 4, 4, "Activate Van Valkenberg handoff");
+            yield return CancelDeadlineStep(1995, 3, 1, "Cancel the planted charge deadline");
+            yield return DisableInteractionStep(1995, 3, 2, 24911, "Disable the planted dropship charge");
+            yield return ScheduleScenarioStep(1995, 3, 3, 2, CallingForReinforcementsFuseMilliseconds, "Schedule the detonation");
 
-            yield return CancelDeadlineStep(1995, 3, 1, "Cancel the bomb timer");
-            yield return ScheduleScenarioStep(1995, 3, 2, 2, 5000U, "Schedule the exit handoff");
+            yield return CompleteObjectiveStep(1995, 2, 1, 1, "Complete the detonated dropship objective");
+            yield return ScheduleScenarioStep(1995, 2, 2, 4, CallingForReinforcementsArrivalDelayMilliseconds, "Schedule the extraction team");
 
-            yield return TransferPlayerStep(1995, 5, 1, WildernessMapContextId, 884.11, 305.8, 347.81, 1.5613, "Transfer to Alia Das");
-            yield return QualificationStep(1995, 5, 2, CharacterQualificationKey.BootcampComplete, MissionScenarioStepEntry.GrantedQualificationValue, "Mark Bootcamp complete");
-            yield return SkipEntitlementStep(1995, 5, 3, true, "Unlock account bootcamp skip");
+            yield return SpawnGroupStep(1995, 4, 1, 2, "Spawn reinforcements");
+            yield return SpawnGroupStep(1995, 4, 2, 3, "Spawn Van Valkenberg");
+            yield return RevealObjectiveStep(1995, 4, 3, 4, "Reveal Van Valkenberg handoff");
+            yield return ActivateObjectiveStep(1995, 4, 4, 4, "Activate Van Valkenberg handoff");
 
-            yield return CancelDeadlineStep(2005, 1, 1, "Cancel the retry timer");
-            yield return ScheduleScenarioStep(2005, 1, 2, 2, 5000U, "Schedule the retry exit handoff");
+            yield return EnableInteractionStep(1995, 5, 1, 24911, "Restore the dropship charge interaction");
+            yield return ResetAttemptScenarioStep(1995, 5, 2, 2, "Clear the detonation state");
+            yield return ResetAttemptScenarioStep(1995, 5, 3, 3, "Clear the planted charge state");
+            yield return ResetAttemptScenarioStep(1995, 5, 4, 4, "Clear the extraction arrival state");
 
-            yield return SpawnGroupStep(2005, 2, 1, 1, "Spawn retry reinforcements");
-            yield return SpawnGroupStep(2005, 2, 2, 2, "Spawn retry Van Valkenberg");
-            yield return RevealObjectiveStep(2005, 2, 3, 4, "Reveal retry handoff");
-            yield return ActivateObjectiveStep(2005, 2, 4, 4, "Activate retry handoff");
+            yield return TransferPlayerStep(1995, 6, 1, WildernessMapContextId, 884.11, 305.8, 347.81, 1.5613, "Transfer to Alia Das");
+            yield return QualificationStep(1995, 6, 2, CharacterQualificationKey.BootcampComplete, MissionScenarioStepEntry.GrantedQualificationValue, "Mark Bootcamp complete");
+            yield return SkipEntitlementStep(1995, 6, 3, true, "Unlock account bootcamp skip");
 
-            yield return TransferPlayerStep(2005, 3, 1, WildernessMapContextId, 884.11, 305.8, 347.81, 1.5613, "Transfer retry to Alia Das");
-            yield return QualificationStep(2005, 3, 2, CharacterQualificationKey.BootcampComplete, MissionScenarioStepEntry.GrantedQualificationValue, "Mark Bootcamp complete");
-            yield return SkipEntitlementStep(2005, 3, 3, true, "Unlock account bootcamp skip");
+            yield return CancelDeadlineStep(2005, 1, 1, "Cancel the retry charge deadline");
+            yield return DisableInteractionStep(2005, 1, 2, 24911, "Disable the retry charge interaction");
+            yield return ScheduleScenarioStep(2005, 1, 3, 2, CallingForReinforcementsFuseMilliseconds, "Schedule the retry detonation");
+
+            yield return CompleteObjectiveStep(2005, 2, 1, 1, "Complete the retry detonation objective");
+            yield return ScheduleScenarioStep(2005, 2, 2, 3, CallingForReinforcementsArrivalDelayMilliseconds, "Schedule the retry extraction team");
+
+            yield return SpawnGroupStep(2005, 3, 1, 1, "Spawn retry reinforcements");
+            yield return SpawnGroupStep(2005, 3, 2, 2, "Spawn retry Van Valkenberg");
+            yield return RevealObjectiveStep(2005, 3, 3, 4, "Reveal retry handoff");
+            yield return ActivateObjectiveStep(2005, 3, 4, 4, "Activate retry handoff");
+
+            yield return EnableInteractionStep(2005, 4, 1, 24911, "Restore the retry charge interaction");
+            yield return ResetAttemptScenarioStep(2005, 4, 2, 1, "Clear the retry planted charge state");
+            yield return ResetAttemptScenarioStep(2005, 4, 3, 2, "Clear the retry detonation state");
+            yield return ResetAttemptScenarioStep(2005, 4, 4, 3, "Clear the retry extraction arrival state");
+
+            yield return TransferPlayerStep(2005, 5, 1, WildernessMapContextId, 884.11, 305.8, 347.81, 1.5613, "Transfer retry to Alia Das");
+            yield return QualificationStep(2005, 5, 2, CharacterQualificationKey.BootcampComplete, MissionScenarioStepEntry.GrantedQualificationValue, "Mark Bootcamp complete");
+            yield return SkipEntitlementStep(2005, 5, 3, true, "Unlock account bootcamp skip");
         }
 
         internal static IEnumerable<object[]> MissionEvidence()
@@ -697,6 +722,34 @@ namespace Rasa.Services.Preloader
                 null, null, null, null, null, null, comment
             };
 
+        private static object[] EnableInteractionStep(
+            uint missionId,
+            uint scenarioId,
+            uint stepId,
+            uint entityClassId,
+            string comment) =>
+            new object[]
+            {
+                missionId, Revision, scenarioId, stepId, MissionContentRequirement.Required,
+                MissionScenarioStepKind.EnableInteraction, stepId, null, null, null, null,
+                null, entityClassId, null, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, comment
+            };
+
+        private static object[] DisableInteractionStep(
+            uint missionId,
+            uint scenarioId,
+            uint stepId,
+            uint entityClassId,
+            string comment) =>
+            new object[]
+            {
+                missionId, Revision, scenarioId, stepId, MissionContentRequirement.Required,
+                MissionScenarioStepKind.DisableInteraction, stepId, null, null, null, null,
+                null, entityClassId, null, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, comment
+            };
+
         private static object[] RevealAction(uint missionId, uint objectiveId, uint transitionId, uint actionId, uint targetObjectiveId, string comment) =>
             new object[]
             {
@@ -705,12 +758,40 @@ namespace Rasa.Services.Preloader
                 null, null, null, null, null, null, comment
             };
 
+        private static object[] CompleteObjectiveStep(
+            uint missionId,
+            uint scenarioId,
+            uint stepId,
+            uint targetObjectiveId,
+            string comment) =>
+            new object[]
+            {
+                missionId, Revision, scenarioId, stepId, MissionContentRequirement.Required,
+                MissionScenarioStepKind.CompleteObjective, stepId, targetObjectiveId, null, null, null,
+                null, null, null, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, comment
+            };
+
         private static object[] ActivateAction(uint missionId, uint objectiveId, uint transitionId, uint actionId, uint targetObjectiveId, string comment) =>
             new object[]
             {
                 missionId, Revision, objectiveId, transitionId, actionId, MissionContentRequirement.Required,
                 MissionActionKind.ActivateObjective, actionId, targetObjectiveId, ObjectiveIncompleteState,
                 null, null, null, null, null, null, comment
+            };
+
+        private static object[] ResetAttemptScenarioStep(
+            uint missionId,
+            uint scenarioId,
+            uint stepId,
+            uint targetScenarioId,
+            string comment) =>
+            new object[]
+            {
+                missionId, Revision, scenarioId, stepId, MissionContentRequirement.Required,
+                MissionScenarioStepKind.ResetAttempt, stepId, null, null, null, null,
+                null, null, targetScenarioId, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, comment
             };
 
         private static object[] RewardAction(uint missionId, uint objectiveId, uint transitionId, uint actionId, uint rewardId, string comment) =>
@@ -798,12 +879,13 @@ namespace Rasa.Services.Preloader
             double z,
             double rotation,
             bool enabled,
-            string comment) =>
+            string comment,
+            uint? delayMilliseconds = null) =>
             new object[]
             {
                 missionId, Revision, scenarioId, stepId, MissionContentRequirement.Required,
                 MissionScenarioStepKind.SpawnDynamicObject, stepId, null, null, null, null,
-                key, entityClassId, null, null, null, null, null, null, null, null, null, null,
+                key, entityClassId, null, delayMilliseconds, null, null, null, null, null, null, null, null,
                 null, x, y, z, rotation, enabled, null, null, null, comment
             };
 
@@ -918,6 +1000,19 @@ namespace Rasa.Services.Preloader
             {
                 missionId, Revision, scenarioId, stepId, MissionContentRequirement.Required,
                 MissionScenarioStepKind.CancelDeadline, stepId, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, comment
+            };
+
+        private static object[] SatisfyDeadlineStep(
+            uint missionId,
+            uint scenarioId,
+            uint stepId,
+            string comment) =>
+            new object[]
+            {
+                missionId, Revision, scenarioId, stepId, MissionContentRequirement.Required,
+                MissionScenarioStepKind.SatisfyDeadline, stepId, null, null, null, null,
                 null, null, null, null, null, null, null, null, null, null, null, null,
                 null, null, null, null, null, null, null, null, null, comment
             };

@@ -278,7 +278,7 @@ namespace Rasa.Test.Missions
             StringAssert.Contains(sql, "constraint ck_mission_scenario_step_numeric_bounds check");
             StringAssert.Contains(sql, "kind in (1, 2, 3, 4, 5)");
             StringAssert.Contains(sql, "kind in (1, 2, 3, 4, 5, 6, 7, 8)");
-            StringAssert.Contains(sql, "kind in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22)");
+            StringAssert.Contains(sql, "kind in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23)");
             StringAssert.Contains(sql, "selection_count in (0, 1)");
             StringAssert.Contains(sql, "kind in (1, 2)");
             StringAssert.Contains(sql, "delay_milliseconds >= 1 and delay_milliseconds <= 86400000");
@@ -289,6 +289,7 @@ namespace Rasa.Test.Missions
             StringAssert.Contains(sql, "kind <> 20 or (dynamic_object_key is not null and dynamic_object_key <> '' and entity_class_id is not null and pos_x is not null and pos_y is not null and pos_z is not null and orientation is not null");
             StringAssert.Contains(sql, "kind <> 21 or (dynamic_object_key is not null and dynamic_object_key <> ''");
             StringAssert.Contains(sql, "kind <> 22 or (spawn_group_id is not null");
+            StringAssert.Contains(sql, "kind <> 23 or (");
             StringAssert.Contains(sql, "qualification_key is null or (qualification_key >= 1 and qualification_key <= 255)");
             StringAssert.Contains(sql, "qualification_value is null or (qualification_value >= 0 and qualification_value <= 1)");
             StringAssert.Contains(sql, "source_uri is not null or local_client_path is not null");

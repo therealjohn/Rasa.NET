@@ -306,10 +306,11 @@ namespace Rasa.Context.World
                     $"AND {ScenarioStepNullColumns("account_skip_entitlement")})) " +
                 $"AND (kind <> 20 OR (dynamic_object_key IS NOT NULL AND dynamic_object_key <> '' " +
                     $"AND entity_class_id IS NOT NULL AND pos_x IS NOT NULL AND pos_y IS NOT NULL AND pos_z IS NOT NULL AND orientation IS NOT NULL " +
-                    $"AND {ScenarioStepNullColumns("dynamic_object_key", "entity_class_id", "pos_x", "pos_y", "pos_z", "orientation", "initial_interaction_enabled")})) " +
+                    $"AND {ScenarioStepNullColumns("dynamic_object_key", "entity_class_id", "pos_x", "pos_y", "pos_z", "orientation", "initial_interaction_enabled", "delay_milliseconds")})) " +
                 $"AND (kind <> 21 OR (dynamic_object_key IS NOT NULL AND dynamic_object_key <> '' " +
                     $"AND {ScenarioStepNullColumns("dynamic_object_key")})) " +
-                $"AND (kind <> 22 OR (spawn_group_id IS NOT NULL AND {ScenarioStepNullColumns("spawn_group_id")}))";
+                $"AND (kind <> 22 OR (spawn_group_id IS NOT NULL AND {ScenarioStepNullColumns("spawn_group_id")})) " +
+                $"AND (kind <> 23 OR ({ScenarioStepNullColumns()}))";
 
             var scenarioStepNumericBoundsConstraint =
                 "(target_objective_id IS NULL OR target_objective_id > 0) " +
