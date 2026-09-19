@@ -254,3 +254,7 @@ docs/*
 !docs/abilities.md
 !docs/protocol-testing.md
 !docs/world-testing.md
+
+# Local runtime files
+/log-auth.txt
+/log-game.txt
