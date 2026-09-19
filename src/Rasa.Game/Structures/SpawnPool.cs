@@ -1,4 +1,5 @@
 ﻿using Rasa.Structures.Interfaces;
+using Rasa.Structures.World;
 using System.Collections.Generic;
 using System.Numerics;
 
@@ -27,7 +28,11 @@ namespace Rasa.Structures
         public int DeadCreatures { get; set; }  // number of spawned creatures that are dead (either killed or spawned dead)
         internal List<Creature> QueuedCreatureList { get; set; }
         public string ScenarioKey { get; set; }
+        public uint ScenarioMissionId { get; set; }
         public uint? ScenarioGroupId { get; set; }
+        public string ScenarioAttemptKey { get; set; }
+        public uint ScenarioOwnerCharacterId { get; set; }
+        public MissionSpawnGroupPolicy SpawnPolicy { get; set; }
         public uint FollowOwnerCharacterId { get; set; }
         public ulong FollowTargetEntityId { get; set; }
 

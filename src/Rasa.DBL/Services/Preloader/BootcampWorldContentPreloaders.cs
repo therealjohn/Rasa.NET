@@ -58,9 +58,10 @@ namespace Rasa.Services.Preloader
 
             foreach (var row in rows)
             {
+                var rowColumns = columns.Take(row.Length).ToArray();
                 var values = string.Join(", ", row.Select(ToSqlLiteral));
                 migrationBuilder.Sql(
-                    $"insert into {tableName} ({string.Join(", ", columns)}) values ({values});");
+                    $"insert into {tableName} ({string.Join(", ", rowColumns)}) values ({values});");
             }
         }
 

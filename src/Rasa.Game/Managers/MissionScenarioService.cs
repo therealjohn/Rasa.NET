@@ -147,7 +147,8 @@ namespace Rasa.Managers
                             durableMission.MissionId,
                             step,
                             mapChannel,
-                            manager);
+                            manager,
+                            state);
                     }
             }
         }
@@ -265,6 +266,11 @@ namespace Rasa.Managers
                     characterId,
                     missionId,
                     stepKey);
+            foreach (var durablePrefix in plan.DurableKeyPrefixesToRemove.Distinct(StringComparer.Ordinal))
+                unitOfWork.CharacterMissionScenario.RemoveByPrefix(
+                    characterId,
+                    missionId,
+                    durablePrefix);
             foreach (var stepKey in plan.ExactStepKeysToRemove.Distinct(StringComparer.Ordinal))
                 unitOfWork.CharacterMissionScenario.Remove(
                     characterId,
@@ -404,7 +410,8 @@ namespace Rasa.Managers
                         context.MissionDefinition.MissionId,
                         spawnGroup.ContentRevision,
                         step.AttemptKey,
-                        spawnGroup.SpawnGroupId)));
+                        spawnGroup.SpawnGroupId),
+                    step.AttemptKey));
         }
 
         private void PlanDespawnGroup(MissionActionContext context, MissionScenarioStepDefinition step)
@@ -433,6 +440,10 @@ namespace Rasa.Managers
                         spawnGroup.ContentRevision,
                         step.AttemptKey,
                         spawnGroup.SpawnGroupId)));
+            context.Plan.DurableKeyPrefixesToRemove.Add(
+                MissionScenarioStepState.CreateSpawnDeathGroupPrefix(
+                    spawnGroup.SpawnGroupId,
+                    step.AttemptKey));
         }
 
         private void PlanSpawnDynamicObject(
@@ -495,6 +506,8 @@ namespace Rasa.Managers
                     step.SpawnGroupId.Value,
                     out var spawnGroup))
                 throw new GameplayRejectionException("Scenario escort spawn group is missing.");
+            if (spawnGroup.SpawnPolicy != MissionSpawnGroupPolicy.ScenarioControlled)
+                throw new GameplayRejectionException("Scenario escort spawn group must be scenario controlled.");
 
             var mapChannel = ResolveMap(
                 context.Client.Player,
@@ -789,7 +802,8 @@ namespace Rasa.Managers
             uint missionId,
             MissionScenarioStepDefinition step,
             MapChannel mapChannel,
-            MissionManager manager)
+            MissionManager manager,
+            ScenarioState state)
         {
             switch (step.Kind)
             {
@@ -809,7 +823,9 @@ namespace Rasa.Managers
                                 missionId,
                                 spawnGroup.ContentRevision,
                                 step.AttemptKey,
-                                spawnGroup.SpawnGroupId));
+                                spawnGroup.SpawnGroupId),
+                            step.AttemptKey,
+                            state);
                     }
                     return;
 
@@ -868,7 +884,8 @@ namespace Rasa.Managers
                             missionId,
                             step.SpawnGroupId.Value,
                             out var escortGroup) &&
-                        escortGroup.MapContextId == mapChannel.MapInfo.MapContextId)
+                        escortGroup.MapContextId == mapChannel.MapInfo.MapContextId &&
+                        escortGroup.SpawnPolicy == MissionSpawnGroupPolicy.ScenarioControlled)
                     {
                         EnsureSpawnGroupEscortRuntime(
                             mapChannel,
@@ -902,7 +919,9 @@ namespace Rasa.Managers
         private void EnsureSpawnGroupRuntime(
             MapChannel mapChannel,
             MissionSpawnGroupDefinition spawnGroup,
-            string runtimeKey)
+            string runtimeKey,
+            string attemptKey = null,
+            ScenarioState state = null)
         {
             if (mapChannel == null)
                 return;
@@ -922,7 +941,11 @@ namespace Rasa.Managers
                         {
                             DbId = spawn.SpawnId,
                             ScenarioKey = runtimeKey,
+                            ScenarioMissionId = spawnGroup.MissionId,
                             ScenarioGroupId = spawnGroup.SpawnGroupId,
+                            ScenarioAttemptKey = attemptKey,
+                            ScenarioOwnerCharacterId = ExtractOwnerCharacterId(runtimeKey),
+                            SpawnPolicy = spawnGroup.SpawnPolicy,
                             MapContextId = mapChannel.MapInfo.MapContextId,
                             RuntimeMapChannel = mapChannel,
                             Position = spawn.Position,
@@ -950,6 +973,13 @@ namespace Rasa.Managers
                     mapChannel.SpawnPools.Add(pool);
 
                 var desired = pool.SpawnSlot.Sum(slot => slot.CountMin);
+                var deaths = spawnGroup.SpawnPolicy == MissionSpawnGroupPolicy.ScenarioControlled
+                    ? state?.GetSpawnDeathCount(
+                        spawnGroup.SpawnGroupId,
+                        pool.DbId,
+                        attemptKey) ?? 0U
+                    : 0U;
+                desired = Math.Max(0, desired - checked((int)Math.Min((uint)desired, deaths)));
                 var existing = mapChannel.MapCellInfo.Cells.Values
                     .SelectMany(cell => cell.CreatureList)
                     .Count(creature => creature.SpawnPool == pool);
@@ -1186,6 +1216,10 @@ namespace Rasa.Managers
                                 spawnGroup.ContentRevision,
                                 state.AttemptKey,
                                 spawnGroup.SpawnGroupId)));
+                    context.Plan.DurableKeyPrefixesToRemove.Add(
+                        MissionScenarioStepState.CreateSpawnDeathGroupPrefix(
+                            spawnGroup.SpawnGroupId,
+                            state.AttemptKey));
                     return;
 
                 case MissionScenarioStepKind.SpawnDynamicObject:
@@ -1257,17 +1291,90 @@ namespace Rasa.Managers
         {
             var completed = new Dictionary<string, MissionScenarioStepState>(StringComparer.Ordinal);
             var scheduled = new List<MissionScenarioStepState>();
+            var spawnDeaths = new Dictionary<string, uint>(StringComparer.Ordinal);
             foreach (var row in rows ?? Array.Empty<CharacterMissionScenarioStepEntry>())
             {
                 if (!MissionScenarioStepState.TryParse(row.StepKey, out var state))
                     continue;
                 if (state.Kind == MissionScenarioStepStateKind.CompletedStep)
                     completed[row.StepKey] = state;
-                else
+                else if (state.Kind == MissionScenarioStepStateKind.ScheduledScenario)
                     scheduled.Add(state);
+                else if (state.Kind == MissionScenarioStepStateKind.SpawnDeathCount &&
+                         state.SpawnGroupId.HasValue &&
+                         state.SpawnId.HasValue &&
+                         state.DeathCount.HasValue)
+                {
+                    spawnDeaths[MissionScenarioStepState.CreateSpawnDeathPrefix(
+                        state.SpawnGroupId.Value,
+                        state.SpawnId.Value,
+                        state.AttemptKey)] = state.DeathCount.Value;
+                }
             }
 
-            return new ScenarioState(completed, scheduled);
+            return new ScenarioState(completed, scheduled, spawnDeaths);
+        }
+
+        internal void RecordScenarioCreatureDeath(SpawnPool spawnPool)
+        {
+            if (spawnPool?.SpawnPolicy != MissionSpawnGroupPolicy.ScenarioControlled ||
+                !spawnPool.ScenarioGroupId.HasValue ||
+                spawnPool.ScenarioOwnerCharacterId == 0 ||
+                spawnPool.ScenarioMissionId == 0)
+                return;
+
+            using var unitOfWork = _gameUnitOfWorkFactory().CreateChar();
+            unitOfWork.ExecuteTransaction(() =>
+            {
+                var state = ParseState(unitOfWork.CharacterMissionScenario.Get(
+                    spawnPool.ScenarioOwnerCharacterId,
+                    spawnPool.ScenarioMissionId));
+                var prefix = MissionScenarioStepState.CreateSpawnDeathPrefix(
+                    spawnPool.ScenarioGroupId.Value,
+                    spawnPool.DbId,
+                    spawnPool.ScenarioAttemptKey);
+                var existingDeaths = state.SpawnDeathCounts.TryGetValue(prefix, out var deathCount)
+                    ? deathCount
+                    : 0U;
+                var spawnTotal = (uint)Math.Max(0, spawnPool.SpawnSlot?.Sum(slot => slot.CountMin) ?? 0);
+                var nextDeaths = spawnTotal == 0
+                    ? existingDeaths + 1
+                    : Math.Min(spawnTotal, existingDeaths + 1);
+                unitOfWork.CharacterMissionScenario.RemoveByPrefix(
+                    spawnPool.ScenarioOwnerCharacterId,
+                    spawnPool.ScenarioMissionId,
+                    prefix);
+                unitOfWork.CharacterMissionScenario.Add(
+                    new CharacterMissionScenarioStepEntry(
+                        spawnPool.ScenarioOwnerCharacterId,
+                        spawnPool.ScenarioMissionId,
+                        MissionScenarioStepState.CreateSpawnDeathKey(
+                            spawnPool.ScenarioGroupId.Value,
+                            spawnPool.DbId,
+                            nextDeaths,
+                            spawnPool.ScenarioAttemptKey)));
+            });
+        }
+
+        private static uint ExtractOwnerCharacterId(string runtimeKey)
+        {
+            if (string.IsNullOrWhiteSpace(runtimeKey))
+                return 0;
+
+            const string ownerPrefix = "owner:";
+            const string separator = ":mission:";
+            if (!runtimeKey.StartsWith(ownerPrefix, StringComparison.Ordinal))
+                return 0;
+
+            var separatorIndex = runtimeKey.IndexOf(separator, StringComparison.Ordinal);
+            if (separatorIndex <= ownerPrefix.Length)
+                return 0;
+
+            return uint.TryParse(
+                runtimeKey.Substring(ownerPrefix.Length, separatorIndex - ownerPrefix.Length),
+                out var ownerCharacterId)
+                ? ownerCharacterId
+                : 0;
         }
 
         private sealed class RuntimeRegistry
@@ -1282,14 +1389,31 @@ namespace Rasa.Managers
         {
             internal ScenarioState(
                 IReadOnlyDictionary<string, MissionScenarioStepState> completedSteps,
-                IReadOnlyList<MissionScenarioStepState> scheduledSteps)
+                IReadOnlyList<MissionScenarioStepState> scheduledSteps,
+                IReadOnlyDictionary<string, uint> spawnDeathCounts)
             {
                 CompletedSteps = completedSteps;
                 ScheduledSteps = scheduledSteps;
+                SpawnDeathCounts = spawnDeathCounts;
             }
 
             internal IReadOnlyDictionary<string, MissionScenarioStepState> CompletedSteps { get; }
             internal IReadOnlyList<MissionScenarioStepState> ScheduledSteps { get; }
+            internal IReadOnlyDictionary<string, uint> SpawnDeathCounts { get; }
+
+            internal uint GetSpawnDeathCount(
+                uint spawnGroupId,
+                uint spawnId,
+                string attemptKey)
+            {
+                var prefix = MissionScenarioStepState.CreateSpawnDeathPrefix(
+                    spawnGroupId,
+                    spawnId,
+                    attemptKey);
+                return SpawnDeathCounts.TryGetValue(prefix, out var deathCount)
+                    ? deathCount
+                    : 0;
+            }
         }
     }
 }

@@ -171,6 +171,9 @@ namespace Rasa.Managers
 
             foreach (var spawnPool in spawnPools)
             {
+                if (spawnPool.SpawnPolicy == Structures.World.MissionSpawnGroupPolicy.ScenarioControlled)
+                    continue;
+
                 if (spawnPool.Mode != 0 || spawnPool.AnimType < 0 || spawnPool.AnimType > 2)
                     continue;
 
@@ -420,8 +423,13 @@ namespace Rasa.Managers
                 AnimType = template.AnimType,
                 MapContextId = mapChannel.MapInfo.MapContextId,
                 RuntimeMapChannel = mapChannel,
+                SpawnPolicy = template.SpawnPolicy,
                 RespawnTime = template.RespawnTime,
                 UpdateTimer = template.RespawnTime,
+                ScenarioMissionId = template.ScenarioMissionId,
+                ScenarioGroupId = template.ScenarioGroupId,
+                ScenarioAttemptKey = template.ScenarioAttemptKey,
+                ScenarioOwnerCharacterId = template.ScenarioOwnerCharacterId,
                 FollowOwnerCharacterId = template.FollowOwnerCharacterId,
                 FollowTargetEntityId = template.FollowTargetEntityId
             };

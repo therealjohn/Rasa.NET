@@ -1940,6 +1940,10 @@ namespace Rasa.Migrations.SqliteWorld
                         .HasColumnType("int(11)")
                         .HasColumnName("respawn_seconds");
 
+                    b.Property<byte>("SpawnPolicy")
+                        .HasColumnType("tinyint(3)")
+                        .HasColumnName("spawn_policy");
+
                     b.HasKey("MissionId", "ContentRevision", "SpawnGroupId");
 
                     b.HasIndex("MissionId", "ContentRevision", "AreaId");

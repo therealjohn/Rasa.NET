@@ -31,6 +31,13 @@ namespace Rasa.Managers
                 MissionActionKind.GrantReward
             };
 
+        private static readonly HashSet<MissionSpawnGroupPolicy> SupportedSpawnPolicies =
+            new()
+            {
+                MissionSpawnGroupPolicy.OrdinaryRespawn,
+                MissionSpawnGroupPolicy.ScenarioControlled
+            };
+
         private const uint MaxDelayMilliseconds = MissionScenarioStepEntry.MaxDelayMilliseconds;
         private const uint MaxAbilityId = MissionScenarioStepEntry.MaxAbilityId;
         private const byte MaxSkillLevel = MissionScenarioStepEntry.MaxSkillLevel;
@@ -852,6 +859,25 @@ namespace Rasa.Managers
                         definition.ContentRevision));
                 }
 
+                if (!SupportedSpawnPolicies.Contains(spawnGroup.SpawnPolicy))
+                {
+                    diagnostics.Add(new MissionValidationDiagnostic(
+                        "invalid-spawn-policy",
+                        $"spawn group {spawnGroup.SpawnGroupId} uses unsupported spawn_policy {(byte)spawnGroup.SpawnPolicy}.",
+                        definition.MissionId,
+                        definition.ContentRevision));
+                }
+
+                if (spawnGroup.SpawnPolicy == MissionSpawnGroupPolicy.ScenarioControlled &&
+                    spawnGroup.RespawnSeconds.HasValue)
+                {
+                    diagnostics.Add(new MissionValidationDiagnostic(
+                        "invalid-spawn-policy",
+                        $"scenario-controlled spawn group {spawnGroup.SpawnGroupId} must not declare respawn_seconds.",
+                        definition.MissionId,
+                        definition.ContentRevision));
+                }
+
                 foreach (var spawn in spawnGroup.Spawns)
                 {
                     if (spawn.Quantity == 0)
@@ -941,11 +967,49 @@ namespace Rasa.Managers
                         return;
                     }
 
-                    if (!definition.SpawnGroups.ContainsKey(step.SpawnGroupId.Value))
+                    if (!definition.SpawnGroups.TryGetValue(step.SpawnGroupId.Value, out var scenarioSpawnGroup))
                     {
                         diagnostics.Add(new MissionValidationDiagnostic(
                             "missing-spawn-group",
                             $"scenario step references missing spawn group {step.SpawnGroupId.Value}.",
+                            definition.MissionId,
+                            definition.ContentRevision,
+                            scenarioId: scenarioId,
+                            stepId: step.StepId));
+                        return;
+                    }
+
+                    return;
+
+                case MissionScenarioStepKind.EscortSpawnGroup:
+                    if (!step.SpawnGroupId.HasValue)
+                    {
+                        AddInvalidScenarioStepShape(
+                            definition,
+                            scenarioId,
+                            step,
+                            "escort spawn group steps require spawn_group_id.",
+                            diagnostics);
+                        return;
+                    }
+
+                    if (!definition.SpawnGroups.TryGetValue(step.SpawnGroupId.Value, out var escortSpawnGroup))
+                    {
+                        diagnostics.Add(new MissionValidationDiagnostic(
+                            "missing-spawn-group",
+                            $"scenario step references missing spawn group {step.SpawnGroupId.Value}.",
+                            definition.MissionId,
+                            definition.ContentRevision,
+                            scenarioId: scenarioId,
+                            stepId: step.StepId));
+                        return;
+                    }
+
+                    if (escortSpawnGroup.SpawnPolicy != MissionSpawnGroupPolicy.ScenarioControlled)
+                    {
+                        diagnostics.Add(new MissionValidationDiagnostic(
+                            "invalid-spawn-policy",
+                            $"escort step requires spawn group {step.SpawnGroupId.Value} to use spawn_policy ScenarioControlled.",
                             definition.MissionId,
                             definition.ContentRevision,
                             scenarioId: scenarioId,

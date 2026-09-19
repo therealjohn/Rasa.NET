@@ -193,6 +193,7 @@ namespace Rasa.Test.Missions
             Assert.IsNull(reward.FindProperty("Kind"), "Reward definitions should no longer encode fixed/selectable shape.");
             Assert.AreEqual("selection_count", reward.FindProperty("SelectionCount")?.GetColumnName());
             Assert.AreEqual("kind", rewardItem.FindProperty("Kind")?.GetColumnName());
+            Assert.AreEqual("spawn_policy", spawnGroup.FindProperty("SpawnPolicy")?.GetColumnName());
             Assert.AreEqual("target_objective_id", scenarioStep.FindProperty("TargetObjectiveId")?.GetColumnName());
             Assert.AreEqual("reward_id", scenarioStep.FindProperty("RewardId")?.GetColumnName());
             Assert.AreEqual("spawn_group_id", scenarioStep.FindProperty("SpawnGroupId")?.GetColumnName());

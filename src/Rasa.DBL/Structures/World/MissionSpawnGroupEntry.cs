@@ -4,6 +4,12 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace Rasa.Structures.World
 {
+    public enum MissionSpawnGroupPolicy : byte
+    {
+        OrdinaryRespawn = 0,
+        ScenarioControlled = 1
+    }
+
     [Table(TableName)]
     public class MissionSpawnGroupEntry
     {
@@ -43,6 +49,11 @@ namespace Rasa.Structures.World
         [Column("comment", TypeName = "varchar(64)")]
         [Required]
         public string Comment { get; set; } = string.Empty;
+
+        [Column("spawn_policy")]
+        [Required]
+        public MissionSpawnGroupPolicy SpawnPolicy { get; set; } =
+            MissionSpawnGroupPolicy.OrdinaryRespawn;
 
         public MissionContentDefinitionEntry Content { get; set; }
         public ICollection<MissionSpawnEntry> Spawns { get; set; } =

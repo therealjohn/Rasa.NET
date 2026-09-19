@@ -838,6 +838,10 @@ namespace Rasa.Context.World
                 .Property(entry => entry.MapContextId)
                 .AsUnsignedInt(_dbContextPropertyModifier, 11);
             modelBuilder.Entity<MissionSpawnGroupEntry>()
+                .Property(entry => entry.SpawnPolicy)
+                .HasConversion<byte>()
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionSpawnGroupEntry>()
                 .Property(entry => entry.RespawnSeconds)
                 .AsUnsignedInt(_dbContextPropertyModifier, 11);
 

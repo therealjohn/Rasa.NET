@@ -56,8 +56,10 @@ namespace Rasa.Test.Missions
 
             var snapshot = new MissionContentLoader().Load(fixture.CreateRepository());
             var steps = snapshot.Definitions[321].Scenarios[60].Steps;
+            var spawnGroup = snapshot.Definitions[321].SpawnGroups[50];
 
             Assert.AreEqual(23, steps.Count);
+            Assert.AreEqual(Rasa.Structures.World.MissionSpawnGroupPolicy.ScenarioControlled, spawnGroup.SpawnPolicy);
             Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.SpawnGroup, steps[0].Kind);
             Assert.AreEqual(50U, steps[0].SpawnGroupId);
             Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.SpawnDynamicObject, steps[2].Kind);

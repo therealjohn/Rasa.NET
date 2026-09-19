@@ -286,6 +286,7 @@ namespace Rasa.Structures.Missions
         public uint? AreaId { get; }
         public uint MapContextId { get; }
         public bool Enabled { get; }
+        public MissionSpawnGroupPolicy SpawnPolicy { get; }
         public uint? RespawnSeconds { get; }
         public string Comment { get; }
         public IReadOnlyList<MissionSpawnDefinition> Spawns { get; }
@@ -301,6 +302,7 @@ namespace Rasa.Structures.Missions
             AreaId = entry.AreaId;
             MapContextId = entry.MapContextId;
             Enabled = entry.Enabled;
+            SpawnPolicy = entry.SpawnPolicy;
             RespawnSeconds = entry.RespawnSeconds;
             Comment = entry.Comment;
             Spawns = Array.AsReadOnly(

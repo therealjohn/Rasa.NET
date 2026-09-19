@@ -151,6 +151,76 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
+        public void CaptureTheFlagEscortDeathsDoNotBlockProgressOrRespawnAcrossTicksAndReconnect()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create();
+            PromoteAndStartAssault(harness);
+
+            var escort = harness.BootcampMap.MapCellInfo.Cells.Values
+                .SelectMany(cell => cell.CreatureList)
+                .First(creature =>
+                    creature.SpawnPool?.ScenarioKey?.Contains("mission:1994", System.StringComparison.Ordinal) == true &&
+                    creature.SpawnPool.ScenarioKey.Contains("spawn:1", System.StringComparison.Ordinal));
+            KillScenarioCreature(harness, harness.BootcampMap, escort);
+            BootcampRuntimeTestHarness.AdvanceScenarioCorpseAndRespawn(
+                harness,
+                escort,
+                corpseMilliseconds: 1000,
+                respawnMilliseconds: 1000);
+
+            Assert.AreEqual(1, CountScenarioCreatures(harness.BootcampMap, "mission:1994", "spawn:1"));
+
+            harness.ReconnectFresh();
+
+            Assert.AreEqual(1, CountScenarioCreatures(harness.BootcampMap, "mission:1994", "spawn:1"));
+
+            var tizzik = BootcampRuntimeTestHarness.FindCreature(
+                harness.BootcampMap,
+                BootcampRuntimeTestHarness.TizzikGiCreatureId);
+            Assert.IsNotNull(tizzik);
+            KillScenarioCreature(harness, harness.BootcampMap, tizzik);
+            harness.UtcNow += YoungbloodDelay;
+            Assert.IsTrue(harness.Manager.TickScenarios(harness.Client));
+
+            Assert.AreEqual(MissionObjectiveState.Completed, harness.Client.Player.Missions[CaptureTheFlagMissionId].Objectives[1].State);
+            Assert.AreEqual(1, CountScenarioCreatures(harness.BootcampMap, "mission:1994", "spawn:3"));
+        }
+
+        [TestMethod]
+        public void CaptureTheFlagTizzikDoesNotRespawnOrDoubleScheduleYoungbloodAcrossTicksAndReconnect()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create();
+            PromoteAndStartAssault(harness);
+
+            var tizzik = BootcampRuntimeTestHarness.FindCreature(
+                harness.BootcampMap,
+                BootcampRuntimeTestHarness.TizzikGiCreatureId);
+            Assert.IsNotNull(tizzik);
+            KillScenarioCreature(harness, harness.BootcampMap, tizzik);
+            BootcampRuntimeTestHarness.AdvanceScenarioCorpseAndRespawn(
+                harness,
+                tizzik,
+                corpseMilliseconds: 1000,
+                respawnMilliseconds: 1000);
+
+            Assert.AreEqual(0, CountScenarioCreatures(harness.BootcampMap, "mission:1994", "spawn:2"));
+
+            harness.ReconnectFresh();
+            Assert.AreEqual(0, CountScenarioCreatures(harness.BootcampMap, "mission:1994", "spawn:2"));
+
+            harness.UtcNow += YoungbloodDelay;
+            Assert.IsTrue(harness.Manager.TickScenarios(harness.Client));
+            Assert.IsFalse(harness.Manager.TickScenarios(harness.Client));
+            Assert.AreEqual(1, CountScenarioCreatures(harness.BootcampMap, "mission:1994", "spawn:3"));
+
+            harness.ReconnectFresh();
+
+            Assert.AreEqual(0, CountScenarioCreatures(harness.BootcampMap, "mission:1994", "spawn:2"));
+            Assert.AreEqual(1, CountScenarioCreatures(harness.BootcampMap, "mission:1994", "spawn:3"));
+            Assert.IsFalse(harness.Manager.TickScenarios(harness.Client));
+        }
+
+        [TestMethod]
         public void CaptureTheFlagReconnectsAroundTizzikAndYoungbloodTurnInRewardsExactlyFiveThousandXp()
         {
             using var harness = BootcampRuntimeTestHarness.Create();

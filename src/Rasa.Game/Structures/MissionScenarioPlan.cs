@@ -18,10 +18,12 @@ namespace Rasa.Structures
         internal List<string> StepKeysToAdd { get; } = new();
         internal List<string> StepKeyPrefixesToRemove { get; } = new();
         internal List<string> ExactStepKeysToRemove { get; } = new();
+        internal List<string> DurableKeyPrefixesToRemove { get; } = new();
         internal bool HasChanges =>
             StepKeysToAdd.Count > 0 ||
             StepKeyPrefixesToRemove.Count > 0 ||
             ExactStepKeysToRemove.Count > 0 ||
+            DurableKeyPrefixesToRemove.Count > 0 ||
             _runtimeConvergence.Count > 0 ||
             _progressPlans.Count > 0 ||
             _failurePlans.Count > 0 ||

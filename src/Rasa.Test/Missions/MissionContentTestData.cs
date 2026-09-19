@@ -269,7 +269,8 @@ namespace Rasa.Test.Missions
                 AreaId = 30,
                 MapContextId = 1220,
                 Enabled = false,
-                RespawnSeconds = 30,
+                SpawnPolicy = MissionSpawnGroupPolicy.ScenarioControlled,
+                RespawnSeconds = null,
                 Comment = "Spawn group"
             });
 
@@ -747,6 +748,7 @@ namespace Rasa.Test.Missions
                 AreaId = entry.AreaId,
                 MapContextId = entry.MapContextId,
                 Enabled = entry.Enabled,
+                SpawnPolicy = entry.SpawnPolicy,
                 RespawnSeconds = entry.RespawnSeconds,
                 Comment = entry.Comment
             };

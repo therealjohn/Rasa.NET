@@ -150,6 +150,7 @@ namespace Rasa.Managers
             {
                 SpawnPoolManager.Instance.DecreaseAliveCreatureCount(mapChannel, creature.SpawnPool);
                 SpawnPoolManager.Instance.IncreaseDeadCreatureCount(creature.SpawnPool);
+                (_missionManager ?? MissionManager.Instance).RecordScenarioCreatureDeath(creature.SpawnPool);
             }
 
             // todo: How were credits and experience calculated when multiple players attacked the same creature? Did only the player with the first strike get experience?

@@ -519,6 +519,22 @@ namespace Rasa.Test.Missions
                 fixture.ScenarioSteps[0].SpawnId = 999;
             }, "missing-spawn");
 
+            yield return Case("escort scenario step missing spawn group", fixture =>
+            {
+                fixture.ScenarioSteps[0].Kind = MissionScenarioStepKind.EscortSpawnGroup;
+                fixture.ScenarioSteps[0].ScenarioEventId = null;
+                fixture.ScenarioSteps[0].SpawnGroupId = null;
+            }, "invalid-scenario-step-shape");
+
+            yield return Case("escort scenario step requires scenario controlled spawn group", fixture =>
+            {
+                fixture.ScenarioSteps[0].Kind = MissionScenarioStepKind.EscortSpawnGroup;
+                fixture.ScenarioSteps[0].ScenarioEventId = null;
+                fixture.ScenarioSteps[0].SpawnGroupId = 50;
+                fixture.SpawnGroups[0].SpawnPolicy = MissionSpawnGroupPolicy.OrdinaryRespawn;
+                fixture.SpawnGroups[0].RespawnSeconds = 30;
+            }, "invalid-spawn-policy");
+
             yield return Case("invalid scenario step tutorial", fixture =>
             {
                 fixture.ScenarioSteps[0].Kind = MissionScenarioStepKind.PlayTutorial;

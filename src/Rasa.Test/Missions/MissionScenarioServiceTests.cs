@@ -179,6 +179,7 @@ namespace Rasa.Test.Missions
             var owned = maps.GetOrCreatePrivateInstance(1985, context.Client.Player.Id);
             MoveClientToMap(context.Client, context.Map, owned);
             var giver = context.AddNpc(101, owned);
+            EnsureTestCreatureAttributes(giver);
 
             Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
             context.Drain();
@@ -317,6 +318,88 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(BehaviorManager.BehaviorActionFollow, rebuiltEscort.Controller.CurrentAction);
             Assert.AreEqual(context.Client.Player.EntityId, rebuiltEscort.Controller.ActionFollow.FollowTargetId);
             Assert.AreEqual(context.Client.Player.Id, rebuiltEscort.SpawnPool.FollowOwnerCharacterId);
+        }
+
+        [TestMethod]
+        public void EscortSpawnGroupUsesFollowBehaviorToFightNearbyHostiles()
+        {
+            using var context = MissionTestContext.WithCustomDefinitions(
+                new Dictionary<uint, Mission>());
+            PrepareScenarioCreatureClass();
+            var fixture = CreateEscortRuntimeFixture();
+            context.Map.MapInfo = new MapInfo(1985, "bootcamp_fixture", 1556, 0);
+            context.Client.Player.MapContextId = 1985;
+            context.Client.Player.Class = (uint)CharacterClass.Recruit;
+            var now = new DateTime(2026, 9, 19, 12, 0, 0, DateTimeKind.Utc);
+            MissionManager manager = null;
+            MapChannelManager maps = null;
+            var objects = new DynamicObjectManager(null, maps);
+            var creatures = new CreatureManager(null, new ManifestationManager(context));
+            creatures.LoadedCreatures[501] = new Creature
+            {
+                DbId = 501,
+                EntityClass = (EntityClasses)4001,
+                Npc = new Npc { NpcPackageId = 501 },
+                Faction = Factions.AFS,
+                AppearanceData = new Dictionary<EquipmentData, AppearanceData>()
+            };
+            creatures.LoadedCreatures[502] = new Creature
+            {
+                DbId = 502,
+                EntityClass = (EntityClasses)4001,
+                Npc = new Npc { NpcPackageId = 502 },
+                Faction = Factions.Bane,
+                AppearanceData = new Dictionary<EquipmentData, AppearanceData>()
+            };
+            var service = new MissionScenarioService(
+                () => context,
+                () => manager,
+                new ManifestationManager(context),
+                () => maps,
+                () => creatures,
+                () => objects,
+                () => CommunicatorManager.Instance,
+                () => now);
+            maps = new MapChannelManager(
+                null,
+                privateInstances: new PrivateMapInstanceService(),
+                scenarioService: service);
+            maps.MapChannelArray.Add(1985, context.Map);
+            objects = new DynamicObjectManager(null, maps);
+            manager = LoadManager(context, fixture, () => now, maps, objects, creatures, service);
+            context.AddRewardTemplate(28, 3147);
+            using var singletons = new ManagerInstances(maps, objects, creatures, manager);
+            var owned = maps.GetOrCreatePrivateInstance(1985, context.Client.Player.Id);
+            MoveClientToMap(context.Client, context.Map, owned);
+            var giver = context.AddNpc(101, owned);
+
+            Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            context.Drain();
+            Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 60));
+
+            var escort = GetScenarioCreature(owned);
+            var hostile = creatures.CreateScenarioCreature(
+                new SpawnPool
+                {
+                    DbId = 777,
+                    MapContextId = owned.MapInfo.MapContextId,
+                    RuntimeMapChannel = owned,
+                    Position = escort.Position + new Vector3(1, 0, 1),
+                    Rotation = 0,
+                    SpawnSlot = new List<SpawnPoolSlot> { new(502, 1, 1) }
+                },
+                502,
+                escort.Position + new Vector3(1, 0, 1),
+                0);
+            Assert.IsNotNull(hostile);
+            CellManager.Instance.AddToWorld(owned, hostile);
+            foreach (var creature in owned.MapCellInfo.Cells.Values.SelectMany(cell => cell.CreatureList).ToArray())
+                EnsureTestCreatureAttributes(creature);
+
+            BehaviorManager.Instance.MapChannelThink(owned, 3500);
+
+            Assert.AreEqual(BehaviorManager.BehaviorActionFighting, escort.Controller.CurrentAction);
+            Assert.AreEqual(hostile.EntityId, escort.Controller.ActionFighting.TargetEntityId);
         }
 
         [TestMethod]
@@ -837,6 +920,24 @@ namespace Rasa.Test.Missions
                 entityClass.Augmentations.Add(AugmentationType.Creature);
         }
 
+        private static void EnsureTestCreatureAttributes(Creature creature)
+        {
+            if (creature == null)
+                return;
+
+            creature.State = CharacterState.Normal;
+            creature.Attributes[Attributes.Body] = new ActorAttributes(Attributes.Body, 10, 10, 10, 0, 0);
+            creature.Attributes[Attributes.Mind] = new ActorAttributes(Attributes.Mind, 10, 10, 10, 0, 0);
+            creature.Attributes[Attributes.Spirit] = new ActorAttributes(Attributes.Spirit, 10, 10, 10, 0, 0);
+            creature.Attributes[Attributes.Health] = new ActorAttributes(Attributes.Health, 100, 100, 100, 0, 0);
+            creature.Attributes[Attributes.Chi] = new ActorAttributes(Attributes.Chi, 0, 0, 0, 0, 0);
+            creature.Attributes[Attributes.Power] = new ActorAttributes(Attributes.Power, 0, 0, 0, 0, 0);
+            creature.Attributes[Attributes.Aware] = new ActorAttributes(Attributes.Aware, 0, 0, 0, 0, 0);
+            creature.Attributes[Attributes.Armor] = new ActorAttributes(Attributes.Armor, 0, 0, 0, 0, 0);
+            creature.Attributes[Attributes.Speed] = new ActorAttributes(Attributes.Speed, 1, 1, 1, 0, 0);
+            creature.Attributes[Attributes.Regen] = new ActorAttributes(Attributes.Regen, 0, 0, 0, 0, 0);
+        }
+
         private static MissionContentFixture CreateRewardScenarioFixture()
         {
             var fixture = MissionContentFixture.CreateValid();
@@ -955,6 +1056,7 @@ namespace Rasa.Test.Missions
                 AreaId = null,
                 MapContextId = 1985,
                 Enabled = false,
+                SpawnPolicy = MissionSpawnGroupPolicy.ScenarioControlled,
                 RespawnSeconds = null,
                 Comment = "Scenario spawn group"
             });
@@ -1437,6 +1539,7 @@ namespace Rasa.Test.Missions
                 AreaId = null,
                 MapContextId = 1220,
                 Enabled = false,
+                SpawnPolicy = MissionSpawnGroupPolicy.ScenarioControlled,
                 RespawnSeconds = null,
                 Comment = $"Scenario spawn group for mission {missionId}"
             });

@@ -764,6 +764,9 @@ namespace Rasa.Managers
         internal bool TickScenarios(Client client) =>
             _scenarioService.Tick(client);
 
+        internal void RecordScenarioCreatureDeath(SpawnPool spawnPool) =>
+            (_scenarioService as MissionScenarioService)?.RecordScenarioCreatureDeath(spawnPool);
+
         internal void RebuildScenarioRuntime(uint characterId, MapChannel mapChannel) =>
             _scenarioService.Rebuild(characterId, mapChannel);
 

@@ -6,7 +6,8 @@ namespace Rasa.Structures
     internal enum MissionScenarioStepStateKind
     {
         CompletedStep,
-        ScheduledScenario
+        ScheduledScenario,
+        SpawnDeathCount
     }
 
     internal readonly struct MissionScenarioStepState
@@ -15,6 +16,7 @@ namespace Rasa.Structures
         private const string StepPrefix = "scenario:";
         private const string StepSeparator = ":step:";
         private const string SchedulePrefix = "schedule:";
+        private const string SpawnDeathPrefix = "spawn-state:";
 
         public MissionScenarioStepStateKind Kind { get; }
         public string StepKey { get; }
@@ -23,6 +25,9 @@ namespace Rasa.Structures
         public uint StepId { get; }
         public uint? TargetScenarioId { get; }
         public DateTime? DueAtUtc { get; }
+        public uint? SpawnGroupId { get; }
+        public uint? SpawnId { get; }
+        public uint? DeathCount { get; }
 
         private MissionScenarioStepState(
             MissionScenarioStepStateKind kind,
@@ -31,7 +36,10 @@ namespace Rasa.Structures
             uint scenarioId,
             uint stepId,
             uint? targetScenarioId = null,
-            DateTime? dueAtUtc = null)
+            DateTime? dueAtUtc = null,
+            uint? spawnGroupId = null,
+            uint? spawnId = null,
+            uint? deathCount = null)
         {
             Kind = kind;
             StepKey = stepKey ?? string.Empty;
@@ -40,6 +48,9 @@ namespace Rasa.Structures
             StepId = stepId;
             TargetScenarioId = targetScenarioId;
             DueAtUtc = dueAtUtc;
+            SpawnGroupId = spawnGroupId;
+            SpawnId = spawnId;
+            DeathCount = deathCount;
         }
 
         internal static string CreateCompletedKey(
@@ -75,6 +86,35 @@ namespace Rasa.Structures
 
         internal static string CreateAttemptPrefix(string attemptKey) =>
             $"{AttemptPrefix}{attemptKey}:";
+
+        internal static string CreateSpawnDeathPrefix(
+            uint spawnGroupId,
+            uint spawnId,
+            string attemptKey = null)
+        {
+            var key = $"{SpawnDeathPrefix}{spawnGroupId}:{spawnId}:";
+            return string.IsNullOrWhiteSpace(attemptKey)
+                ? key
+                : CreateAttemptPrefix(attemptKey) + key;
+        }
+
+        internal static string CreateSpawnDeathGroupPrefix(
+            uint spawnGroupId,
+            string attemptKey = null)
+        {
+            var key = $"{SpawnDeathPrefix}{spawnGroupId}:";
+            return string.IsNullOrWhiteSpace(attemptKey)
+                ? key
+                : CreateAttemptPrefix(attemptKey) + key;
+        }
+
+        internal static string CreateSpawnDeathKey(
+            uint spawnGroupId,
+            uint spawnId,
+            uint deathCount,
+            string attemptKey = null) =>
+            CreateSpawnDeathPrefix(spawnGroupId, spawnId, attemptKey) +
+            deathCount.ToString(CultureInfo.InvariantCulture);
 
         internal static bool TryParse(string stepKey, out MissionScenarioStepState state)
         {
@@ -142,6 +182,28 @@ namespace Rasa.Structures
                         stepId,
                         targetScenarioId,
                         DateTimeOffset.FromUnixTimeMilliseconds(dueUnixMilliseconds).UtcDateTime);
+                    return true;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(rawKey) &&
+                rawKey.StartsWith(SpawnDeathPrefix, StringComparison.Ordinal))
+            {
+                var tokens = rawKey.Split(':');
+                if (tokens.Length == 4 &&
+                    uint.TryParse(tokens[1], NumberStyles.None, CultureInfo.InvariantCulture, out var spawnGroupId) &&
+                    uint.TryParse(tokens[2], NumberStyles.None, CultureInfo.InvariantCulture, out var spawnId) &&
+                    uint.TryParse(tokens[3], NumberStyles.None, CultureInfo.InvariantCulture, out var deathCount))
+                {
+                    state = new MissionScenarioStepState(
+                        MissionScenarioStepStateKind.SpawnDeathCount,
+                        stepKey,
+                        attemptKey,
+                        0,
+                        0,
+                        spawnGroupId: spawnGroupId,
+                        spawnId: spawnId,
+                        deathCount: deathCount);
                     return true;
                 }
             }
