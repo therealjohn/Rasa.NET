@@ -758,11 +758,11 @@ namespace Rasa.Managers
                             if (!definition.Scenarios.TryGetValue(
                                     rule.DetailId.GetValueOrDefault(),
                                     out var scenario) ||
-                                scenario.Steps.All(step => step.StepId != subjectId))
+                                scenario.Steps.All(step => step.ScenarioEventId != subjectId))
                             {
                                 diagnostics.Add(new MissionValidationDiagnostic(
                                     "missing-scenario-step",
-                                    $"scenario event progress rule references missing scenario {rule.DetailId?.ToString() ?? "null"} step {subjectId}.",
+                                    $"scenario event progress rule references missing scenario {rule.DetailId?.ToString() ?? "null"} scenario_event_id {subjectId}.",
                                     definition.MissionId,
                                     definition.ContentRevision,
                                     objective.ObjectiveId));
@@ -1123,6 +1123,19 @@ namespace Rasa.Managers
                         diagnostics.Add(new MissionValidationDiagnostic(
                             "missing-reward",
                             $"scenario step references missing reward {step.RewardId.Value}.",
+                            definition.MissionId,
+                            definition.ContentRevision,
+                            scenarioId: scenarioId,
+                            stepId: step.StepId));
+                        return;
+                    }
+
+                    var reward = definition.Rewards[step.RewardId.Value];
+                    if (reward.SelectionCount > 0 || reward.SelectableItems.Count > 0)
+                    {
+                        diagnostics.Add(new MissionValidationDiagnostic(
+                            "invalid-scenario-reward-selection",
+                            $"scenario step reward {step.RewardId.Value} must not contain selectable alternatives.",
                             definition.MissionId,
                             definition.ContentRevision,
                             scenarioId: scenarioId,

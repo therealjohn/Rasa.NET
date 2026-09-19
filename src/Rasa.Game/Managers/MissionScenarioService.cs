@@ -26,6 +26,7 @@ namespace Rasa.Managers
 
     internal sealed class MissionScenarioService : IMissionScenarioService
     {
+        private const uint BootcampPrivateMapContextId = 1985;
         private readonly Func<IGameUnitOfWorkFactory> _gameUnitOfWorkFactory;
         private readonly Func<MissionManager> _missionManager;
         private readonly ManifestationManager _manifestationManager;
@@ -134,7 +135,8 @@ namespace Rasa.Managers
                     {
                         var key = MissionScenarioStepState.CreateCompletedKey(
                             scenario.ScenarioId,
-                            step.StepId);
+                            step.StepId,
+                            step.AttemptKey);
                         if (!state.CompletedSteps.ContainsKey(key))
                             continue;
 
@@ -218,7 +220,8 @@ namespace Rasa.Managers
                     {
                         var key = MissionScenarioStepState.CreateCompletedKey(
                             scenario.ScenarioId,
-                            step.StepId);
+                            step.StepId,
+                            step.AttemptKey);
                         if (state.CompletedSteps.ContainsKey(key))
                             continue;
 
@@ -381,15 +384,21 @@ namespace Rasa.Managers
             var mapChannel = ResolveMap(
                 context.Client.Player,
                 spawnGroup.MapContextId,
-                context.MapChannel);
+                context.MapChannel,
+                context.UnitOfWork);
             if (mapChannel == null)
                 throw new GameplayRejectionException("Scenario spawn group map is unavailable.");
 
-            var stepKey = MissionScenarioStepState.CreateCompletedKey(
-                context.Scenario.ScenarioId,
-                step.StepId);
             context.Plan.AddRuntimeConvergence(() =>
-                EnsureSpawnGroupRuntime(mapChannel, spawnGroup, stepKey));
+                EnsureSpawnGroupRuntime(
+                    mapChannel,
+                    spawnGroup,
+                    BuildSpawnGroupRuntimeKey(
+                        context.Client.Player.Id,
+                        context.MissionDefinition.MissionId,
+                        spawnGroup.ContentRevision,
+                        step.AttemptKey,
+                        spawnGroup.SpawnGroupId)));
         }
 
         private void PlanDespawnGroup(MissionActionContext context, MissionScenarioStepDefinition step)
@@ -404,12 +413,20 @@ namespace Rasa.Managers
             var mapChannel = ResolveMap(
                 context.Client.Player,
                 spawnGroup.MapContextId,
-                context.MapChannel);
+                context.MapChannel,
+                context.UnitOfWork);
             if (mapChannel == null)
                 throw new GameplayRejectionException("Scenario spawn group map is unavailable.");
 
             context.Plan.AddRuntimeConvergence(() =>
-                RemoveSpawnGroupRuntime(mapChannel, spawnGroup.SpawnGroupId));
+                RemoveSpawnGroupRuntime(
+                    mapChannel,
+                    BuildSpawnGroupRuntimeKey(
+                        context.Client.Player.Id,
+                        context.MissionDefinition.MissionId,
+                        spawnGroup.ContentRevision,
+                        step.AttemptKey,
+                        spawnGroup.SpawnGroupId)));
         }
 
         private void PlanSpawnDynamicObject(
@@ -432,7 +449,12 @@ namespace Rasa.Managers
             context.Plan.AddRuntimeConvergence(() =>
                 EnsureScenarioDynamicObject(
                     context.MapChannel,
-                    step.DynamicObjectKey,
+                    BuildDynamicObjectRuntimeKey(
+                        context.Client.Player.Id,
+                        context.MissionDefinition.MissionId,
+                        step.ContentRevision,
+                        step.AttemptKey,
+                        step.DynamicObjectKey),
                     (EntityClasses)step.EntityClassId.Value,
                     position,
                     step.Orientation.Value,
@@ -447,7 +469,14 @@ namespace Rasa.Managers
                 throw new GameplayRejectionException("Scenario dynamic object key is missing.");
 
             context.Plan.AddRuntimeConvergence(() =>
-                RemoveScenarioDynamicObject(context.MapChannel, step.DynamicObjectKey));
+                RemoveScenarioDynamicObject(
+                    context.MapChannel,
+                    BuildDynamicObjectRuntimeKey(
+                        context.Client.Player.Id,
+                        context.MissionDefinition.MissionId,
+                        step.ContentRevision,
+                        step.AttemptKey,
+                        step.DynamicObjectKey)));
         }
 
         private void PlanInteraction(
@@ -606,18 +635,26 @@ namespace Rasa.Managers
                     context.Scenario.ScenarioId,
                     step.StepId,
                     step.TargetScenarioId.Value,
-                    dueAtUtc));
+                    dueAtUtc,
+                    step.AttemptKey));
         }
 
-        private static void PlanResetAttempt(
+        private void PlanResetAttempt(
             MissionActionContext context,
             MissionScenarioStepDefinition step)
         {
-            if (step.TargetScenarioId.HasValue)
-                context.Plan.StepKeyPrefixesToRemove.Add(
-                    MissionScenarioStepState.CreateScenarioPrefix(step.TargetScenarioId.Value));
-            if (!string.IsNullOrWhiteSpace(step.AttemptKey))
-                context.Plan.StepKeyPrefixesToRemove.Add($"attempt:{step.AttemptKey}:");
+            var completedToRemove = context.CompletedSteps.Values
+                .Where(state => MatchesResetTarget(state, step))
+                .ToArray();
+            var scheduledToRemove = context.ScheduledSteps
+                .Where(state => MatchesResetTarget(state, step))
+                .ToArray();
+
+            foreach (var state in completedToRemove.Concat(scheduledToRemove))
+                context.Plan.ExactStepKeysToRemove.Add(state.StepKey);
+
+            foreach (var state in completedToRemove)
+                PlanRuntimeReset(context, state);
         }
 
         private static void PlanScenarioEvent(
@@ -628,7 +665,7 @@ namespace Rasa.Managers
                 throw new GameplayRejectionException("Scenario event id is missing.");
 
             context.Plan.AddPostCommit(() =>
-                context.MissionManager.TryRecordScenarioEvent(
+                context.MissionManager.TryEmitScenarioProgressEvent(
                     context.Client,
                     context.MissionDefinition.MissionId,
                     context.Scenario.ScenarioId,
@@ -647,7 +684,8 @@ namespace Rasa.Managers
             var destinationMap = ResolveMap(
                 context.Client.Player,
                 step.MapContextId.Value,
-                null);
+                null,
+                context.UnitOfWork);
             if (destinationMap == null)
                 throw new GameplayRejectionException("Scenario transfer destination is unavailable.");
 
@@ -728,15 +766,25 @@ namespace Rasa.Managers
                         EnsureSpawnGroupRuntime(
                             mapChannel,
                             spawnGroup,
-                            MissionScenarioStepState.CreateCompletedKey(
-                                step.ScenarioId,
-                                step.StepId));
+                            BuildSpawnGroupRuntimeKey(
+                                characterId,
+                                missionId,
+                                spawnGroup.ContentRevision,
+                                step.AttemptKey,
+                                spawnGroup.SpawnGroupId));
                     }
                     return;
 
                 case MissionScenarioStepKind.DespawnGroup:
                     if (step.SpawnGroupId.HasValue)
-                        RemoveSpawnGroupRuntime(mapChannel, step.SpawnGroupId.Value);
+                        RemoveSpawnGroupRuntime(
+                            mapChannel,
+                            BuildSpawnGroupRuntimeKey(
+                                characterId,
+                                missionId,
+                                step.ContentRevision,
+                                step.AttemptKey,
+                                step.SpawnGroupId.Value));
                     return;
 
                 case MissionScenarioStepKind.SpawnDynamicObject:
@@ -749,7 +797,12 @@ namespace Rasa.Managers
                         return;
                     EnsureScenarioDynamicObject(
                         mapChannel,
-                        step.DynamicObjectKey,
+                        BuildDynamicObjectRuntimeKey(
+                            characterId,
+                            missionId,
+                            step.ContentRevision,
+                            step.AttemptKey,
+                            step.DynamicObjectKey),
                         (EntityClasses)step.EntityClassId.Value,
                         new Vector3(
                             (float)step.PosX.Value,
@@ -761,7 +814,14 @@ namespace Rasa.Managers
 
                 case MissionScenarioStepKind.DespawnDynamicObject:
                     if (!string.IsNullOrWhiteSpace(step.DynamicObjectKey))
-                        RemoveScenarioDynamicObject(mapChannel, step.DynamicObjectKey);
+                        RemoveScenarioDynamicObject(
+                            mapChannel,
+                            BuildDynamicObjectRuntimeKey(
+                                characterId,
+                                missionId,
+                                step.ContentRevision,
+                                step.AttemptKey,
+                                step.DynamicObjectKey));
                     return;
 
                 case MissionScenarioStepKind.EnableInteraction:
@@ -783,40 +843,46 @@ namespace Rasa.Managers
         private void EnsureSpawnGroupRuntime(
             MapChannel mapChannel,
             MissionSpawnGroupDefinition spawnGroup,
-            string scenarioKey)
+            string runtimeKey)
         {
             if (mapChannel == null)
                 return;
 
             var registry = GetRegistry(mapChannel);
-            if (!registry.SpawnGroupsById.TryGetValue(spawnGroup.SpawnGroupId, out var pools))
+            if (!registry.SpawnGroupsByKey.TryGetValue(runtimeKey, out var pools))
             {
-                pools = new List<SpawnPool>();
-                foreach (var spawn in spawnGroup.Spawns)
+                pools = mapChannel.SpawnPools
+                    .Where(pool => string.Equals(pool.ScenarioKey, runtimeKey, StringComparison.Ordinal))
+                    .ToList();
+                if (pools.Count == 0)
                 {
-                    var pool = new SpawnPool
+                    pools = new List<SpawnPool>();
+                    foreach (var spawn in spawnGroup.Spawns)
                     {
-                        DbId = spawn.SpawnId,
-                        ScenarioKey = scenarioKey,
-                        ScenarioGroupId = spawnGroup.SpawnGroupId,
-                        MapContextId = mapChannel.MapInfo.MapContextId,
-                        RuntimeMapChannel = mapChannel,
-                        Position = spawn.Position,
-                        Rotation = spawn.Rotation,
-                        RespawnTime = spawnGroup.RespawnSeconds.GetValueOrDefault() * 1000L,
-                        UpdateTimer = spawnGroup.RespawnSeconds.GetValueOrDefault() * 1000L,
-                        SpawnSlot = new List<SpawnPoolSlot>
+                        var pool = new SpawnPool
                         {
-                            new SpawnPoolSlot(
-                                spawn.CreatureId,
-                                checked((short)spawn.Quantity),
-                                checked((short)spawn.Quantity))
-                        }
-                    };
-                    pools.Add(pool);
+                            DbId = spawn.SpawnId,
+                            ScenarioKey = runtimeKey,
+                            ScenarioGroupId = spawnGroup.SpawnGroupId,
+                            MapContextId = mapChannel.MapInfo.MapContextId,
+                            RuntimeMapChannel = mapChannel,
+                            Position = spawn.Position,
+                            Rotation = spawn.Rotation,
+                            RespawnTime = spawnGroup.RespawnSeconds.GetValueOrDefault() * 1000L,
+                            UpdateTimer = spawnGroup.RespawnSeconds.GetValueOrDefault() * 1000L,
+                            SpawnSlot = new List<SpawnPoolSlot>
+                            {
+                                new SpawnPoolSlot(
+                                    spawn.CreatureId,
+                                    checked((short)spawn.Quantity),
+                                    checked((short)spawn.Quantity))
+                            }
+                        };
+                        pools.Add(pool);
+                    }
                 }
 
-                registry.SpawnGroupsById[spawnGroup.SpawnGroupId] = pools;
+                registry.SpawnGroupsByKey[runtimeKey] = pools;
             }
 
             foreach (var pool in pools)
@@ -845,15 +911,15 @@ namespace Rasa.Managers
             }
         }
 
-        private void RemoveSpawnGroupRuntime(MapChannel mapChannel, uint spawnGroupId)
+        private void RemoveSpawnGroupRuntime(MapChannel mapChannel, string runtimeKey)
         {
-            if (mapChannel == null)
+            if (mapChannel == null || string.IsNullOrWhiteSpace(runtimeKey))
                 return;
 
             var registry = GetRegistry(mapChannel);
-            if (!registry.SpawnGroupsById.TryGetValue(spawnGroupId, out var pools))
+            if (!registry.SpawnGroupsByKey.TryGetValue(runtimeKey, out var pools))
                 pools = mapChannel.SpawnPools
-                    .Where(pool => pool.ScenarioGroupId == spawnGroupId)
+                    .Where(pool => string.Equals(pool.ScenarioKey, runtimeKey, StringComparison.Ordinal))
                     .ToList();
 
             foreach (var creature in mapChannel.MapCellInfo.Cells.Values
@@ -865,22 +931,30 @@ namespace Rasa.Managers
 
             foreach (var pool in pools)
                 mapChannel.SpawnPools.Remove(pool);
-            registry.SpawnGroupsById.Remove(spawnGroupId);
+            registry.SpawnGroupsByKey.Remove(runtimeKey);
         }
 
         private void EnsureScenarioDynamicObject(
             MapChannel mapChannel,
-            string dynamicObjectKey,
+            string runtimeKey,
             EntityClasses entityClassId,
             Vector3 position,
             double rotation,
             bool enabled)
         {
-            if (mapChannel == null || string.IsNullOrWhiteSpace(dynamicObjectKey))
+            if (mapChannel == null || string.IsNullOrWhiteSpace(runtimeKey))
                 return;
 
             var registry = GetRegistry(mapChannel);
-            if (registry.DynamicObjectsByKey.TryGetValue(dynamicObjectKey, out var existing) &&
+            if (!registry.DynamicObjectsByKey.TryGetValue(runtimeKey, out var existing))
+            {
+                existing = mapChannel.DynamicObjects.SingleOrDefault(candidate =>
+                    string.Equals(candidate.ScenarioKey, runtimeKey, StringComparison.Ordinal));
+                if (existing != null)
+                    registry.DynamicObjectsByKey[runtimeKey] = existing;
+            }
+
+            if (existing != null &&
                 MapInstanceScope.Contains(mapChannel, existing))
             {
                 _objects().SetScenarioInteractionEnabled(mapChannel, existing, enabled);
@@ -892,28 +966,28 @@ namespace Rasa.Managers
                 entityClassId,
                 position,
                 rotation,
-                dynamicObjectKey,
+                runtimeKey,
                 enabled);
             mapChannel.DynamicObjects.Add(dynamicObject);
             CellManager.Instance.AddToWorld(mapChannel, dynamicObject);
-            registry.DynamicObjectsByKey[dynamicObjectKey] = dynamicObject;
+            registry.DynamicObjectsByKey[runtimeKey] = dynamicObject;
         }
 
-        private void RemoveScenarioDynamicObject(MapChannel mapChannel, string dynamicObjectKey)
+        private void RemoveScenarioDynamicObject(MapChannel mapChannel, string runtimeKey)
         {
-            if (mapChannel == null || string.IsNullOrWhiteSpace(dynamicObjectKey))
+            if (mapChannel == null || string.IsNullOrWhiteSpace(runtimeKey))
                 return;
 
             var registry = GetRegistry(mapChannel);
-            if (!registry.DynamicObjectsByKey.TryGetValue(dynamicObjectKey, out var dynamicObject))
+            if (!registry.DynamicObjectsByKey.TryGetValue(runtimeKey, out var dynamicObject))
                 dynamicObject = mapChannel.DynamicObjects.SingleOrDefault(candidate =>
-                    string.Equals(candidate.ScenarioKey, dynamicObjectKey, StringComparison.Ordinal));
+                    string.Equals(candidate.ScenarioKey, runtimeKey, StringComparison.Ordinal));
             if (dynamicObject == null)
                 return;
 
             CellManager.Instance.RemoveFromWorld(mapChannel, dynamicObject);
             mapChannel.DynamicObjects.Remove(dynamicObject);
-            registry.DynamicObjectsByKey.Remove(dynamicObjectKey);
+            registry.DynamicObjectsByKey.Remove(runtimeKey);
         }
 
         private IEnumerable<DynamicObject> FindInteractionObjects(
@@ -955,18 +1029,124 @@ namespace Rasa.Managers
         private MapChannel ResolveMap(
             Manifestation player,
             uint contextId,
-            MapChannel currentMap)
+            MapChannel currentMap,
+            ICharUnitOfWork unitOfWork = null)
         {
-            if (currentMap?.MapInfo?.MapContextId == contextId)
-                return currentMap;
             if (player?.Id > 0)
             {
                 var owned = _maps().FindOwnedPrivateInstance(contextId, player.Id);
                 if (owned != null)
                     return owned;
+                if (ShouldUseOwnedPrivateInstance(player, contextId, currentMap, unitOfWork))
+                    return _maps().GetOrCreatePrivateInstance(contextId, player.Id);
             }
 
+            if (currentMap?.MapInfo?.MapContextId == contextId)
+                return currentMap;
             return _maps().FindByContextId(contextId);
+        }
+
+        private static bool MatchesResetTarget(
+            MissionScenarioStepState state,
+            MissionScenarioStepDefinition step)
+        {
+            if (!string.IsNullOrWhiteSpace(step.AttemptKey))
+                return string.Equals(state.AttemptKey, step.AttemptKey, StringComparison.Ordinal);
+            if (step.TargetScenarioId.HasValue)
+                return state.ScenarioId == step.TargetScenarioId.Value;
+            return false;
+        }
+
+        private void PlanRuntimeReset(
+            MissionActionContext context,
+            MissionScenarioStepState state)
+        {
+            if (!context.MissionManager.TryGetScenarioDefinition(
+                    context.MissionDefinition.MissionId,
+                    state.ScenarioId,
+                    out var scenario))
+                return;
+
+            var completedStep = scenario.Steps.SingleOrDefault(candidate => candidate.StepId == state.StepId);
+            if (completedStep == null)
+                return;
+
+            switch (completedStep.Kind)
+            {
+                case MissionScenarioStepKind.SpawnGroup:
+                    if (!completedStep.SpawnGroupId.HasValue ||
+                        !context.MissionManager.TryGetSpawnGroupDefinition(
+                            context.MissionDefinition.MissionId,
+                            completedStep.SpawnGroupId.Value,
+                            out var spawnGroup))
+                        return;
+                    var spawnMap = ResolveMap(
+                        context.Client.Player,
+                        spawnGroup.MapContextId,
+                        context.MapChannel,
+                        context.UnitOfWork);
+                    context.Plan.AddRuntimeConvergence(() =>
+                        RemoveSpawnGroupRuntime(
+                            spawnMap,
+                            BuildSpawnGroupRuntimeKey(
+                                context.Client.Player.Id,
+                                context.MissionDefinition.MissionId,
+                                spawnGroup.ContentRevision,
+                                state.AttemptKey,
+                                spawnGroup.SpawnGroupId)));
+                    return;
+
+                case MissionScenarioStepKind.SpawnDynamicObject:
+                    if (string.IsNullOrWhiteSpace(completedStep.DynamicObjectKey))
+                        return;
+                    context.Plan.AddRuntimeConvergence(() =>
+                        RemoveScenarioDynamicObject(
+                            context.MapChannel,
+                            BuildDynamicObjectRuntimeKey(
+                                context.Client.Player.Id,
+                                context.MissionDefinition.MissionId,
+                                completedStep.ContentRevision,
+                                state.AttemptKey,
+                                completedStep.DynamicObjectKey)));
+                    return;
+            }
+        }
+
+        private static string BuildSpawnGroupRuntimeKey(
+            uint ownerCharacterId,
+            uint missionId,
+            string contentRevision,
+            string attemptKey,
+            uint spawnGroupId) =>
+            $"owner:{ownerCharacterId}:mission:{missionId}:revision:{contentRevision}:attempt:{NormalizeRuntimeKeyToken(attemptKey)}:spawn:{spawnGroupId}";
+
+        private static string BuildDynamicObjectRuntimeKey(
+            uint ownerCharacterId,
+            uint missionId,
+            string contentRevision,
+            string attemptKey,
+            string dynamicObjectKey) =>
+            $"owner:{ownerCharacterId}:mission:{missionId}:revision:{contentRevision}:attempt:{NormalizeRuntimeKeyToken(attemptKey)}:object:{dynamicObjectKey}";
+
+        private static string NormalizeRuntimeKeyToken(string value) =>
+            string.IsNullOrWhiteSpace(value) ? "-" : value;
+
+        private bool ShouldUseOwnedPrivateInstance(
+            Manifestation player,
+            uint contextId,
+            MapChannel currentMap,
+            ICharUnitOfWork unitOfWork)
+        {
+            if (player?.Id == 0)
+                return false;
+            if (currentMap?.MapInfo?.MapContextId == contextId &&
+                currentMap.IsPrivateInstance &&
+                currentMap.OwnerCharacterId == player.Id)
+                return true;
+
+            return contextId == BootcampPrivateMapContextId &&
+                   unitOfWork?.CharacterStartingExperience.Get(player.Id)?.State ==
+                   CharacterStartingExperienceState.Bootcamp;
         }
 
         private RuntimeRegistry GetRegistry(MapChannel mapChannel)
@@ -1000,7 +1180,8 @@ namespace Rasa.Managers
 
         private sealed class RuntimeRegistry
         {
-            internal Dictionary<uint, List<SpawnPool>> SpawnGroupsById { get; } = new();
+            internal Dictionary<string, List<SpawnPool>> SpawnGroupsByKey { get; } =
+                new(StringComparer.Ordinal);
             internal Dictionary<string, DynamicObject> DynamicObjectsByKey { get; } =
                 new(StringComparer.Ordinal);
         }

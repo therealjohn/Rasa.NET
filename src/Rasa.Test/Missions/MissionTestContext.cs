@@ -91,6 +91,7 @@ namespace Rasa.Test.Missions
             _world = new WorldTestContext();
             Client = _world.CreateClient(factory: this);
             Client.Player.Id = 1;
+            Client.Player.State = CharacterState.Idle;
             Client.Player.Level = 1;
             Client.Player.Experience = 0;
             Client.Player.Credits[CurencyType.Credits] = 100;
@@ -739,6 +740,50 @@ namespace Rasa.Test.Missions
         internal Client CreateCompetingClient()
         {
             return CreateCompetingClient(Manager);
+        }
+
+        internal Client CreateAdditionalClient(
+            uint characterId,
+            uint? accountId = null,
+            MissionManager manager = null)
+        {
+            var durableAccountId = accountId ?? characterId;
+            SeedCharacter(durableAccountId, 0, characterId);
+
+            var client = _world.CreateClient(factory: this);
+            client.Player.Id = characterId;
+            client.Player.Name = $"Player{characterId}";
+            client.Player.Level = Client.Player.Level;
+            client.Player.Experience = Client.Player.Experience;
+            client.Player.State = CharacterState.Idle;
+            client.Player.Credits[CurencyType.Credits] = Client.Player.Credits[CurencyType.Credits];
+            client.Player.Credits[CurencyType.Prestige] = Client.Player.Credits[CurencyType.Prestige];
+            client.Player.Inventory.PersonalInventory = Enumerable.Repeat(0UL, 250).ToList();
+            typeof(Client).GetProperty(nameof(Client.AccountEntry))!.SetValue(client,
+                new GameAccountEntry
+                {
+                    Id = durableAccountId,
+                    SelectedSlot = 0,
+                    Characters = new List<CharacterEntry>
+                    {
+                        new()
+                        {
+                            Id = characterId,
+                            AccountId = durableAccountId,
+                            Slot = 0,
+                            Name = $"Character {characterId}",
+                            Scale = 1
+                        }
+                    }
+                });
+            CellManager.Instance.AddToWorld(client);
+            using var unit = CreateChar();
+            (manager ?? Manager).Hydrate(
+                client.Player,
+                unit.CharacterMissions.Get(characterId),
+                unit.CharacterMissionProgress.Get(characterId));
+            Drain(client);
+            return client;
         }
 
         internal Client CreateCompetingClient(MissionManager manager)

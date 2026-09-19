@@ -130,10 +130,10 @@ namespace Rasa.Structures
         internal static MissionProgressRule CompleteOnScenarioEvent(
             uint missionId,
             uint scenarioId,
-            uint stepId) =>
+            uint scenarioEventId) =>
             CompleteOnScopedSubject(
                 MissionProgressEventKind.ScenarioEvent,
-                stepId,
+                scenarioEventId,
                 scopeId: missionId,
                 detailId: scenarioId);
 

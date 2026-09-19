@@ -144,7 +144,7 @@ namespace Rasa.Managers
                 if (!hasCounterId || trigger.CounterId.Value == 0 ||
                     hasInitialValue || hasTargetValue || hasSourceSpawnResolved)
                 {
-                    diagnostic = "scenario event progress rules must declare subject_id as step_id and counter_id as scenario_id, without counter ranges or source_spawn_resolved.";
+                    diagnostic = "scenario event progress rules must declare subject_id as scenario_event_id and counter_id as scenario_id, without counter ranges or source_spawn_resolved.";
                     return false;
                 }
 

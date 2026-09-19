@@ -11,12 +11,14 @@ namespace Rasa.Structures
 
     internal readonly struct MissionScenarioStepState
     {
+        private const string AttemptPrefix = "attempt:";
         private const string StepPrefix = "scenario:";
         private const string StepSeparator = ":step:";
         private const string SchedulePrefix = "schedule:";
 
         public MissionScenarioStepStateKind Kind { get; }
         public string StepKey { get; }
+        public string AttemptKey { get; }
         public uint ScenarioId { get; }
         public uint StepId { get; }
         public uint? TargetScenarioId { get; }
@@ -25,6 +27,7 @@ namespace Rasa.Structures
         private MissionScenarioStepState(
             MissionScenarioStepStateKind kind,
             string stepKey,
+            string attemptKey,
             uint scenarioId,
             uint stepId,
             uint? targetScenarioId = null,
@@ -32,47 +35,81 @@ namespace Rasa.Structures
         {
             Kind = kind;
             StepKey = stepKey ?? string.Empty;
+            AttemptKey = attemptKey ?? string.Empty;
             ScenarioId = scenarioId;
             StepId = stepId;
             TargetScenarioId = targetScenarioId;
             DueAtUtc = dueAtUtc;
         }
 
-        internal static string CreateCompletedKey(uint scenarioId, uint stepId) =>
-            $"{StepPrefix}{scenarioId}{StepSeparator}{stepId}";
+        internal static string CreateCompletedKey(
+            uint scenarioId,
+            uint stepId,
+            string attemptKey = null)
+        {
+            var key = $"{StepPrefix}{scenarioId}{StepSeparator}{stepId}";
+            return string.IsNullOrWhiteSpace(attemptKey)
+                ? key
+                : CreateAttemptPrefix(attemptKey) + key;
+        }
 
         internal static string CreateScheduledKey(
             uint scenarioId,
             uint stepId,
             uint targetScenarioId,
-            DateTime dueAtUtc)
+            DateTime dueAtUtc,
+            string attemptKey = null)
         {
             var due = new DateTimeOffset(dueAtUtc).ToUnixTimeMilliseconds();
-            return SchedulePrefix + scenarioId.ToString(CultureInfo.InvariantCulture) +
-                   ":" + stepId.ToString(CultureInfo.InvariantCulture) +
-                   ":" + targetScenarioId.ToString(CultureInfo.InvariantCulture) +
-                   ":" + due.ToString(CultureInfo.InvariantCulture);
+            var key = SchedulePrefix + scenarioId.ToString(CultureInfo.InvariantCulture) +
+                      ":" + stepId.ToString(CultureInfo.InvariantCulture) +
+                      ":" + targetScenarioId.ToString(CultureInfo.InvariantCulture) +
+                      ":" + due.ToString(CultureInfo.InvariantCulture);
+            return string.IsNullOrWhiteSpace(attemptKey)
+                ? key
+                : CreateAttemptPrefix(attemptKey) + key;
         }
 
         internal static string CreateScenarioPrefix(uint scenarioId) =>
             $"{StepPrefix}{scenarioId}{StepSeparator}";
 
+        internal static string CreateAttemptPrefix(string attemptKey) =>
+            $"{AttemptPrefix}{attemptKey}:";
+
         internal static bool TryParse(string stepKey, out MissionScenarioStepState state)
         {
-            if (!string.IsNullOrWhiteSpace(stepKey) &&
-                stepKey.StartsWith(StepPrefix, StringComparison.Ordinal))
+            var rawKey = stepKey;
+            var attemptKey = string.Empty;
+            if (!string.IsNullOrWhiteSpace(rawKey) &&
+                rawKey.StartsWith(AttemptPrefix, StringComparison.Ordinal))
             {
-                var separatorIndex = stepKey.IndexOf(StepSeparator, StringComparison.Ordinal);
+                var attemptSeparator = rawKey.IndexOf(':', AttemptPrefix.Length);
+                if (attemptSeparator <= AttemptPrefix.Length)
+                {
+                    state = default;
+                    return false;
+                }
+
+                attemptKey = rawKey.Substring(
+                    AttemptPrefix.Length,
+                    attemptSeparator - AttemptPrefix.Length);
+                rawKey = rawKey[(attemptSeparator + 1)..];
+            }
+
+            if (!string.IsNullOrWhiteSpace(rawKey) &&
+                rawKey.StartsWith(StepPrefix, StringComparison.Ordinal))
+            {
+                var separatorIndex = rawKey.IndexOf(StepSeparator, StringComparison.Ordinal);
                 if (separatorIndex > StepPrefix.Length &&
                     uint.TryParse(
-                        stepKey.Substring(
+                        rawKey.Substring(
                             StepPrefix.Length,
                             separatorIndex - StepPrefix.Length),
                         NumberStyles.None,
                         CultureInfo.InvariantCulture,
                         out var scenarioId) &&
                     uint.TryParse(
-                        stepKey[(separatorIndex + StepSeparator.Length)..],
+                        rawKey[(separatorIndex + StepSeparator.Length)..],
                         NumberStyles.None,
                         CultureInfo.InvariantCulture,
                         out var stepId))
@@ -80,16 +117,17 @@ namespace Rasa.Structures
                     state = new MissionScenarioStepState(
                         MissionScenarioStepStateKind.CompletedStep,
                         stepKey,
+                        attemptKey,
                         scenarioId,
                         stepId);
                     return true;
                 }
             }
 
-            if (!string.IsNullOrWhiteSpace(stepKey) &&
-                stepKey.StartsWith(SchedulePrefix, StringComparison.Ordinal))
+            if (!string.IsNullOrWhiteSpace(rawKey) &&
+                rawKey.StartsWith(SchedulePrefix, StringComparison.Ordinal))
             {
-                var tokens = stepKey.Split(':');
+                var tokens = rawKey.Split(':');
                 if (tokens.Length == 5 &&
                     uint.TryParse(tokens[1], NumberStyles.None, CultureInfo.InvariantCulture, out var scenarioId) &&
                     uint.TryParse(tokens[2], NumberStyles.None, CultureInfo.InvariantCulture, out var stepId) &&
@@ -99,6 +137,7 @@ namespace Rasa.Structures
                     state = new MissionScenarioStepState(
                         MissionScenarioStepStateKind.ScheduledScenario,
                         stepKey,
+                        attemptKey,
                         scenarioId,
                         stepId,
                         targetScenarioId,

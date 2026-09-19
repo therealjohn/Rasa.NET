@@ -74,10 +74,10 @@ namespace Rasa.Structures
         public static MissionProgressEvent Scenario(
             uint missionId,
             uint scenarioId,
-            uint stepId) =>
+            uint scenarioEventId) =>
             new(
                 MissionProgressEventKind.ScenarioEvent,
-                stepId,
+                scenarioEventId,
                 scopeId: missionId,
                 detailId: scenarioId);
 

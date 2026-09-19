@@ -110,7 +110,42 @@ namespace Rasa.Test.Missions
                     .Count());
         }
 
-        private static MissionContentFixture CreateScenarioFixture()
+        [TestMethod]
+        public void ScenarioStepEmissionAdvancesMatchingObjectiveOnceWithoutRecordingEventAsSecondStep()
+        {
+            using var context = MissionTestContext.WithCustomDefinitions(
+                new Dictionary<uint, Mission>());
+            var fixture = CreateScenarioFixture(stepId: 10, scenarioEventId: 501);
+            var manager = LoadManager(context, fixture);
+            var giver = context.AddNpc(101);
+
+            Assert.IsTrue(manager.TryAcceptNpcMission(
+                context.Client,
+                giver.EntityId,
+                321));
+            context.Drain();
+
+            Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 60));
+            Assert.IsFalse(manager.TryExecuteScenario(context.Client, 321, 60));
+
+            Assert.AreEqual(
+                MissionObjectiveState.Completed,
+                context.Client.Player.Missions[321].Objectives[10].State);
+            Assert.AreEqual(
+                1,
+                context.Drain().OfType<ObjectiveCompletedPacket>().Count());
+
+            using var unit = context.CreateChar();
+            CollectionAssert.AreEqual(
+                new[] { "scenario:60:step:10" },
+                unit.CharacterMissionScenario.Get(1, 321)
+                    .Select(entry => entry.StepKey)
+                    .ToArray());
+        }
+
+        private static MissionContentFixture CreateScenarioFixture(
+            uint stepId = 1,
+            uint scenarioEventId = 1)
         {
             var fixture = MissionContentFixture.CreateValid();
             fixture.Triggers.Clear();
@@ -120,6 +155,19 @@ namespace Rasa.Test.Missions
             fixture.RewardItems.Clear();
             fixture.Indicators.Clear();
             fixture.Objectives.RemoveAll(objective => objective.ObjectiveId == 11);
+            fixture.ScenarioSteps.Clear();
+            fixture.ScenarioSteps.Add(new MissionScenarioStepEntry
+            {
+                MissionId = 321,
+                ContentRevision = "deployment_11",
+                ScenarioId = 60,
+                StepId = stepId,
+                Requirement = MissionContentRequirement.Required,
+                Kind = MissionScenarioStepKind.EmitScenarioEvent,
+                Sequence = 1,
+                ScenarioEventId = scenarioEventId,
+                Comment = "Emit scenario event"
+            });
             fixture.Transitions.Add(new MissionObjectiveTransitionEntry
             {
                 MissionId = 321,
@@ -143,9 +191,9 @@ namespace Rasa.Test.Missions
                 Kind = MissionTriggerKind.ProgressEvent,
                 Sequence = 1,
                 EventKind = (byte)MissionProgressEventKind.ScenarioEvent,
-                SubjectId = 1,
+                SubjectId = scenarioEventId,
                 CounterId = 60,
-                Comment = "Scenario 60 step 1"
+                Comment = $"Scenario 60 event {scenarioEventId}"
             });
             return fixture;
         }

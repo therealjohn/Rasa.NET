@@ -92,11 +92,14 @@ namespace Rasa.Managers
             if (FixedItems.Any(item => item.ItemTemplateId == 0 || item.Quantity == 0) ||
                 SelectableItems.Any(item => item.ItemTemplateId == 0 || item.Quantity == 0))
                 throw new GameplayRejectionException("Mission reward contains an invalid item.");
+            if (SelectableItems.Count > 0)
+                throw new GameplayRejectionException(
+                    "Scenario reward packages must not contain selectable alternatives.");
 
             return new MissionRewardGrant(
                 Experience,
                 Currencies,
-                FixedItems.Concat(SelectableItems).ToArray(),
+                FixedItems.ToArray(),
                 beforeItemPublication);
         }
 
@@ -645,7 +648,7 @@ namespace Rasa.Managers
                         missionId,
                         scenarioId,
                         stepId,
-                        out _))
+                        out var stepDefinition))
                     return false;
 
                 var progressPlan = MissionProgressPublicationPlan.Empty;
@@ -675,15 +678,11 @@ namespace Rasa.Managers
                                 client.Player.Id,
                                 missionId,
                                 stepKey));
-                        progressPlan = PlanProgress(
+                        progressPlan = PlanScenarioEventProgress(
                             client,
-                            new[]
-                            {
-                                MissionProgressEvent.Scenario(
-                                    missionId,
-                                    scenarioId,
-                                    stepId)
-                            },
+                            missionId,
+                            scenarioId,
+                            stepDefinition.ScenarioEventId ?? stepId,
                             unitOfWork);
                         committed = true;
                     });
@@ -693,6 +692,60 @@ namespace Rasa.Managers
                     Logger.WriteLog(
                         LogType.Error,
                         $"Unable to record scenario step {scenarioId}:{stepId} for mission {missionId}: {error}");
+                    return false;
+                }
+
+                progressPlan.Publish(client);
+                return committed;
+            }
+        }
+
+        internal bool TryEmitScenarioProgressEvent(
+            Client client,
+            uint missionId,
+            uint scenarioId,
+            uint scenarioEventId)
+        {
+            if (client == null)
+                return false;
+
+            lock (client.SyncRoot)
+            {
+                if (!IsActivePlayer(client) ||
+                    !TryGetOperationalMission(missionId, out _) ||
+                    !client.Player.Missions.TryGetValue(missionId, out var runtimeMission) ||
+                    runtimeMission.State != MissionState.Active)
+                    return false;
+
+                var progressPlan = MissionProgressPublicationPlan.Empty;
+                var committed = false;
+                try
+                {
+                    using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+                    unitOfWork.ExecuteTransaction(() =>
+                    {
+                        var durableMission =
+                            unitOfWork.CharacterMissions.GetByCharacterAndMission(
+                                client.Player.Id,
+                                missionId);
+                        if (durableMission?.MissionState != (uint)MissionState.Active)
+                            throw new GameplayRejectionException(
+                                "Durable mission is not active.");
+
+                        progressPlan = PlanScenarioEventProgress(
+                            client,
+                            missionId,
+                            scenarioId,
+                            scenarioEventId,
+                            unitOfWork);
+                        committed = progressPlan.HasChanges;
+                    });
+                }
+                catch (Exception error) when (GameplayRejectionException.IsExpected(error))
+                {
+                    Logger.WriteLog(
+                        LogType.Error,
+                        $"Unable to emit scenario event {scenarioId}:{scenarioEventId} for mission {missionId}: {error}");
                     return false;
                 }
 
@@ -715,6 +768,23 @@ namespace Rasa.Managers
 
         private static string CreateScenarioStepKey(uint scenarioId, uint stepId) =>
             $"scenario:{scenarioId}:step:{stepId}";
+
+        private MissionProgressPublicationPlan PlanScenarioEventProgress(
+            Client client,
+            uint missionId,
+            uint scenarioId,
+            uint scenarioEventId,
+            ICharUnitOfWork unitOfWork) =>
+            PlanProgress(
+                client,
+                new[]
+                {
+                    MissionProgressEvent.Scenario(
+                        missionId,
+                        scenarioId,
+                        scenarioEventId)
+                },
+                unitOfWork);
 
         public bool TryAcceptNpcMission(Client client, ulong npcEntityId, uint missionId)
         {

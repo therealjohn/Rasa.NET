@@ -43,6 +43,23 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
+        public void ValidatorRejectsSelectableRewardPackagesForScenarioGrants()
+        {
+            var fixture = MissionContentFixture.CreateValid();
+            ConfigureApprovedScenarioVocabulary(fixture);
+            fixture.ScenarioSteps.Single(step => step.StepId == 13).RewardId = 40;
+            var snapshot = new MissionContentLoader().Load(fixture.CreateRepository());
+            var report = new MissionContentValidator().Validate(
+                snapshot,
+                fixture.CreateWorldUnitOfWork());
+
+            CollectionAssert.Contains(
+                report.Diagnostics.Select(diagnostic => diagnostic.Code).ToArray(),
+                "invalid-scenario-reward-selection");
+            Assert.IsTrue(report.BlocksReadiness);
+        }
+
+        [TestMethod]
         [DynamicData(nameof(GetFailureCases))]
         public void ValidatorReportsEachDiagnosticClass(
             string _,
@@ -831,6 +848,7 @@ namespace Rasa.Test.Missions
 
         private static void ConfigureApprovedScenarioVocabulary(MissionContentFixture fixture)
         {
+            ReplaceScenarioRewardWithNoSelectionPackage(fixture, 41);
             fixture.ScenarioSteps.Clear();
             fixture.ScenarioSteps.AddRange(new[]
             {
@@ -993,7 +1011,7 @@ namespace Rasa.Test.Missions
                     Requirement = MissionContentRequirement.Required,
                     Kind = MissionScenarioStepKind.GrantRewardPackage,
                     Sequence = 13,
-                    RewardId = 40,
+                    RewardId = 41,
                     Comment = "Grant reward"
                 },
                 new MissionScenarioStepEntry
@@ -1114,6 +1132,45 @@ namespace Rasa.Test.Missions
                     AccountSkipEntitlement = true,
                     Comment = "Set account skip entitlement"
                 }});
+        }
+
+        private static void ReplaceScenarioRewardWithNoSelectionPackage(
+            MissionContentFixture fixture,
+            uint rewardId)
+        {
+            fixture.Rewards.Add(new MissionRewardDefinitionEntry
+            {
+                MissionId = 321,
+                ContentRevision = "deployment_11",
+                RewardId = rewardId,
+                Requirement = MissionContentRequirement.Required,
+                Experience = 125,
+                Credits = 75,
+                Prestige = 10,
+                SelectionCount = 0,
+                Comment = "Scenario-safe reward"
+            });
+            fixture.RewardItems.AddRange(
+                new MissionRewardItemEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    RewardId = rewardId,
+                    ItemId = 41,
+                    Kind = MissionRewardItemKind.Fixed,
+                    ItemTemplateId = 28,
+                    Quantity = 2
+                },
+                new MissionRewardItemEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    RewardId = rewardId,
+                    ItemId = 42,
+                    Kind = MissionRewardItemKind.Fixed,
+                    ItemTemplateId = 29,
+                    Quantity = 1
+                });
         }
 
         private static void AddProgressTransition(

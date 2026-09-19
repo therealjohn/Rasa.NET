@@ -243,8 +243,7 @@ namespace Rasa.Test.Missions
             context.Drain();
             Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 60));
 
-            var creature = owned.MapCellInfo.Cells.Values.SelectMany(cell => cell.CreatureList)
-                .Single(current => current.SpawnPool?.ScenarioKey == "scenario:60:step:1");
+            var creature = GetScenarioCreature(owned);
             var dynamicObject = GetScenarioObject(owned, "bootcamp-crate");
             CellManager.Instance.RemoveCreatureFromWorld(owned, creature);
             CellManager.Instance.RemoveFromWorld(owned, dynamicObject);
@@ -336,7 +335,324 @@ namespace Rasa.Test.Missions
             var keys = unit.CharacterMissionScenario.Get(context.Client.Player.Id, 321)
                 .Select(entry => entry.StepKey)
                 .ToArray();
-            Assert.AreEqual(1, keys.Count(key => key == "scenario:61:step:1"));
+            Assert.AreEqual(1, keys.Count(key => key == "attempt:scout:scenario:61:step:1"));
+        }
+
+        [TestMethod]
+        public void ResetAttemptByAttemptKeyClearsOnlyMatchingStatePreservesOtherAttemptsAndAllowsRetryAfterReconnect()
+        {
+            using var context = MissionTestContext.WithCustomDefinitions(
+                new Dictionary<uint, Mission>());
+            PrepareScenarioCreatureClass();
+            var fixture = CreateAttemptKeyRuntimeFixture();
+            context.Map.MapInfo = new MapInfo(1985, "bootcamp_fixture", 1556, 0);
+            context.Client.Player.MapContextId = 1985;
+            var now = new DateTime(2026, 9, 19, 12, 0, 0, DateTimeKind.Utc);
+            MissionManager manager = null;
+            MapChannelManager maps = null;
+            var objects = new DynamicObjectManager(null, maps);
+            var creatures = new CreatureManager(null, new ManifestationManager(context));
+            creatures.LoadedCreatures[501] = new Creature
+            {
+                DbId = 501,
+                EntityClass = (EntityClasses)4001,
+                Npc = new Npc { NpcPackageId = 501 },
+                AppearanceData = new Dictionary<EquipmentData, AppearanceData>()
+            };
+            var service = new MissionScenarioService(
+                () => context,
+                () => manager,
+                new ManifestationManager(context),
+                () => maps,
+                () => creatures,
+                () => objects,
+                () => CommunicatorManager.Instance,
+                () => now);
+            maps = new MapChannelManager(
+                null,
+                privateInstances: new PrivateMapInstanceService(),
+                scenarioService: service);
+            maps.MapChannelArray.Add(1985, context.Map);
+            objects = new DynamicObjectManager(null, maps);
+            manager = LoadManager(context, fixture, () => now, maps, objects, creatures, service);
+            using var singletons = new ManagerInstances(maps, objects, creatures, manager);
+            var owned = maps.GetOrCreatePrivateInstance(1985, context.Client.Player.Id);
+            MoveClientToMap(context.Client, context.Map, owned);
+            var giver = context.AddNpc(101, owned);
+
+            Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            context.Drain();
+
+            Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 61));
+            Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 63));
+
+            using (var unit = context.CreateChar())
+            {
+                var initialKeys = unit.CharacterMissionScenario.Get(context.Client.Player.Id, 321)
+                    .Select(entry => entry.StepKey)
+                    .ToArray();
+                Assert.IsTrue(initialKeys.Any(key => key == "attempt:scout:scenario:61:step:1"));
+                Assert.IsTrue(initialKeys.Any(key => key == "attempt:scout:scenario:61:step:2"));
+                Assert.IsTrue(initialKeys.Any(key => key.StartsWith("attempt:scout:schedule:61:3:62:", StringComparison.Ordinal)));
+                Assert.IsTrue(initialKeys.Any(key => key == "attempt:medic:scenario:63:step:1"));
+                Assert.IsTrue(initialKeys.Any(key => key == "attempt:medic:scenario:63:step:2"));
+            }
+
+            Assert.AreEqual(2, CountScenarioCreatures(owned));
+            Assert.AreEqual(2, CountScenarioObjects(owned));
+            Assert.AreEqual(1, CountScenarioCreatures(owned, "attempt:scout"));
+            Assert.AreEqual(1, CountScenarioCreatures(owned, "attempt:medic"));
+            Assert.AreEqual(1, CountScenarioObjects(owned, "attempt:scout"));
+            Assert.AreEqual(1, CountScenarioObjects(owned, "attempt:medic"));
+
+            Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 60));
+
+            using (var unit = context.CreateChar())
+            {
+                var afterResetKeys = unit.CharacterMissionScenario.Get(context.Client.Player.Id, 321)
+                    .Select(entry => entry.StepKey)
+                    .ToArray();
+                Assert.IsFalse(afterResetKeys.Any(key => key == "attempt:scout:scenario:61:step:1"));
+                Assert.IsFalse(afterResetKeys.Any(key => key == "attempt:scout:scenario:61:step:2"));
+                Assert.IsFalse(afterResetKeys.Any(key => key.StartsWith("attempt:scout:schedule:61:3:62:", StringComparison.Ordinal)));
+                Assert.IsTrue(afterResetKeys.Any(key => key == "attempt:medic:scenario:63:step:1"));
+                Assert.IsTrue(afterResetKeys.Any(key => key == "attempt:medic:scenario:63:step:2"));
+            }
+
+            Assert.AreEqual(1, CountScenarioCreatures(owned));
+            Assert.AreEqual(1, CountScenarioObjects(owned));
+            Assert.AreEqual(0, CountScenarioCreatures(owned, "attempt:scout"));
+            Assert.AreEqual(1, CountScenarioCreatures(owned, "attempt:medic"));
+
+            maps.ReleaseOwnedPrivateInstances(context.Client.Player.Id);
+            var rebuilt = maps.GetOrCreatePrivateInstance(1985, context.Client.Player.Id);
+
+            Assert.AreEqual(1, CountScenarioCreatures(rebuilt));
+            Assert.AreEqual(1, CountScenarioObjects(rebuilt));
+            Assert.AreEqual(0, CountScenarioCreatures(rebuilt, "attempt:scout"));
+            Assert.AreEqual(1, CountScenarioCreatures(rebuilt, "attempt:medic"));
+            Assert.AreEqual(0, CountScenarioObjects(rebuilt, "attempt:scout"));
+            Assert.AreEqual(1, CountScenarioObjects(rebuilt, "attempt:medic"));
+
+            AttachClientToMap(context.Client, rebuilt);
+
+            Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 61));
+
+            using var retryUnit = context.CreateChar();
+            var retryKeys = retryUnit.CharacterMissionScenario.Get(context.Client.Player.Id, 321)
+                .Select(entry => entry.StepKey)
+                .ToArray();
+            Assert.AreEqual(1, retryKeys.Count(key => key == "attempt:scout:scenario:61:step:1"));
+            Assert.AreEqual(1, retryKeys.Count(key => key == "attempt:scout:scenario:61:step:2"));
+            Assert.AreEqual(1, retryKeys.Count(key => key.StartsWith("attempt:scout:schedule:61:3:62:", StringComparison.Ordinal)));
+            Assert.AreEqual(1, retryKeys.Count(key => key == "attempt:medic:scenario:63:step:1"));
+            Assert.AreEqual(1, retryKeys.Count(key => key == "attempt:medic:scenario:63:step:2"));
+            Assert.AreEqual(2, CountScenarioCreatures(rebuilt));
+            Assert.AreEqual(2, CountScenarioObjects(rebuilt));
+        }
+
+        [TestMethod]
+        public void TransferPlayerUsesOwnedPrivateBootcampDestinationInsteadOfPublicMap()
+        {
+            using var context = MissionTestContext.WithCustomDefinitions(
+                new Dictionary<uint, Mission>());
+            var fixture = CreateObjectiveTransferFixture(1985);
+            var now = new DateTime(2026, 9, 19, 12, 0, 0, DateTimeKind.Utc);
+            var maps = new MapChannelManager(
+                null,
+                () => 1000,
+                updateCharacter: (_, _, _) => { },
+                disconnect: _ => Assert.Fail("Transfer should not disconnect."),
+                refreshStats: (_, _) => { },
+                assignPlayer: _ => { },
+                enterMapChannels: _ => { },
+                privateInstances: new PrivateMapInstanceService());
+            maps.MapChannelArray.Add(context.Map.MapInfo.MapContextId, context.Map);
+            var publicBootcamp = new MapChannel
+            {
+                MapInfo = new MapInfo(1985, "bootcamp_fixture", 1556, 0),
+                ClientList = new List<Client>(),
+                PlayerLimit = 128
+            };
+            maps.MapChannelArray.Add(1985, publicBootcamp);
+            using var managers = CreateManagers(maps);
+            var manager = LoadManager(context, fixture, () => now, maps);
+            using (var unit = context.CreateChar())
+                unit.CharacterStartingExperience.Add(new CharacterStartingExperienceEntry(
+                    context.Client.Player.Id,
+                    "deployment_11",
+                    CharacterStartingExperienceState.Bootcamp));
+            var owned = maps.GetOrCreatePrivateInstance(1985, context.Client.Player.Id);
+            var giver = context.AddNpc(101);
+
+            Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            context.Drain();
+            Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 60));
+
+            Assert.IsNotNull(context.Client.PendingTransfer);
+            Assert.AreSame(owned, context.Client.PendingTransfer.DestinationMap);
+            Assert.AreNotSame(publicBootcamp, context.Client.PendingTransfer.DestinationMap);
+            Assert.IsTrue(context.Client.PendingTransfer.DestinationMap.IsPrivateInstance);
+            Assert.AreEqual(context.Client.Player.Id, context.Client.PendingTransfer.DestinationMap.OwnerCharacterId);
+        }
+
+        [TestMethod]
+        public void TransferPlayerLeavesPublicDestinationPublicWhenNoPrivateOwnershipApplies()
+        {
+            using var context = MissionTestContext.WithCustomDefinitions(
+                new Dictionary<uint, Mission>());
+            var fixture = CreateObjectiveTransferFixture(1221);
+            var now = new DateTime(2026, 9, 19, 12, 0, 0, DateTimeKind.Utc);
+            var maps = new MapChannelManager(
+                null,
+                () => 1000,
+                updateCharacter: (_, _, _) => { },
+                disconnect: _ => Assert.Fail("Transfer should not disconnect."),
+                refreshStats: (_, _) => { },
+                assignPlayer: _ => { },
+                enterMapChannels: _ => { },
+                privateInstances: new PrivateMapInstanceService());
+            maps.MapChannelArray.Add(context.Map.MapInfo.MapContextId, context.Map);
+            var publicAlia = new MapChannel
+            {
+                MapInfo = new MapInfo(1221, "alia_fixture", 1556, 0),
+                ClientList = new List<Client>(),
+                PlayerLimit = 128
+            };
+            maps.MapChannelArray.Add(1221, publicAlia);
+            using var managers = CreateManagers(maps);
+            var manager = LoadManager(context, fixture, () => now, maps);
+            var giver = context.AddNpc(101);
+
+            Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            context.Drain();
+            Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 60));
+
+            Assert.IsNotNull(context.Client.PendingTransfer);
+            Assert.AreSame(publicAlia, context.Client.PendingTransfer.DestinationMap);
+            Assert.IsFalse(context.Client.PendingTransfer.DestinationMap.IsPrivateInstance);
+        }
+
+        [TestMethod]
+        public void RuntimeCachesScopeActorsByMissionForIndependentCleanupOnSharedMaps()
+        {
+            using var context = MissionTestContext.WithCustomDefinitions(
+                new Dictionary<uint, Mission>());
+            PrepareScenarioCreatureClass();
+            var fixture = CreateSharedRuntimeFixture(includeSecondMission: true);
+            var now = new DateTime(2026, 9, 19, 12, 0, 0, DateTimeKind.Utc);
+            MissionManager manager = null;
+            var maps = new MapChannelManager(null, privateInstances: new PrivateMapInstanceService());
+            maps.MapChannelArray.Add(context.Map.MapInfo.MapContextId, context.Map);
+            var objects = new DynamicObjectManager(null, maps);
+            var creatures = new CreatureManager(null, new ManifestationManager(context));
+            creatures.LoadedCreatures[501] = new Creature
+            {
+                DbId = 501,
+                EntityClass = (EntityClasses)4001,
+                Npc = new Npc { NpcPackageId = 501 },
+                AppearanceData = new Dictionary<EquipmentData, AppearanceData>()
+            };
+            var service = new MissionScenarioService(
+                () => context,
+                () => manager,
+                new ManifestationManager(context),
+                () => maps,
+                () => creatures,
+                () => objects,
+                () => CommunicatorManager.Instance,
+                () => now);
+            manager = LoadManager(context, fixture, () => now, maps, objects, creatures, service);
+            using var singletons = new ManagerInstances(maps, objects, creatures, manager);
+            var giver = context.AddNpc(101);
+
+            Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 322));
+            context.Drain();
+
+            Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 60));
+            Assert.IsTrue(manager.TryExecuteScenario(context.Client, 322, 60));
+
+            Assert.AreEqual(2, CountScenarioCreatures(context.Map));
+            Assert.AreEqual(2, CountScenarioObjects(context.Map));
+            Assert.AreEqual(1, CountScenarioCreatures(context.Map, "mission:321"));
+            Assert.AreEqual(1, CountScenarioCreatures(context.Map, "mission:322"));
+            Assert.AreEqual(1, CountScenarioObjects(context.Map, "mission:321"));
+            Assert.AreEqual(1, CountScenarioObjects(context.Map, "mission:322"));
+
+            Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 61));
+
+            Assert.AreEqual(1, CountScenarioCreatures(context.Map));
+            Assert.AreEqual(1, CountScenarioObjects(context.Map));
+            Assert.AreEqual(0, CountScenarioCreatures(context.Map, "mission:321"));
+            Assert.AreEqual(1, CountScenarioCreatures(context.Map, "mission:322"));
+            Assert.AreEqual(0, CountScenarioObjects(context.Map, "mission:321"));
+            Assert.AreEqual(1, CountScenarioObjects(context.Map, "mission:322"));
+        }
+
+        [TestMethod]
+        public void RuntimeCachesScopeActorsByOwnerAndRebuildMissingRuntimeOnSharedMaps()
+        {
+            using var context = MissionTestContext.WithCustomDefinitions(
+                new Dictionary<uint, Mission>());
+            PrepareScenarioCreatureClass();
+            var fixture = CreateSharedRuntimeFixture(includeSecondMission: false);
+            var now = new DateTime(2026, 9, 19, 12, 0, 0, DateTimeKind.Utc);
+            MissionManager manager = null;
+            var maps = new MapChannelManager(null, privateInstances: new PrivateMapInstanceService());
+            maps.MapChannelArray.Add(context.Map.MapInfo.MapContextId, context.Map);
+            var objects = new DynamicObjectManager(null, maps);
+            var creatures = new CreatureManager(null, new ManifestationManager(context));
+            creatures.LoadedCreatures[501] = new Creature
+            {
+                DbId = 501,
+                EntityClass = (EntityClasses)4001,
+                Npc = new Npc { NpcPackageId = 501 },
+                AppearanceData = new Dictionary<EquipmentData, AppearanceData>()
+            };
+            var service = new MissionScenarioService(
+                () => context,
+                () => manager,
+                new ManifestationManager(context),
+                () => maps,
+                () => creatures,
+                () => objects,
+                () => CommunicatorManager.Instance,
+                () => now);
+            manager = LoadManager(context, fixture, () => now, maps, objects, creatures, service);
+            using var singletons = new ManagerInstances(maps, objects, creatures, manager);
+            var secondClient = context.CreateAdditionalClient(2, manager: manager);
+            var giver = context.AddNpc(101);
+
+            Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            Assert.IsTrue(manager.TryAcceptNpcMission(secondClient, giver.EntityId, 321));
+            context.Drain();
+            MissionTestContext.Drain(secondClient);
+
+            Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 60));
+            Assert.IsTrue(manager.TryExecuteScenario(secondClient, 321, 60));
+
+            Assert.AreEqual(2, CountScenarioCreatures(context.Map));
+            Assert.AreEqual(2, CountScenarioObjects(context.Map));
+            Assert.AreEqual(1, CountScenarioCreatures(context.Map, "owner:1"));
+            Assert.AreEqual(1, CountScenarioCreatures(context.Map, "owner:2"));
+            Assert.AreEqual(1, CountScenarioObjects(context.Map, "owner:1"));
+            Assert.AreEqual(1, CountScenarioObjects(context.Map, "owner:2"));
+
+            var firstCreature = GetScenarioCreature(context.Map, "owner:1");
+            var firstObject = GetScenarioObjectByTokens(context.Map, "owner:1");
+            CellManager.Instance.RemoveCreatureFromWorld(context.Map, firstCreature);
+            CellManager.Instance.RemoveFromWorld(context.Map, firstObject);
+            context.Map.DynamicObjects.Remove(firstObject);
+
+            manager.RebuildScenarioRuntime(context.Client.Player.Id, context.Map);
+
+            Assert.AreEqual(2, CountScenarioCreatures(context.Map));
+            Assert.AreEqual(2, CountScenarioObjects(context.Map));
+            Assert.AreEqual(1, CountScenarioCreatures(context.Map, "owner:1"));
+            Assert.AreEqual(1, CountScenarioCreatures(context.Map, "owner:2"));
+            Assert.AreEqual(1, CountScenarioObjects(context.Map, "owner:1"));
+            Assert.AreEqual(1, CountScenarioObjects(context.Map, "owner:2"));
         }
 
         private static MissionManager LoadManager(
@@ -391,20 +707,61 @@ namespace Rasa.Test.Missions
             CellManager.Instance.AddToWorld(client);
         }
 
-        private static int CountScenarioCreatures(MapChannel map) =>
+        private static void AttachClientToMap(Client client, MapChannel destination)
+        {
+            client.Player.MapChannel = destination;
+            client.Player.RuntimeMapChannel = destination;
+            client.Player.MapContextId = destination.MapInfo.MapContextId;
+            destination.ClientList.Add(client);
+            CellManager.Instance.AddToWorld(client);
+        }
+
+        private static int CountScenarioCreatures(MapChannel map, params string[] requiredTokens) =>
             map.MapCellInfo.Cells.Values
                 .SelectMany(cell => cell.CreatureList)
-                .Count(creature => creature.SpawnPool?.ScenarioKey == "scenario:60:step:1");
+                .Count(creature =>
+                    !string.IsNullOrWhiteSpace(creature.SpawnPool?.ScenarioKey) &&
+                    HasAllTokens(creature.SpawnPool.ScenarioKey, requiredTokens));
 
-        private static int CountScenarioObjects(MapChannel map) =>
-            map.DynamicObjects.Count(dynamicObject => dynamicObject.ScenarioKey == "bootcamp-crate");
+        private static int CountScenarioObjects(MapChannel map, params string[] requiredTokens) =>
+            map.DynamicObjects.Count(dynamicObject =>
+                !string.IsNullOrWhiteSpace(dynamicObject.ScenarioKey) &&
+                HasAllTokens(dynamicObject.ScenarioKey, requiredTokens));
+
+        private static Creature GetScenarioCreature(MapChannel map, params string[] requiredTokens) =>
+            map.MapCellInfo.Cells.Values
+                .SelectMany(cell => cell.CreatureList)
+                .Single(creature =>
+                    !string.IsNullOrWhiteSpace(creature.SpawnPool?.ScenarioKey) &&
+                    HasAllTokens(creature.SpawnPool.ScenarioKey, requiredTokens));
 
         private static DynamicObject GetScenarioObject(MapChannel map, string key) =>
-            map.DynamicObjects.Single(dynamicObject => dynamicObject.ScenarioKey == key);
+            map.DynamicObjects.Single(dynamicObject =>
+                string.Equals(dynamicObject.ScenarioKey, key, StringComparison.Ordinal) ||
+                dynamicObject.ScenarioKey?.EndsWith($":object:{key}", StringComparison.Ordinal) == true);
+
+        private static DynamicObject GetScenarioObjectByTokens(MapChannel map, params string[] requiredTokens) =>
+            map.DynamicObjects.Single(dynamicObject =>
+                !string.IsNullOrWhiteSpace(dynamicObject.ScenarioKey) &&
+                HasAllTokens(dynamicObject.ScenarioKey, requiredTokens));
+
+        private static bool HasAllTokens(string value, params string[] requiredTokens)
+        {
+            if (requiredTokens == null || requiredTokens.Length == 0)
+                return true;
+
+            return requiredTokens.All(token =>
+                !string.IsNullOrWhiteSpace(token) &&
+                value?.Contains(token, StringComparison.Ordinal) == true);
+        }
 
         private static void PrepareScenarioCreatureClass()
         {
             var classes = EntityClassManager.Instance.LoadedEntityClasses;
+            if (!classes.ContainsKey((EntityClasses)3147))
+                classes.Add((EntityClasses)3147, new EntityClass(3147, "scenario_object", 0, 0,
+                    new List<AugmentationType>(), true));
+
             if (!classes.TryGetValue((EntityClasses)4001, out var entityClass))
             {
                 entityClass = new EntityClass(4001, "scenario_creature", 0, 0,
@@ -419,6 +776,7 @@ namespace Rasa.Test.Missions
         private static MissionContentFixture CreateRewardScenarioFixture()
         {
             var fixture = MissionContentFixture.CreateValid();
+            ReplaceScenarioRewardWithNoSelectionPackage(fixture, 41);
             fixture.ScenarioSteps.Clear();
             fixture.ScenarioSteps.AddRange(
                 new MissionScenarioStepEntry
@@ -430,7 +788,7 @@ namespace Rasa.Test.Missions
                     Requirement = MissionContentRequirement.Required,
                     Kind = MissionScenarioStepKind.GrantRewardPackage,
                     Sequence = 1,
-                    RewardId = 40,
+                    RewardId = 41,
                     Comment = "Grant authored reward"
                 },
                 new MissionScenarioStepEntry
@@ -479,6 +837,7 @@ namespace Rasa.Test.Missions
         private static MissionContentFixture CreateScheduledScenarioFixture()
         {
             var fixture = MissionContentFixture.CreateValid();
+            ReplaceScenarioRewardWithNoSelectionPackage(fixture, 41);
             fixture.Scenarios.Add(new MissionScenarioEntry
             {
                 MissionId = 321,
@@ -511,7 +870,7 @@ namespace Rasa.Test.Missions
                 Requirement = MissionContentRequirement.Required,
                 Kind = MissionScenarioStepKind.GrantRewardPackage,
                 Sequence = 1,
-                RewardId = 40,
+                RewardId = 41,
                 Comment = "Delayed reward"
             });
             return fixture;
@@ -595,14 +954,162 @@ namespace Rasa.Test.Missions
             return fixture;
         }
 
-        private static MissionContentFixture CreateObjectiveTransferFixture()
+        private static MissionContentFixture CreateAttemptKeyRuntimeFixture()
+        {
+            var fixture = CreateRuntimeActorFixture();
+            fixture.Scenarios.Clear();
+            fixture.Scenarios.AddRange(
+                new MissionScenarioEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    Requirement = MissionContentRequirement.Required,
+                    Name = "ResetAttempt",
+                    Comment = "Reset attempt scenario"
+                },
+                new MissionScenarioEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 61,
+                    Requirement = MissionContentRequirement.Required,
+                    Name = "ScoutAttempt",
+                    Comment = "Scout attempt"
+                },
+                new MissionScenarioEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 62,
+                    Requirement = MissionContentRequirement.Required,
+                    Name = "ScoutFollowUp",
+                    Comment = "Scheduled scout follow-up"
+                },
+                new MissionScenarioEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 63,
+                    Requirement = MissionContentRequirement.Required,
+                    Name = "MedicAttempt",
+                    Comment = "Medic attempt"
+                });
+            fixture.ScenarioSteps.Clear();
+            fixture.ScenarioSteps.AddRange(
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 1,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.ResetAttempt,
+                    Sequence = 1,
+                    AttemptKey = "scout",
+                    Comment = "Reset scout attempt"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 61,
+                    StepId = 1,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.SpawnGroup,
+                    Sequence = 1,
+                    SpawnGroupId = 50,
+                    AttemptKey = "scout",
+                    Comment = "Spawn scout creatures"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 61,
+                    StepId = 2,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.SpawnDynamicObject,
+                    Sequence = 2,
+                    DynamicObjectKey = "bootcamp-crate",
+                    EntityClassId = 3147,
+                    PosX = 12,
+                    PosY = 0,
+                    PosZ = 6,
+                    Orientation = 0.5,
+                    InitialInteractionEnabled = true,
+                    AttemptKey = "scout",
+                    Comment = "Spawn scout crate"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 61,
+                    StepId = 3,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.ScheduleScenario,
+                    Sequence = 3,
+                    TargetScenarioId = 62,
+                    DelayMilliseconds = 5000,
+                    AttemptKey = "scout",
+                    Comment = "Schedule scout follow-up"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 63,
+                    StepId = 1,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.SpawnGroup,
+                    Sequence = 1,
+                    SpawnGroupId = 50,
+                    AttemptKey = "medic",
+                    Comment = "Spawn medic creatures"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 63,
+                    StepId = 2,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.SpawnDynamicObject,
+                    Sequence = 2,
+                    DynamicObjectKey = "bootcamp-crate",
+                    EntityClassId = 3147,
+                    PosX = 12,
+                    PosY = 0,
+                    PosZ = 6,
+                    Orientation = 0.5,
+                    InitialInteractionEnabled = true,
+                    AttemptKey = "medic",
+                    Comment = "Spawn medic crate"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 62,
+                    StepId = 1,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.EmitScenarioEvent,
+                    Sequence = 1,
+                    ScenarioEventId = 99,
+                    Comment = "Scout follow-up placeholder"
+                });
+            return fixture;
+        }
+
+        private static MissionContentFixture CreateObjectiveTransferFixture(uint destinationMapContextId = 1221)
         {
             var fixture = MissionContentFixture.CreateValid();
             fixture.Objectives.Clear();
             fixture.Actions.Clear();
             fixture.Rewards.Clear();
             fixture.RewardItems.Clear();
-            fixture.MapContextIds.Add(1221);
+            fixture.MapContextIds.Add(destinationMapContextId);
             fixture.Objectives.AddRange(
                 new MissionObjectiveDefinitionEntry
                 {
@@ -765,7 +1272,7 @@ namespace Rasa.Test.Missions
                     Requirement = MissionContentRequirement.Required,
                     Kind = MissionScenarioStepKind.TransferPlayer,
                     Sequence = 8,
-                    MapContextId = 1221,
+                    MapContextId = destinationMapContextId,
                     PosX = 4,
                     PosY = 0,
                     PosZ = 8,
@@ -810,10 +1317,333 @@ namespace Rasa.Test.Missions
                     Requirement = MissionContentRequirement.Required,
                     Kind = MissionScenarioStepKind.EmitScenarioEvent,
                     Sequence = 1,
+                    AttemptKey = "scout",
                     ScenarioEventId = 1,
                     Comment = "Repeatable step"
                 });
             return fixture;
+        }
+
+        private static MissionContentFixture CreateSharedRuntimeFixture(bool includeSecondMission)
+        {
+            var fixture = CreateRuntimeActorFixture();
+            fixture.Indicators.Clear();
+            fixture.Scenarios.Clear();
+            fixture.ScenarioSteps.Clear();
+            AddRuntimeScenarioAuthoring(fixture, 321);
+            if (includeSecondMission)
+            {
+                AddValidMissionSkeleton(fixture, 322);
+                AddRuntimeScenarioAuthoring(fixture, 322);
+            }
+
+            return fixture;
+        }
+
+        private static void AddRuntimeScenarioAuthoring(MissionContentFixture fixture, uint missionId)
+        {
+            fixture.SpawnGroups.RemoveAll(entry => entry.MissionId == missionId);
+            fixture.Spawns.RemoveAll(entry => entry.MissionId == missionId);
+            fixture.Scenarios.RemoveAll(entry => entry.MissionId == missionId);
+            fixture.ScenarioSteps.RemoveAll(entry => entry.MissionId == missionId);
+            fixture.SpawnGroups.Add(new MissionSpawnGroupEntry
+            {
+                MissionId = missionId,
+                ContentRevision = "deployment_11",
+                SpawnGroupId = 50,
+                Requirement = MissionContentRequirement.Required,
+                AreaId = null,
+                MapContextId = 1220,
+                Enabled = false,
+                RespawnSeconds = null,
+                Comment = $"Scenario spawn group for mission {missionId}"
+            });
+            fixture.Spawns.Add(new MissionSpawnEntry
+            {
+                MissionId = missionId,
+                ContentRevision = "deployment_11",
+                SpawnGroupId = 50,
+                SpawnId = 1,
+                CreatureId = 501,
+                PosX = 8,
+                PosY = 9,
+                PosZ = 10,
+                Rotation = 0.25,
+                Quantity = 1
+            });
+            fixture.Scenarios.AddRange(
+                new MissionScenarioEntry
+                {
+                    MissionId = missionId,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    Requirement = MissionContentRequirement.Required,
+                    Name = $"Mission{missionId}Spawn",
+                    Comment = $"Mission {missionId} spawn scenario"
+                },
+                new MissionScenarioEntry
+                {
+                    MissionId = missionId,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 61,
+                    Requirement = MissionContentRequirement.Required,
+                    Name = $"Mission{missionId}Despawn",
+                    Comment = $"Mission {missionId} despawn scenario"
+                });
+            fixture.ScenarioSteps.AddRange(
+                new MissionScenarioStepEntry
+                {
+                    MissionId = missionId,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 1,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.SpawnGroup,
+                    Sequence = 1,
+                    SpawnGroupId = 50,
+                    Comment = $"Mission {missionId} spawn creatures"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = missionId,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 2,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.SpawnDynamicObject,
+                    Sequence = 2,
+                    DynamicObjectKey = "shared-crate",
+                    EntityClassId = 3147,
+                    PosX = 12,
+                    PosY = 0,
+                    PosZ = 6,
+                    Orientation = 0.5,
+                    InitialInteractionEnabled = true,
+                    Comment = $"Mission {missionId} spawn crate"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = missionId,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 61,
+                    StepId = 1,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.DespawnGroup,
+                    Sequence = 1,
+                    SpawnGroupId = 50,
+                    Comment = $"Mission {missionId} despawn creatures"
+                },
+                new MissionScenarioStepEntry
+                {
+                    MissionId = missionId,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 61,
+                    StepId = 2,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionScenarioStepKind.DespawnDynamicObject,
+                    Sequence = 2,
+                    DynamicObjectKey = "shared-crate",
+                    Comment = $"Mission {missionId} despawn crate"
+                });
+        }
+
+        private static void AddValidMissionSkeleton(MissionContentFixture fixture, uint missionId)
+        {
+            fixture.Definitions.Add(new MissionContentDefinitionEntry
+            {
+                MissionId = missionId,
+                ContentRevision = "deployment_11",
+                Requirement = MissionContentRequirement.Required,
+                ClientNameTextId = 2000 + missionId,
+                GiverId = 101,
+                ReceiverId = 102,
+                Level = 9,
+                GroupType = 2,
+                CategoryId = 3,
+                Shareable = false,
+                RadioCompleteable = false,
+                Comment = $"Mission {missionId}"
+            });
+            fixture.Objectives.AddRange(
+                new MissionObjectiveDefinitionEntry
+                {
+                    MissionId = missionId,
+                    ContentRevision = "deployment_11",
+                    ObjectiveId = 10,
+                    Requirement = MissionContentRequirement.Required,
+                    ClientNameTextId = 2100 + missionId,
+                    ClientBodyTextId = 2200 + missionId,
+                    Ordinal = 1,
+                    InitialState = (byte)MissionObjectiveState.Incomplete,
+                    IsRequired = true,
+                    Comment = $"Mission {missionId} objective 10"
+                },
+                new MissionObjectiveDefinitionEntry
+                {
+                    MissionId = missionId,
+                    ContentRevision = "deployment_11",
+                    ObjectiveId = 11,
+                    Requirement = MissionContentRequirement.Required,
+                    ClientNameTextId = 2300 + missionId,
+                    ClientBodyTextId = 2400 + missionId,
+                    Ordinal = 2,
+                    InitialState = (byte)MissionObjectiveState.Inactive,
+                    IsRequired = true,
+                    Comment = $"Mission {missionId} objective 11"
+                });
+            fixture.Transitions.Add(new MissionObjectiveTransitionEntry
+            {
+                MissionId = missionId,
+                ContentRevision = "deployment_11",
+                ObjectiveId = 10,
+                TransitionId = 20,
+                Requirement = MissionContentRequirement.Required,
+                Sequence = 1,
+                FromState = (byte)MissionObjectiveState.Incomplete,
+                ToState = (byte)MissionObjectiveState.Completed,
+                Comment = $"Mission {missionId} conversation completion"
+            });
+            fixture.Triggers.Add(new MissionTriggerEntry
+            {
+                MissionId = missionId,
+                ContentRevision = "deployment_11",
+                ObjectiveId = 10,
+                TransitionId = 20,
+                TriggerId = 1,
+                Requirement = MissionContentRequirement.Required,
+                Kind = MissionTriggerKind.Conversation,
+                Sequence = 1,
+                NpcPackageId = 77,
+                PlayerFlagId = 11,
+                Comment = $"Mission {missionId} completion conversation"
+            });
+            fixture.Actions.AddRange(
+                new MissionActionEntry
+                {
+                    MissionId = missionId,
+                    ContentRevision = "deployment_11",
+                    ObjectiveId = 10,
+                    TransitionId = 20,
+                    ActionId = 1,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionActionKind.CompleteObjective,
+                    Sequence = 1,
+                    TargetObjectiveId = 10,
+                    ObjectiveState = (byte)MissionObjectiveState.Completed,
+                    Comment = $"Mission {missionId} complete current objective"
+                },
+                new MissionActionEntry
+                {
+                    MissionId = missionId,
+                    ContentRevision = "deployment_11",
+                    ObjectiveId = 10,
+                    TransitionId = 20,
+                    ActionId = 2,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionActionKind.RevealObjective,
+                    Sequence = 2,
+                    TargetObjectiveId = 11,
+                    Comment = $"Mission {missionId} reveal objective 11"
+                },
+                new MissionActionEntry
+                {
+                    MissionId = missionId,
+                    ContentRevision = "deployment_11",
+                    ObjectiveId = 10,
+                    TransitionId = 20,
+                    ActionId = 3,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionActionKind.ActivateObjective,
+                    Sequence = 3,
+                    TargetObjectiveId = 11,
+                    ObjectiveState = (byte)MissionObjectiveState.Incomplete,
+                    Comment = $"Mission {missionId} activate objective 11"
+                },
+                new MissionActionEntry
+                {
+                    MissionId = missionId,
+                    ContentRevision = "deployment_11",
+                    ObjectiveId = 10,
+                    TransitionId = 20,
+                    ActionId = 4,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionActionKind.GrantReward,
+                    Sequence = 4,
+                    RewardId = 40,
+                    Comment = $"Mission {missionId} reward"
+                });
+            fixture.Rewards.Add(new MissionRewardDefinitionEntry
+            {
+                MissionId = missionId,
+                ContentRevision = "deployment_11",
+                RewardId = 40,
+                Requirement = MissionContentRequirement.Required,
+                Experience = 125,
+                Credits = 75,
+                Prestige = 10,
+                SelectionCount = 1,
+                Comment = $"Mission {missionId} reward"
+            });
+            fixture.RewardItems.AddRange(
+                new MissionRewardItemEntry
+                {
+                    MissionId = missionId,
+                    ContentRevision = "deployment_11",
+                    RewardId = 40,
+                    ItemId = 1,
+                    Kind = MissionRewardItemKind.Fixed,
+                    ItemTemplateId = 28,
+                    Quantity = 2
+                },
+                new MissionRewardItemEntry
+                {
+                    MissionId = missionId,
+                    ContentRevision = "deployment_11",
+                    RewardId = 40,
+                    ItemId = 2,
+                    Kind = MissionRewardItemKind.Selectable,
+                    ItemTemplateId = 29,
+                    Quantity = 1
+                });
+        }
+
+        private static void ReplaceScenarioRewardWithNoSelectionPackage(
+            MissionContentFixture fixture,
+            uint rewardId)
+        {
+            fixture.Rewards.Add(new MissionRewardDefinitionEntry
+            {
+                MissionId = 321,
+                ContentRevision = "deployment_11",
+                RewardId = rewardId,
+                Requirement = MissionContentRequirement.Required,
+                Experience = 125,
+                Credits = 75,
+                Prestige = 10,
+                SelectionCount = 0,
+                Comment = "Scenario-safe reward"
+            });
+            fixture.RewardItems.AddRange(
+                new MissionRewardItemEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    RewardId = rewardId,
+                    ItemId = 41,
+                    Kind = MissionRewardItemKind.Fixed,
+                    ItemTemplateId = 28,
+                    Quantity = 2
+                },
+                new MissionRewardItemEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    RewardId = rewardId,
+                    ItemId = 42,
+                    Kind = MissionRewardItemKind.Fixed,
+                    ItemTemplateId = 29,
+                    Quantity = 1
+                });
         }
 
         private sealed class MissionContentLoadingFactory : IGameUnitOfWorkFactory
