@@ -99,10 +99,12 @@ namespace Rasa.Managers
                     transitions,
                     triggers,
                     actions);
+                var objectiveDiagnostics = new List<string>();
                 var objectiveDefinitions = BuildObjectives(
                     uniqueObjectives,
                     missionIndicators,
-                    transitionDefinitions);
+                    transitionDefinitions,
+                    objectiveDiagnostics);
 
                 var mission = new Mission(
                     definition.MissionId,
@@ -116,7 +118,10 @@ namespace Rasa.Managers
                     definition.Shareable,
                     definition.RadioCompleteable,
                     objectiveDefinitions.Values.OrderBy(objective => objective.ObjectiveId).ToArray(),
-                    enableOperational: true);
+                    enableOperational: true,
+                    operationalDiagnostic: objectiveDiagnostics.Count == 0
+                        ? null
+                        : string.Join("; ", objectiveDiagnostics));
 
                 selectedDefinitions.Add(
                     definition.MissionId,
@@ -198,61 +203,18 @@ namespace Rasa.Managers
         private static IReadOnlyDictionary<uint, MissionObjectiveDefinition> BuildObjectives(
             IReadOnlyDictionary<uint, MissionObjectiveDefinitionEntry> objectives,
             IReadOnlyDictionary<uint, MissionIndicator[]> indicators,
-            IReadOnlyDictionary<(uint ObjectiveId, uint TransitionId), MissionObjectiveTransitionDefinition> transitions)
+            IReadOnlyDictionary<(uint ObjectiveId, uint TransitionId), MissionObjectiveTransitionDefinition> transitions,
+            ICollection<string> diagnostics)
         {
             var objectiveDefinitions = new Dictionary<uint, MissionObjectiveDefinition>();
             var transitionsByObjective = transitions.Values.ToLookup(transition => transition.ObjectiveId);
             foreach (var objectiveEntry in objectives.Values.OrderBy(entry => entry.Ordinal).ThenBy(entry => entry.ObjectiveId))
             {
-                var revealTargets = new HashSet<uint>();
-                var activateTargets = new HashSet<uint>();
-                var conversations = new List<MissionObjectiveConversation>();
-                var counters = new Dictionary<uint, MissionObjectiveCounterDefinition>();
-                var itemCounters = new Dictionary<uint, MissionObjectiveItemCounterDefinition>();
-                MissionProgressRule progressRule = null;
-
-                foreach (var transition in transitionsByObjective[objectiveEntry.ObjectiveId]
-                    .OrderBy(entry => entry.Sequence)
-                    .ThenBy(entry => entry.TransitionId))
-                {
-                    foreach (var action in transition.Actions)
-                    {
-                        if (action.Kind == MissionActionKind.RevealObjective &&
-                            action.TargetObjectiveId.HasValue)
-                            revealTargets.Add(action.TargetObjectiveId.Value);
-                        if (action.Kind == MissionActionKind.ActivateObjective &&
-                            action.TargetObjectiveId.HasValue)
-                            activateTargets.Add(action.TargetObjectiveId.Value);
-                    }
-
-                    foreach (var trigger in transition.Triggers
-                        .Where(trigger => trigger.Kind == MissionTriggerKind.Conversation &&
-                            trigger.NpcPackageId.HasValue &&
-                            trigger.PlayerFlagId.HasValue))
-                    {
-                        conversations.Add(new MissionObjectiveConversation(
-                            trigger.NpcPackageId.Value,
-                            trigger.PlayerFlagId.Value,
-                            MissionObjectiveConversationType.Completion));
-                    }
-
-                    if (progressRule == null &&
-                        MissionProgressRuleAuthoring.TryBuild(
-                            transition.Triggers
-                                .Where(trigger => trigger.Kind == MissionTriggerKind.ProgressEvent)
-                                .ToArray(),
-                            out var candidate,
-                            out var derivedCounters,
-                            out var derivedItemCounters,
-                            out _))
-                    {
-                        progressRule = candidate;
-                        foreach (var counter in derivedCounters)
-                            counters[counter.Key] = counter.Value;
-                        foreach (var counter in derivedItemCounters)
-                            itemCounters[counter.Key] = counter.Value;
-                    }
-                }
+                var runtime = MissionObjectiveRuntimeAnalyzer.Analyze(
+                    objectiveEntry.ObjectiveId,
+                    transitionsByObjective[objectiveEntry.ObjectiveId].ToArray());
+                foreach (var diagnostic in runtime.Diagnostics)
+                    diagnostics?.Add(diagnostic.Message);
 
                 objectiveDefinitions.Add(
                     objectiveEntry.ObjectiveId,
@@ -269,15 +231,15 @@ namespace Rasa.Managers
                         objectiveEntry.Ordinal,
                         ParseObjectiveState(objectiveEntry.InitialState),
                         objectiveEntry.IsRequired,
-                        counters,
-                        itemCounters,
-                        conversations,
-                        revealTargets.OrderBy(value => value).ToArray(),
-                        activateTargets.OrderBy(value => value).ToArray(),
+                        runtime.Counters,
+                        runtime.ItemCounters,
+                        runtime.Conversations,
+                        runtime.RevealedObjectiveIds,
+                        runtime.ActivatedObjectiveIds,
                         indicators.TryGetValue(objectiveEntry.ObjectiveId, out var indicatorList)
                             ? indicatorList
                             : Array.Empty<MissionIndicator>(),
-                        progressRule));
+                        runtime.ProgressRule));
             }
 
             return objectiveDefinitions;

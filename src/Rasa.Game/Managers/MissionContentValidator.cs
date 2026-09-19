@@ -62,25 +62,9 @@ namespace Rasa.Managers
             }
 
             var report = new MissionValidationReport(diagnostics, requiredMissionIds);
-            var inactiveRequired = snapshot.Definitions.Values
-                .Where(definition => definition.Requirement == MissionContentRequirement.Required)
-                .Where(definition =>
-                    definition.Prerequisites.Any(prerequisite =>
-                        prerequisite.RequiredMissionId.HasValue &&
-                        snapshot.Definitions.TryGetValue(prerequisite.RequiredMissionId.Value, out var target) &&
-                        report.HasErrorsForMission(target.MissionId)))
-                .SelectMany(definition =>
-                    definition.Prerequisites
-                        .Where(prerequisite =>
-                            prerequisite.RequiredMissionId.HasValue &&
-                            snapshot.Definitions.TryGetValue(prerequisite.RequiredMissionId.Value, out var target) &&
-                            report.HasErrorsForMission(target.MissionId))
-                        .Select(prerequisite => new MissionValidationDiagnostic(
-                            "required-chain-inactive",
-                            $"required prerequisite mission {prerequisite.RequiredMissionId.Value} is inactive; fix that mission or mark the chain optional.",
-                            definition.MissionId,
-                            definition.ContentRevision)))
-                .ToArray();
+            var inactiveRequired = BuildRequiredChainInactiveDiagnostics(
+                snapshot,
+                report.Diagnostics);
             if (inactiveRequired.Length == 0)
                 return report;
             return new MissionValidationReport(report.Diagnostics.Concat(inactiveRequired), requiredMissionIds);
@@ -164,6 +148,15 @@ namespace Rasa.Managers
             MissionContentReferenceSet references,
             ICollection<MissionValidationDiagnostic> diagnostics)
         {
+            var transitionsByObjective = definition.Transitions.Values
+                .GroupBy(transition => transition.ObjectiveId)
+                .ToDictionary(
+                    group => group.Key,
+                    group => (IReadOnlyList<MissionObjectiveTransitionDefinition>)group
+                        .OrderBy(transition => transition.Sequence)
+                        .ThenBy(transition => transition.TransitionId)
+                        .ToArray());
+
             foreach (var transition in definition.Transitions.Values
                 .OrderBy(transition => transition.ObjectiveId)
                 .ThenBy(transition => transition.TransitionId))
@@ -340,6 +333,75 @@ namespace Rasa.Managers
                     }
                 }
             }
+
+            foreach (var objective in definition.Objectives.Values.OrderBy(objective => objective.ObjectiveId))
+            {
+                var runtime = MissionObjectiveRuntimeAnalyzer.Analyze(
+                    objective.ObjectiveId,
+                    transitionsByObjective.TryGetValue(objective.ObjectiveId, out var objectiveTransitions)
+                        ? objectiveTransitions
+                        : Array.Empty<MissionObjectiveTransitionDefinition>());
+                foreach (var diagnostic in runtime.Diagnostics)
+                {
+                    diagnostics.Add(new MissionValidationDiagnostic(
+                        diagnostic.Code,
+                        diagnostic.Message,
+                        definition.MissionId,
+                        definition.ContentRevision,
+                        objective.ObjectiveId,
+                        diagnostic.TransitionId));
+                }
+            }
+        }
+
+        private static MissionValidationDiagnostic[] BuildRequiredChainInactiveDiagnostics(
+            MissionContentSnapshot snapshot,
+            IReadOnlyList<MissionValidationDiagnostic> diagnostics)
+        {
+            var inactiveMissionIds = diagnostics
+                .Where(diagnostic => diagnostic.MissionId.HasValue)
+                .Select(diagnostic => diagnostic.MissionId.Value)
+                .ToHashSet();
+            var propagated = new List<MissionValidationDiagnostic>();
+            var requiredDefinitions = snapshot.Definitions.Values
+                .Where(definition => definition.Requirement == MissionContentRequirement.Required)
+                .OrderBy(definition => definition.MissionId)
+                .ToArray();
+
+            var changed = true;
+            while (changed)
+            {
+                changed = false;
+                foreach (var definition in requiredDefinitions)
+                {
+                    if (inactiveMissionIds.Contains(definition.MissionId))
+                        continue;
+
+                    var blockedPrerequisites = definition.Prerequisites
+                        .Where(prerequisite =>
+                            prerequisite.RequiredMissionId.HasValue &&
+                            inactiveMissionIds.Contains(prerequisite.RequiredMissionId.Value))
+                        .OrderBy(prerequisite => prerequisite.PrerequisiteId)
+                        .ThenBy(prerequisite => prerequisite.RequiredMissionId.Value)
+                        .ToArray();
+                    if (blockedPrerequisites.Length == 0)
+                        continue;
+
+                    foreach (var prerequisite in blockedPrerequisites)
+                    {
+                        propagated.Add(new MissionValidationDiagnostic(
+                            "required-chain-inactive",
+                            $"required prerequisite mission {prerequisite.RequiredMissionId.Value} is inactive; fix that mission or mark the chain optional.",
+                            definition.MissionId,
+                            definition.ContentRevision));
+                    }
+
+                    inactiveMissionIds.Add(definition.MissionId);
+                    changed = true;
+                }
+            }
+
+            return propagated.ToArray();
         }
 
         private static void ValidateCounterTextBindings(
@@ -454,14 +516,30 @@ namespace Rasa.Managers
             MissionContentDefinition definition,
             ICollection<MissionValidationDiagnostic> diagnostics)
         {
-            var revealEdges = definition.Objectives.Values
-                .ToDictionary(
-                    objective => objective.ObjectiveId,
-                    objective => objective.RevealedObjectiveIds.ToArray());
-            var activateEdges = definition.Objectives.Values
-                .ToDictionary(
-                    objective => objective.ObjectiveId,
-                    objective => objective.ActivatedObjectiveIds.ToArray());
+            var revealEdges = definition.Objectives.Keys.ToDictionary(
+                objectiveId => objectiveId,
+                objectiveId => definition.Transitions.Values
+                    .Where(transition => transition.ObjectiveId == objectiveId)
+                    .SelectMany(transition => transition.Actions)
+                    .Where(action =>
+                        action.Kind == MissionActionKind.RevealObjective &&
+                        action.TargetObjectiveId.HasValue)
+                    .Select(action => action.TargetObjectiveId.Value)
+                    .Distinct()
+                    .OrderBy(value => value)
+                    .ToArray());
+            var activateEdges = definition.Objectives.Keys.ToDictionary(
+                objectiveId => objectiveId,
+                objectiveId => definition.Transitions.Values
+                    .Where(transition => transition.ObjectiveId == objectiveId)
+                    .SelectMany(transition => transition.Actions)
+                    .Where(action =>
+                        action.Kind == MissionActionKind.ActivateObjective &&
+                        action.TargetObjectiveId.HasValue)
+                    .Select(action => action.TargetObjectiveId.Value)
+                    .Distinct()
+                    .OrderBy(value => value)
+                    .ToArray());
 
             var initialObjectives = definition.Objectives.Values
                 .Where(objective => objective.InitialState == MissionObjectiveState.Incomplete)

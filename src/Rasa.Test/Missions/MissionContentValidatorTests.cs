@@ -73,6 +73,80 @@ namespace Rasa.Test.Missions
                 report.Diagnostics.Select(diagnostic => diagnostic.Code).ToArray());
         }
 
+        [TestMethod]
+        public void ValidatorPropagatesRequiredChainInvalidationTransitivelyInMissionOrder()
+        {
+            var fixture = MissionContentFixture.CreateValid();
+            fixture.Objectives[0].ClientBodyTextId = 0;
+            AddSingleObjectiveConversationMission(fixture, 322, prerequisiteMissionId: 321);
+            AddSingleObjectiveConversationMission(fixture, 323, prerequisiteMissionId: 322);
+
+            var snapshot = new MissionContentLoader().Load(fixture.CreateRepository());
+            var report = new MissionContentValidator().Validate(
+                snapshot,
+                fixture.CreateWorldUnitOfWork());
+
+            CollectionAssert.AreEqual(
+                new[]
+                {
+                    "321:missing-client-text",
+                    "322:required-chain-inactive",
+                    "323:required-chain-inactive"
+                },
+                report.Diagnostics
+                    .Select(diagnostic => $"{diagnostic.MissionId}:{diagnostic.Code}")
+                    .ToArray());
+            StringAssert.Contains(report.Diagnostics[1].Message, "321");
+            StringAssert.Contains(report.Diagnostics[2].Message, "322");
+        }
+
+        [TestMethod]
+        public void ValidatorRejectsObjectivesWithMultipleExecutableProgressPaths()
+        {
+            var fixture = CreatePureProgressFixture();
+            AddProgressTransition(
+                fixture,
+                objectiveId: 10,
+                transitionId: 21,
+                triggerId: 2,
+                subjectId: 502);
+
+            var snapshot = new MissionContentLoader().Load(fixture.CreateRepository());
+            var report = new MissionContentValidator().Validate(
+                snapshot,
+                fixture.CreateWorldUnitOfWork());
+            var diagnostic = report.Diagnostics.Single(
+                entry => entry.Code == "multiple-executable-transition-paths");
+
+            Assert.AreEqual(321U, diagnostic.MissionId);
+            Assert.AreEqual(10U, diagnostic.ObjectiveId);
+            StringAssert.Contains(diagnostic.Message, "progress transition 20");
+            StringAssert.Contains(diagnostic.Message, "progress transition 21");
+        }
+
+        [TestMethod]
+        public void ValidatorRejectsConversationAndProgressBranchCombination()
+        {
+            var fixture = MissionContentFixture.CreateValid();
+            AddProgressTransition(
+                fixture,
+                objectiveId: 10,
+                transitionId: 21,
+                triggerId: 2,
+                subjectId: 501);
+
+            var snapshot = new MissionContentLoader().Load(fixture.CreateRepository());
+            var report = new MissionContentValidator().Validate(
+                snapshot,
+                fixture.CreateWorldUnitOfWork());
+            var diagnostic = report.Diagnostics.Single(
+                entry => entry.Code == "multiple-executable-transition-paths");
+
+            Assert.AreEqual(10U, diagnostic.ObjectiveId);
+            StringAssert.Contains(diagnostic.Message, "conversation transition 20");
+            StringAssert.Contains(diagnostic.Message, "progress transition 21");
+        }
+
         public static IEnumerable<object[]> GetFailureCases()
         {
             yield return Case("duplicate mission", fixture =>
@@ -140,6 +214,20 @@ namespace Rasa.Test.Missions
                     ToState = (byte)MissionObjectiveState.Completed,
                     Comment = "Cycle transition"
                 });
+                fixture.Triggers.Add(new MissionTriggerEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ObjectiveId = 11,
+                    TransitionId = 21,
+                    TriggerId = 21,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionTriggerKind.Conversation,
+                    Sequence = 1,
+                    NpcPackageId = 77,
+                    PlayerFlagId = 12,
+                    Comment = "Conversation for objective 11"
+                });
                 fixture.Actions.AddRange(
                     new MissionActionEntry
                     {
@@ -178,6 +266,20 @@ namespace Rasa.Test.Missions
                     FromState = (byte)MissionObjectiveState.Incomplete,
                     ToState = (byte)MissionObjectiveState.Completed,
                     Comment = "Cycle back"
+                });
+                fixture.Triggers.Add(new MissionTriggerEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ObjectiveId = 12,
+                    TransitionId = 22,
+                    TriggerId = 22,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionTriggerKind.Conversation,
+                    Sequence = 1,
+                    NpcPackageId = 77,
+                    PlayerFlagId = 13,
+                    Comment = "Conversation for objective 12"
                 });
             }, "transition-cycle");
 
@@ -369,9 +471,7 @@ namespace Rasa.Test.Missions
 
             yield return Case("missing counter text binding", fixture =>
             {
-                fixture.Triggers[0].Kind = MissionTriggerKind.ProgressEvent;
-                fixture.Triggers[0].NpcPackageId = null;
-                fixture.Triggers[0].PlayerFlagId = null;
+                ConfigurePureProgressObjective(fixture);
                 fixture.Triggers[0].EventKind = (byte)MissionProgressEventKind.CreatureKilled;
                 fixture.Triggers[0].SubjectId = 501;
                 fixture.Triggers[0].CounterId = 0;
@@ -382,12 +482,10 @@ namespace Rasa.Test.Missions
 
             yield return Case("out of range counter text binding", fixture =>
             {
+                ConfigurePureProgressObjective(fixture);
                 fixture.Objectives[0].ClientCounter0TextId = 9100;
                 fixture.Objectives[0].ClientCounter1TextId = 9101;
                 fixture.Objectives[0].ClientCounter2TextId = 9102;
-                fixture.Triggers[0].Kind = MissionTriggerKind.ProgressEvent;
-                fixture.Triggers[0].NpcPackageId = null;
-                fixture.Triggers[0].PlayerFlagId = null;
                 fixture.Triggers[0].EventKind = (byte)MissionProgressEventKind.CreatureKilled;
                 fixture.Triggers[0].SubjectId = 501;
                 fixture.Triggers[0].CounterId = 3;
@@ -506,6 +604,30 @@ namespace Rasa.Test.Missions
                     Comment = "Required prerequisite"
                 });
             }, "required-chain-inactive");
+
+            yield return Case("multiple executable transition paths", fixture =>
+            {
+                ConfigurePureProgressObjective(fixture);
+                AddProgressTransition(
+                    fixture,
+                    objectiveId: 10,
+                    transitionId: 21,
+                    triggerId: 2,
+                    subjectId: 502);
+            }, "multiple-executable-transition-paths");
+
+            yield return Case("unsupported progress transition actions", fixture =>
+            {
+                fixture.Triggers[0].Kind = MissionTriggerKind.ProgressEvent;
+                fixture.Triggers[0].NpcPackageId = null;
+                fixture.Triggers[0].PlayerFlagId = null;
+                fixture.Triggers[0].EventKind = (byte)MissionProgressEventKind.CreatureKilled;
+                fixture.Triggers[0].SubjectId = 501;
+                fixture.Triggers[0].CounterId = null;
+                fixture.Triggers[0].InitialValue = null;
+                fixture.Triggers[0].TargetValue = null;
+                fixture.Triggers[0].SourceSpawnResolved = null;
+            }, "unsupported-progress-transition-actions");
         }
 
         private static object[] Case(
@@ -513,5 +635,151 @@ namespace Rasa.Test.Missions
             Action<MissionContentFixture> mutate,
             string expectedCode) =>
             new object[] { name, mutate, expectedCode };
+
+        private static MissionContentFixture CreatePureProgressFixture()
+        {
+            var fixture = MissionContentFixture.CreateValid();
+            ConfigurePureProgressObjective(fixture);
+            return fixture;
+        }
+
+        private static void ConfigurePureProgressObjective(
+            MissionContentFixture fixture)
+        {
+            fixture.Triggers.Clear();
+            fixture.Actions.Clear();
+            fixture.Transitions.Clear();
+            fixture.Rewards.Clear();
+            fixture.RewardItems.Clear();
+            fixture.Indicators.Clear();
+            fixture.Objectives.RemoveAll(objective => objective.ObjectiveId == 11);
+            AddProgressTransition(
+                fixture,
+                objectiveId: 10,
+                transitionId: 20,
+                triggerId: 1,
+                subjectId: 501);
+        }
+
+        private static void AddProgressTransition(
+            MissionContentFixture fixture,
+            uint objectiveId,
+            uint transitionId,
+            uint triggerId,
+            uint subjectId)
+        {
+            fixture.Transitions.Add(new MissionObjectiveTransitionEntry
+            {
+                MissionId = 321,
+                ContentRevision = "deployment_11",
+                ObjectiveId = objectiveId,
+                TransitionId = transitionId,
+                Requirement = MissionContentRequirement.Required,
+                Sequence = transitionId - 19,
+                FromState = (byte)MissionObjectiveState.Incomplete,
+                ToState = (byte)MissionObjectiveState.Completed,
+                Comment = $"Progress transition {transitionId}"
+            });
+            fixture.Triggers.Add(new MissionTriggerEntry
+            {
+                MissionId = 321,
+                ContentRevision = "deployment_11",
+                ObjectiveId = objectiveId,
+                TransitionId = transitionId,
+                TriggerId = triggerId,
+                Requirement = MissionContentRequirement.Required,
+                Kind = MissionTriggerKind.ProgressEvent,
+                Sequence = 1,
+                EventKind = (byte)MissionProgressEventKind.CreatureKilled,
+                SubjectId = subjectId,
+                Comment = $"Kill creature {subjectId}"
+            });
+        }
+
+        private static void AddSingleObjectiveConversationMission(
+            MissionContentFixture fixture,
+            uint missionId,
+            uint prerequisiteMissionId)
+        {
+            fixture.Definitions.Add(new MissionContentDefinitionEntry
+            {
+                MissionId = missionId,
+                ContentRevision = "deployment_11",
+                Requirement = MissionContentRequirement.Required,
+                ClientNameTextId = 3000 + missionId,
+                GiverId = 100 + missionId,
+                ReceiverId = 200 + missionId,
+                Level = 9,
+                GroupType = 2,
+                CategoryId = 3,
+                Shareable = false,
+                RadioCompleteable = false,
+                Comment = $"Mission {missionId}"
+            });
+            fixture.Objectives.Add(new MissionObjectiveDefinitionEntry
+            {
+                MissionId = missionId,
+                ContentRevision = "deployment_11",
+                ObjectiveId = 1,
+                Requirement = MissionContentRequirement.Required,
+                ClientNameTextId = 4000 + missionId,
+                ClientBodyTextId = 5000 + missionId,
+                Ordinal = 1,
+                InitialState = (byte)MissionObjectiveState.Incomplete,
+                IsRequired = true,
+                Comment = $"Mission {missionId} objective"
+            });
+            fixture.Transitions.Add(new MissionObjectiveTransitionEntry
+            {
+                MissionId = missionId,
+                ContentRevision = "deployment_11",
+                ObjectiveId = 1,
+                TransitionId = 1,
+                Requirement = MissionContentRequirement.Required,
+                Sequence = 1,
+                FromState = (byte)MissionObjectiveState.Incomplete,
+                ToState = (byte)MissionObjectiveState.Completed,
+                Comment = $"Mission {missionId} completion"
+            });
+            fixture.Triggers.Add(new MissionTriggerEntry
+            {
+                MissionId = missionId,
+                ContentRevision = "deployment_11",
+                ObjectiveId = 1,
+                TransitionId = 1,
+                TriggerId = 1,
+                Requirement = MissionContentRequirement.Required,
+                Kind = MissionTriggerKind.Conversation,
+                Sequence = 1,
+                NpcPackageId = 77,
+                PlayerFlagId = 11,
+                Comment = $"Mission {missionId} conversation"
+            });
+            fixture.Actions.Add(new MissionActionEntry
+            {
+                MissionId = missionId,
+                ContentRevision = "deployment_11",
+                ObjectiveId = 1,
+                TransitionId = 1,
+                ActionId = 1,
+                Requirement = MissionContentRequirement.Required,
+                Kind = MissionActionKind.CompleteObjective,
+                Sequence = 1,
+                TargetObjectiveId = 1,
+                ObjectiveState = (byte)MissionObjectiveState.Completed,
+                Comment = $"Mission {missionId} complete"
+            });
+            fixture.Prerequisites.Add(new MissionPrerequisiteEntry
+            {
+                MissionId = missionId,
+                ContentRevision = "deployment_11",
+                PrerequisiteId = 1,
+                Requirement = MissionContentRequirement.Required,
+                Kind = MissionPrerequisiteKind.MissionCompleted,
+                RequiredMissionId = prerequisiteMissionId,
+                RequiredMissionState = (byte)MissionState.Completed,
+                Comment = $"Requires mission {prerequisiteMissionId}"
+            });
+        }
     }
 }
