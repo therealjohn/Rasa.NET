@@ -32,5 +32,6 @@ namespace Rasa.Repositories.Char.GameAccount
         void UpdateAccountLevel(uint id, byte level);
 
         void UpdateCanSkipBootcamp(uint id, bool canSkipBootcamp);
+        bool TryUpdateCanSkipBootcamp(uint id, bool expectedValue, bool canSkipBootcamp);
     }
 }

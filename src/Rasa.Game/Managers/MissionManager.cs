@@ -767,6 +767,14 @@ namespace Rasa.Managers
         internal bool TickScenarios(Client client) =>
             _scenarioService.Tick(client);
 
+        private static bool ShouldDeferBootcampDepartureScenario(
+            Client client,
+            uint missionId,
+            uint scenarioId) =>
+            client?.Player?.MapContextId == CharacterManager.BootcampPrivateMapContextId &&
+            ((missionId == 1995 && scenarioId == 6) ||
+             (missionId == 2005 && scenarioId == 5));
+
         private static void PublishStartedScenarios(
             Client client,
             uint missionId,
@@ -774,9 +782,13 @@ namespace Rasa.Managers
             Func<Client, uint, uint, bool> startScenario)
         {
             foreach (var scenarioId in scenarioIds ?? Array.Empty<uint>())
+            {
+                if (ShouldDeferBootcampDepartureScenario(client, missionId, scenarioId))
+                    continue;
                 TryPublish(
                     () => startScenario?.Invoke(client, missionId, scenarioId),
                     $"mission {missionId} start scenario {scenarioId}");
+            }
         }
 
         internal void RecordScenarioCreatureDeath(SpawnPool spawnPool) =>
@@ -1373,7 +1385,8 @@ namespace Rasa.Managers
                     client.CallMethod(client.Player.EntityId,
                         new MissionCompleteablePacket(missionId, true));
                 foreach (var scenarioId in actionApplication.StartScenarioIds)
-                    _scenarioService.TryExecute(client, missionId, scenarioId);
+                    if (!ShouldDeferBootcampDepartureScenario(client, missionId, scenarioId))
+                        _scenarioService.TryExecute(client, missionId, scenarioId);
                 return true;
             }
         }

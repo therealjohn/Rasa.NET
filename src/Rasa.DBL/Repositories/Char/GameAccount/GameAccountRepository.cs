@@ -120,5 +120,16 @@ namespace Rasa.Repositories.Char.GameAccount
             entry.CanSkipBootcamp = canSkipBootcamp;
             _charContext.SaveChanges();
         }
+
+        public bool TryUpdateCanSkipBootcamp(uint id, bool expectedValue, bool canSkipBootcamp)
+        {
+            var entry = _charContext.GetWritableEnsuring(_charContext.GameAccountEntries, id);
+            if (entry.CanSkipBootcamp != expectedValue)
+                return false;
+
+            entry.CanSkipBootcamp = canSkipBootcamp;
+            _charContext.SaveChanges();
+            return true;
+        }
     }
 }

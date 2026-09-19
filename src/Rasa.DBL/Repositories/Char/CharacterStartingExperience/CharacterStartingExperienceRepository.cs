@@ -34,5 +34,22 @@ namespace Rasa.Repositories.Char.CharacterStartingExperience
             entry.State = state;
             _charContext.SaveChanges();
         }
+
+        public bool TrySetState(
+            uint characterId,
+            CharacterStartingExperienceState expectedState,
+            CharacterStartingExperienceState state)
+        {
+            var entry = Get(characterId);
+            if (entry == null)
+                throw new InvalidOperationException("Character starting experience does not exist.");
+
+            if (entry.State != expectedState)
+                return false;
+
+            entry.State = state;
+            _charContext.SaveChanges();
+            return true;
+        }
     }
 }

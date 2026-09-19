@@ -259,6 +259,29 @@ namespace Rasa.Repositories.Char.Character
             _charContext.SaveChanges();
         }
 
+        public void ReconcileBootcampCharacter(
+            uint id,
+            uint experience,
+            byte level,
+            uint classId,
+            double x,
+            double y,
+            double z,
+            double rotation,
+            uint mapContextId)
+        {
+            var entry = _charContext.GetWritableEnsuring(_charContext.CharacterEntries, id);
+            entry.Experience = experience;
+            entry.Level = level;
+            entry.Class = classId;
+            entry.CoordX = x;
+            entry.CoordY = y;
+            entry.CoordZ = z;
+            entry.Rotation = rotation;
+            entry.MapContextId = mapContextId;
+            _charContext.SaveChanges();
+        }
+
         public void UpdateCharacterLevel(uint id, byte level)
         {
             var entry = GetWritable(id);

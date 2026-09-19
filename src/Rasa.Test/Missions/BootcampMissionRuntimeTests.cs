@@ -152,13 +152,14 @@ namespace Rasa.Test.Missions
                 4,
                 1));
 
-            Assert.AreEqual(GameClientState.Teleporting, harness.Context.Client.State);
-            Assert.AreEqual(WildernessMapContextId, harness.Context.Client.PendingTransfer.DestinationMap.MapInfo.MapContextId);
+            Assert.AreEqual(GameClientState.Ingame, harness.Context.Client.State);
+            Assert.IsNull(harness.Context.Client.PendingTransfer);
+            Assert.IsTrue(harness.Context.Client.Player.Missions[1995].Completeable);
             using var completedUnit = harness.Context.CreateChar();
-            Assert.IsTrue(completedUnit.CharacterQualifications.HasQualification(
+            Assert.IsFalse(completedUnit.CharacterQualifications.HasQualification(
                 harness.Context.Client.Player.Id,
                 CharacterQualificationKey.BootcampComplete));
-            Assert.IsTrue(harness.Context.Client.AccountEntry.CanSkipBootcamp);
+            Assert.IsFalse(harness.Context.Client.AccountEntry.CanSkipBootcamp);
         }
 
         [TestMethod]
@@ -265,8 +266,10 @@ namespace Rasa.Test.Missions
                 4,
                 1));
 
-            Assert.AreEqual(GameClientState.Teleporting, harness.Context.Client.State);
-            Assert.IsTrue(harness.Context.Client.AccountEntry.CanSkipBootcamp);
+            Assert.AreEqual(GameClientState.Ingame, harness.Context.Client.State);
+            Assert.IsNull(harness.Context.Client.PendingTransfer);
+            Assert.IsTrue(harness.Context.Client.Player.Missions[2005].Completeable);
+            Assert.IsFalse(harness.Context.Client.AccountEntry.CanSkipBootcamp);
         }
 
         private static void AssertMissionObjectives(

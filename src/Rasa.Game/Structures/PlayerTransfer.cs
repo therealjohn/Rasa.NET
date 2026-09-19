@@ -15,5 +15,6 @@ namespace Rasa.Structures
         internal bool IsMapLink { get; init; }
         internal bool HasDeparted { get; set; }
         internal ulong DropshipId { get; set; }
+        internal uint ReleaseOwnedPrivateInstancesForCharacterId { get; init; }
     }
 }

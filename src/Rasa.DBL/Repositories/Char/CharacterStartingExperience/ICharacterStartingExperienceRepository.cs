@@ -10,5 +10,9 @@ namespace Rasa.Repositories.Char.CharacterStartingExperience
         CharacterStartingExperienceEntry Get(uint characterId);
         void Add(CharacterStartingExperienceEntry entry);
         void SetState(uint characterId, CharacterStartingExperienceState state);
+        bool TrySetState(
+            uint characterId,
+            CharacterStartingExperienceState expectedState,
+            CharacterStartingExperienceState state);
     }
 }

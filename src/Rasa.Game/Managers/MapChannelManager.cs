@@ -534,6 +534,8 @@ namespace Rasa.Managers
             ManifestationManager.Instance.ResetInactivity(client);
             client.CallMethod(SysEntity.ClientMethodId, new UnrequestMovementBlockPacket());
             _enterMapChannels(client);
+            if (transfer.ReleaseOwnedPrivateInstancesForCharacterId != 0)
+                ReleaseOwnedPrivateInstances(transfer.ReleaseOwnedPrivateInstancesForCharacterId);
         }
 
         public void PassClientToCharacterSelection(Client client)
@@ -658,7 +660,8 @@ namespace Rasa.Managers
             Client client,
             MapChannel destinationMap,
             Vector3 position,
-            float orientation)
+            float orientation,
+            uint releaseOwnedPrivateInstancesForCharacterId = 0)
         {
             lock (client.SyncRoot)
             {
@@ -684,7 +687,8 @@ namespace Rasa.Managers
                     DestinationRotation = orientation,
                     Deadline = checked(_clock() + timeout * 1000L),
                     IsMapLink = true,
-                    HasDeparted = true
+                    HasDeparted = true,
+                    ReleaseOwnedPrivateInstancesForCharacterId = releaseOwnedPrivateInstancesForCharacterId
                 };
 
                 client.State = ClientState.Teleporting;

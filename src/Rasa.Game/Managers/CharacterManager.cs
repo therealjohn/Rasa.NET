@@ -35,7 +35,35 @@ namespace Rasa.Managers
         private readonly MissionManager _missionManager;
         private const string Deployment11StartingExperienceRevision = "deployment_11";
         private const string LegacyStartingExperienceRevision = "legacy";
-        private const uint BootcampPrivateMapContextId = 1985;
+        internal const uint BootcampPrivateMapContextId = 1985;
+        internal const uint BootcampExitPadWaypointId = 60;
+        private const uint BootcampInitiationMissionId = 1990;
+        private const uint BootcampFinaleMissionId = 1995;
+        private const uint BootcampRetryFinaleMissionId = 2005;
+        private const uint BootcampParityExperience = 43000;
+        private const byte BootcampParityLevel = 5;
+        private const uint BootcampSkipAmmoTemplateId = 28;
+        private const uint BootcampSkipAmmoQuantity = 20;
+        private const uint BootcampAliaWaypointId = 57;
+        private const uint BootcampAliaHospitalId = 103;
+        private const byte BootcampAbilitySlot = 0;
+        private const double BootcampStartCoordX = 357.90054d;
+        private const double BootcampStartCoordY = 120.32544d;
+        private const double BootcampStartCoordZ = 156.5188d;
+        private const double BootcampStartRotation = 0d;
+        private const uint BootcampArrivalMapContextId = 1220;
+        private const double BootcampArrivalCoordX = 884.11d;
+        private const double BootcampArrivalCoordY = 305.8d;
+        private const double BootcampArrivalCoordZ = 347.81d;
+        private const double BootcampArrivalRotation = 1.5613d;
+        private static readonly uint[] BootcampSkipEquipmentTemplateIds =
+        {
+            13066,
+            13096,
+            13156,
+            13186,
+            13713
+        };
 
         public const ulong SelectionPodStartEntityId = 100;
         public const byte MaxSelectionPods = 16;
@@ -756,27 +784,96 @@ namespace Rasa.Managers
             if (packet.SlotNum < 1 || packet.SlotNum > MaxSelectionPods)
                 return;
 
-            using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
-
-            // Look before the selected slot is changed: it used to be written first, so a
-            // switch to an empty pod left the account pointing at nothing.
-            var character = unitOfWork.Characters.GetByAccountId(client.AccountEntry.Id, packet.SlotNum);
-
-            if (character == null)
+            CharacterEntry character = null;
+            CharacterStartingExperienceState? startingState = null;
+            var rejectedSelection = false;
+            try
             {
-                Logger.WriteLog(LogType.Security,
-                    $"AccountId = {client.AccountEntry.Id} tried to switch to slot {packet.SlotNum}, which is empty.");
+                using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+                unitOfWork.ExecuteTransaction(() =>
+                {
+                    // Look before the selected slot is changed: it used to be written first, so a
+                    // switch to an empty pod left the account pointing at nothing.
+                    character = unitOfWork.Characters.GetByAccountId(client.AccountEntry.Id, packet.SlotNum);
+
+                    if (character == null)
+                    {
+                        Logger.WriteLog(LogType.Security,
+                            $"AccountId = {client.AccountEntry.Id} tried to switch to slot {packet.SlotNum}, which is empty.");
+                        rejectedSelection = true;
+                        return;
+                    }
+
+                    var account = unitOfWork.GameAccounts.Get(client.AccountEntry.Id);
+                    var startingExperience =
+                        unitOfWork.CharacterStartingExperience.Get(character.Id);
+                    if (startingExperience?.State == CharacterStartingExperienceState.Pending)
+                    {
+                        if (packet.SkipBootcamp)
+                        {
+                            if (account?.CanSkipBootcamp != true)
+                            {
+                                Logger.WriteLog(
+                                    LogType.Security,
+                                    $"AccountId = {client.AccountEntry.Id} tried to skip bootcamp for character {character.Id} without entitlement.");
+                                rejectedSelection = true;
+                                return;
+                            }
+
+                            if (unitOfWork.CharacterStartingExperience.TrySetState(
+                                    character.Id,
+                                    CharacterStartingExperienceState.Pending,
+                                    CharacterStartingExperienceState.Skipped))
+                                ApplyBootcampSkipParity(unitOfWork, client.AccountEntry.Id, character.Id);
+                        }
+                        else if (unitOfWork.CharacterStartingExperience.TrySetState(
+                                     character.Id,
+                                     CharacterStartingExperienceState.Pending,
+                                     CharacterStartingExperienceState.Bootcamp))
+                        {
+                            unitOfWork.Characters.UpdateCharacterPosition(
+                                character.Id,
+                                BootcampStartCoordX,
+                                BootcampStartCoordY,
+                                BootcampStartCoordZ,
+                                BootcampStartRotation,
+                                BootcampPrivateMapContextId);
+                            EnsureMissionActivated(
+                                unitOfWork,
+                                character.Id,
+                                BootcampInitiationMissionId);
+                        }
+
+                        startingExperience =
+                            unitOfWork.CharacterStartingExperience.Get(character.Id);
+                    }
+
+                    startingState = startingExperience?.State;
+                    client.AccountEntry.SelectedSlot = packet.SlotNum;
+                    unitOfWork.GameAccounts.UpdateSelectedSlot(
+                        client.AccountEntry.Id,
+                        packet.SlotNum);
+                    unitOfWork.Characters.UpdateLoginData(character.Id);
+                    character = unitOfWork.Characters.Get(character.Id);
+                });
+            }
+            catch (Exception error) when (
+                error is GameplayRejectionException ||
+                error is DbUpdateException ||
+                error is DbException)
+            {
+                Logger.WriteLog(
+                    LogType.Error,
+                    $"AccountId = {client.AccountEntry.Id} could not switch to slot {packet.SlotNum}: {error.Message}");
                 return;
             }
 
-            client.AccountEntry.SelectedSlot = packet.SlotNum;
-            unitOfWork.GameAccounts.UpdateSelectedSlot(client.AccountEntry.Id, packet.SlotNum);
-            unitOfWork.Characters.UpdateLoginData(character.Id);
-            unitOfWork.Complete();
+            if (rejectedSelection || character == null)
+                return;
 
+            client.ReloadGameAccountEntry();
             client.Player = CreateCharacterManifestation(client, character);
-            var startingExperience = unitOfWork.CharacterStartingExperience.Get(character.Id);
-            client.Player.MapChannel = ResolveReconnectMapChannel(character, startingExperience);
+            client.Player.MapChannel = ResolveReconnectMapChannel(character, startingState);
             client.LoadingMap = client.Player.MapContextId;
             MapChannelManager.Instance.PassClientToMapInstance(client);
         }
@@ -791,10 +888,10 @@ namespace Rasa.Managers
 
         private static MapChannel ResolveReconnectMapChannel(
             CharacterEntry character,
-            CharacterStartingExperienceEntry startingExperience)
+            CharacterStartingExperienceState? startingState)
         {
             if (character?.MapContextId == BootcampPrivateMapContextId &&
-                startingExperience?.State == CharacterStartingExperienceState.Bootcamp)
+                startingState == CharacterStartingExperienceState.Bootcamp)
                 return MapChannelManager.Instance.GetOrCreatePrivateInstance(
                            BootcampPrivateMapContextId,
                            character.Id) ??
@@ -802,6 +899,329 @@ namespace Rasa.Managers
                            BootcampPrivateMapContextId);
 
             return MapChannelManager.Instance.FindByContextId(character?.MapContextId ?? 0);
+        }
+
+        internal bool TryDepartBootcampFromExitPad(Client client)
+        {
+            if (client?.Player == null ||
+                client.State != ClientState.Ingame ||
+                client.PendingTransfer != null ||
+                client.Player.MapChannel == null ||
+                !client.Player.MapChannel.IsPrivateInstance ||
+                client.Player.MapChannel.OwnerCharacterId != client.Player.Id ||
+                client.Player.MapContextId != BootcampPrivateMapContextId)
+                return false;
+
+            var destinationMap = MapChannelManager.Instance.FindByContextId(
+                BootcampArrivalMapContextId);
+            if (destinationMap == null)
+                return false;
+
+            var departed = false;
+            try
+            {
+                using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+                unitOfWork.ExecuteTransaction(() =>
+                {
+                    var startingExperience =
+                        unitOfWork.CharacterStartingExperience.Get(client.Player.Id);
+                    if (startingExperience?.State != CharacterStartingExperienceState.Bootcamp ||
+                        !unitOfWork.CharacterStartingExperience.TrySetState(
+                            client.Player.Id,
+                            CharacterStartingExperienceState.Bootcamp,
+                            CharacterStartingExperienceState.Completed))
+                        return;
+
+                    if (ResolveBootcampDepartureMissionId(
+                            unitOfWork,
+                            client.Player.Id) == null)
+                        throw new GameplayRejectionException(
+                            "Bootcamp departure is not ready.");
+
+                    unitOfWork.Characters.ReconcileBootcampCharacter(
+                        client.Player.Id,
+                        BootcampParityExperience,
+                        BootcampParityLevel,
+                        (uint)CharacterClass.Recruit,
+                        BootcampArrivalCoordX,
+                        BootcampArrivalCoordY,
+                        BootcampArrivalCoordZ,
+                        BootcampArrivalRotation,
+                        BootcampArrivalMapContextId);
+                    EnsureQualification(
+                        unitOfWork,
+                        client.Player.Id,
+                        CharacterQualificationKey.BootcampComplete);
+                    if (!unitOfWork.GameAccounts.TryUpdateCanSkipBootcamp(
+                            client.AccountEntry.Id,
+                            false,
+                            true))
+                        unitOfWork.GameAccounts.UpdateCanSkipBootcamp(
+                            client.AccountEntry.Id,
+                            true);
+                    departed = true;
+                });
+            }
+            catch (Exception error) when (
+                error is GameplayRejectionException ||
+                error is DbUpdateException ||
+                error is DbException)
+            {
+                Logger.WriteLog(
+                    LogType.Error,
+                    $"Unable to complete bootcamp departure for character {client.Player.Id}: {error.Message}");
+                return false;
+            }
+
+            if (!departed)
+                return false;
+
+            client.Player.Class = (uint)CharacterClass.Recruit;
+            client.Player.Experience = BootcampParityExperience;
+            client.Player.Level = BootcampParityLevel;
+            client.AccountEntry.CanSkipBootcamp = true;
+
+            return MapChannelManager.Instance.ChangeMap(
+                client,
+                destinationMap,
+                new System.Numerics.Vector3(
+                    (float)BootcampArrivalCoordX,
+                    (float)BootcampArrivalCoordY,
+                    (float)BootcampArrivalCoordZ),
+                (float)BootcampArrivalRotation,
+                releaseOwnedPrivateInstancesForCharacterId: client.Player.Id);
+        }
+
+        private void ApplyBootcampSkipParity(
+            ICharUnitOfWork unitOfWork,
+            uint accountId,
+            uint characterId)
+        {
+            unitOfWork.Characters.ReconcileBootcampCharacter(
+                characterId,
+                BootcampParityExperience,
+                BootcampParityLevel,
+                (uint)CharacterClass.Recruit,
+                BootcampArrivalCoordX,
+                BootcampArrivalCoordY,
+                BootcampArrivalCoordZ,
+                BootcampArrivalRotation,
+                BootcampArrivalMapContextId);
+            EnsureQualification(
+                unitOfWork,
+                characterId,
+                CharacterQualificationKey.BootcampComplete);
+            unitOfWork.CharacterSkills.AddOrUpdate(
+                characterId,
+                (uint)SkillId.Lightning,
+                (int)ActionId.AaRecruitLightning,
+                1);
+            unitOfWork.CharacterAbilityDrawers.AddOrUpdate(
+                characterId,
+                BootcampAbilitySlot,
+                (int)ActionId.AaRecruitLightning,
+                1);
+            EnsureWaypoint(
+                unitOfWork,
+                characterId,
+                BootcampAliaWaypointId,
+                WaypointType.Waypoint);
+            EnsureWaypoint(
+                unitOfWork,
+                characterId,
+                BootcampAliaHospitalId,
+                WaypointType.Hospital);
+            GrantSkipInventory(unitOfWork, accountId, characterId);
+        }
+
+        private void GrantSkipInventory(
+            ICharUnitOfWork unitOfWork,
+            uint accountId,
+            uint characterId)
+        {
+            var inventoryRows = unitOfWork.CharacterInventories.GetItems(accountId)
+                .Where(entry =>
+                    entry.CharacterId == characterId &&
+                    entry.InventoryType == (uint)InventoryType.Personal)
+                .OrderBy(entry => entry.SlotId)
+                .ToArray();
+            var usedSlots = inventoryRows.Select(entry => entry.SlotId).ToHashSet();
+            var existingTemplateIds = inventoryRows
+                .Select(entry => unitOfWork.Items.GetItem(entry.ItemId)?.ItemTemplateId ?? 0)
+                .Where(itemTemplateId => itemTemplateId != 0)
+                .ToHashSet();
+
+            using var world = _gameUnitOfWorkFactory.CreateWorld();
+            var templateIds = BootcampSkipEquipmentTemplateIds
+                .Concat(new[] { BootcampSkipAmmoTemplateId })
+                .Distinct()
+                .ToArray();
+            var templates = world.Equipment.GetItemTemplates()
+                .Where(entry => templateIds.Contains(entry.Id))
+                .ToDictionary(entry => entry.Id);
+            var classesByTemplate = world.Equipment.GetItemTemplateClasses()
+                .Where(entry => templateIds.Contains(entry.ItemTemplateId))
+                .ToDictionary(entry => entry.ItemTemplateId, entry => entry.ItemClass);
+            var itemClasses = world.Equipment.GetItemClasses()
+                .Where(entry => classesByTemplate.Values.Contains(entry.Id))
+                .ToDictionary(entry => entry.Id);
+
+            foreach (var templateId in BootcampSkipEquipmentTemplateIds
+                         .Concat(new[] { BootcampSkipAmmoTemplateId }))
+            {
+                if (existingTemplateIds.Contains(templateId))
+                    continue;
+
+                if (!templates.TryGetValue(templateId, out var template) ||
+                    !classesByTemplate.TryGetValue(templateId, out var classId) ||
+                    !itemClasses.TryGetValue(classId, out var itemClass))
+                    throw new GameplayRejectionException(
+                        $"Bootcamp skip item template {templateId} is unavailable.");
+
+                var slot = FindNextPersonalSlot(usedSlots, (InventoryCategory)template.InventoryCategory);
+                var item = new Item(
+                    templateId,
+                    templateId == BootcampSkipAmmoTemplateId
+                        ? BootcampSkipAmmoQuantity
+                        : 1,
+                    itemClass.MaxHitPoints,
+                    2139062144)
+                {
+                    OwnerId = characterId,
+                    OwnerSlotId = slot,
+                    Crafter = string.Empty
+                };
+                var itemId = unitOfWork.Items.CreateItem(item);
+                unitOfWork.CharacterInventories.AddInvItem(
+                    accountId,
+                    characterId,
+                    (uint)InventoryType.Personal,
+                    slot,
+                    itemId);
+                usedSlots.Add(slot);
+            }
+        }
+
+        private void EnsureMissionActivated(
+            ICharUnitOfWork unitOfWork,
+            uint characterId,
+            uint missionId)
+        {
+            if (unitOfWork.CharacterMissions.GetByCharacterAndMission(
+                    characterId,
+                    missionId) != null)
+                return;
+
+            var definition = (_missionManager ?? MissionManager.Instance).LoadedMissions
+                .GetValueOrDefault(missionId);
+            if (definition?.IsOperational != true)
+                throw new GameplayRejectionException(
+                    $"Bootcamp mission {missionId} is unavailable.");
+
+            var completeable = definition.Objectives.Values
+                .Where(objective => objective.IsRequired.Value)
+                .All(objective => objective.InitialState.Value == MissionObjectiveState.Completed);
+            unitOfWork.CharacterMissions.Add(
+                new CharacterMissionEntry(
+                    characterId,
+                    missionId,
+                    (uint)MissionState.Active)
+                {
+                    Completeable = completeable
+                });
+            unitOfWork.CharacterMissionProgress.AddObjectives(
+                definition.Objectives.Values.Select(objective =>
+                {
+                    var entry = new CharacterMissionObjectiveEntry(
+                        characterId,
+                        missionId,
+                        objective.ObjectiveId,
+                        (byte)objective.InitialState.Value);
+                    foreach (var counter in objective.Counters)
+                        entry.Counters.Add(
+                            new CharacterMissionObjectiveCounterEntry(
+                                characterId,
+                                missionId,
+                                objective.ObjectiveId,
+                                counter.Key,
+                                counter.Value.InitialValue));
+                    foreach (var counter in objective.ItemCounters)
+                        entry.ItemCounters.Add(
+                            new CharacterMissionObjectiveItemCounterEntry(
+                                characterId,
+                                missionId,
+                                objective.ObjectiveId,
+                                counter.Key,
+                                counter.Value.InitialValue));
+                    return entry;
+                }));
+        }
+
+        private static uint? ResolveBootcampDepartureMissionId(
+            ICharUnitOfWork unitOfWork,
+            uint characterId)
+        {
+            foreach (var missionId in new[]
+                     {
+                         BootcampRetryFinaleMissionId,
+                         BootcampFinaleMissionId
+                     })
+            {
+                var mission = unitOfWork.CharacterMissions.GetByCharacterAndMission(
+                    characterId,
+                    missionId);
+                if (mission?.MissionState == (uint)MissionState.Active &&
+                    mission.Completeable)
+                    return missionId;
+            }
+
+            return null;
+        }
+
+        private static void EnsureQualification(
+            ICharUnitOfWork unitOfWork,
+            uint characterId,
+            CharacterQualificationKey qualification)
+        {
+            if (!unitOfWork.CharacterQualifications.HasQualification(
+                    characterId,
+                    qualification))
+            {
+                unitOfWork.CharacterQualifications.Add(
+                    new CharacterQualificationEntry(characterId, qualification));
+            }
+        }
+
+        private static void EnsureWaypoint(
+            ICharUnitOfWork unitOfWork,
+            uint characterId,
+            uint waypointId,
+            WaypointType type)
+        {
+            if (unitOfWork.CharacterTeleporters.Get(characterId).Any(entry =>
+                    entry.WaypointId == waypointId &&
+                    entry.WaypointType == (byte)type))
+                return;
+
+            unitOfWork.CharacterTeleporters.Add(
+                new CharacterTeleporterEntry(
+                    characterId,
+                    waypointId,
+                    (byte)type));
+        }
+
+        private static uint FindNextPersonalSlot(
+            ISet<uint> usedSlots,
+            InventoryCategory category)
+        {
+            var start = ((int)category - 1) * InventoryManager.PersonalCategorySize;
+            var end = start + InventoryManager.PersonalCategorySize;
+            for (uint slot = (uint)start; slot < end; slot++)
+                if (!usedSlots.Contains(slot))
+                    return slot;
+
+            throw new GameplayRejectionException(
+                $"No personal inventory slot is available for {category}.");
         }
 
         private void SendCharacterCreateFailed(Client client, CreateCharacterResult result)

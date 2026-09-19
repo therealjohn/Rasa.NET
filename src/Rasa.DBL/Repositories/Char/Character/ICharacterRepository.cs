@@ -25,6 +25,16 @@ namespace Rasa.Repositories.Char.Character
         void UpdateCharacterPrestige(uint id, int prestige);
         void UpdateCharacterExpirience(uint id, uint experience);
         void UpdateCharacterProgression(uint id, uint experience, byte level);
+        void ReconcileBootcampCharacter(
+            uint id,
+            uint experience,
+            byte level,
+            uint classId,
+            double x,
+            double y,
+            double z,
+            double rotation,
+            uint mapContextId);
         void UpdateCharacterLevel(uint id, byte level);
         void UpdateCharacterLogin(uint id, uint totalTimePlayed, uint numLogins);
         void UpdateCharacterPosition(uint id, double x, double y, double z, double rotation, uint mapContextId);

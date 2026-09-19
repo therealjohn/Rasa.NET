@@ -31,7 +31,9 @@ namespace Rasa.Managers
         private readonly Action<Client, CharacterUpdate, object> _updateCharacter;
         private readonly Action<Client> _disconnect;
         private readonly MissionManager _missionManager;
+        private readonly CharacterManager _characterManager;
         private MapChannelManager Maps => _maps ?? MapChannelManager.Instance;
+        private CharacterManager Characters => _characterManager ?? CharacterManager.Instance;
 
         public readonly Dictionary<ulong, Dropship> Dropships = new Dictionary<ulong, Dropship>();
         public readonly Dictionary<ulong, DynamicObject> Teleporters = new Dictionary<ulong, DynamicObject>();
@@ -102,7 +104,8 @@ namespace Rasa.Managers
             MapChannelManager maps = null, Func<long> clock = null,
             Action<Client, CharacterUpdate, object> updateCharacter = null,
             Action<Client> disconnect = null,
-            MissionManager missionManager = null)
+            MissionManager missionManager = null,
+            CharacterManager characterManager = null)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
             _maps = maps;
@@ -111,6 +114,7 @@ namespace Rasa.Managers
                 CharacterManager.Instance.UpdateCharacter(client, update, value));
             _disconnect = disconnect ?? (client => client.Close(false));
             _missionManager = missionManager;
+            _characterManager = characterManager;
         }
 
         internal void InitDynamicObjects()
@@ -804,6 +808,8 @@ namespace Rasa.Managers
                     continue;
 
                 var mapChannel = MapChannelManager.Instance.FindByContextId(teleporter.MapContextId);
+                if (mapChannel == null)
+                    continue;
 
                 var newTeleporter = new DynamicObject
                 {
@@ -967,6 +973,14 @@ namespace Rasa.Managers
                     !double.IsFinite(teleporter.Rotation) || !float.IsFinite((float)teleporter.Rotation))
                 {
                     RejectTravel(client, "No nearby departure station or invalid destination position.");
+                    return;
+                }
+
+                if (packet.WaypointId == CharacterManager.BootcampExitPadWaypointId &&
+                    client.Player.MapContextId == CharacterManager.BootcampPrivateMapContextId)
+                {
+                    if (!Characters.TryDepartBootcampFromExitPad(client))
+                        RejectTravel(client, "Bootcamp departure is not available.");
                     return;
                 }
 
