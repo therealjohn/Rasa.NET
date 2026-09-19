@@ -59,6 +59,21 @@ namespace Rasa.Context.World
         public DbSet<RecipeInputEntry> RecipeInputEntries { get; set; }
         public DbSet<NpcMissionEntry> NpcMissionEntries { get; set; }
         public DbSet<NpcMissionRewardEntry> NpcMissionRewardEntries { get; set; }
+        public DbSet<MissionContentDefinitionEntry> MissionContentDefinitionEntries { get; set; }
+        public DbSet<MissionPrerequisiteEntry> MissionPrerequisiteEntries { get; set; }
+        public DbSet<MissionObjectiveDefinitionEntry> MissionObjectiveDefinitionEntries { get; set; }
+        public DbSet<MissionObjectiveTransitionEntry> MissionObjectiveTransitionEntries { get; set; }
+        public DbSet<MissionTriggerEntry> MissionTriggerEntries { get; set; }
+        public DbSet<MissionActionEntry> MissionActionEntries { get; set; }
+        public DbSet<MissionRewardDefinitionEntry> MissionRewardDefinitionEntries { get; set; }
+        public DbSet<MissionRewardItemEntry> MissionRewardItemEntries { get; set; }
+        public DbSet<MissionIndicatorEntry> MissionIndicatorEntries { get; set; }
+        public DbSet<MissionAreaEntry> MissionAreaEntries { get; set; }
+        public DbSet<MissionSpawnGroupEntry> MissionSpawnGroupEntries { get; set; }
+        public DbSet<MissionSpawnEntry> MissionSpawnEntries { get; set; }
+        public DbSet<MissionScenarioEntry> MissionScenarioEntries { get; set; }
+        public DbSet<MissionScenarioStepEntry> MissionScenarioStepEntries { get; set; }
+        public DbSet<MissionEvidenceEntry> MissionEvidenceEntries { get; set; }
         public DbSet<NpcPackageEntry> NpcPackageEntries { get; set; }
         public DbSet<RandomNameEntry> RandomNameEntries { get; set; }
         public DbSet<SpawnPoolEntry> SpawnPoolEntries { get; set; }
@@ -80,6 +95,7 @@ namespace Rasa.Context.World
             SetupMapMarker(modelBuilder);
             SetupCreatureClassFlag(modelBuilder);
             SetupSkillCharacter(modelBuilder);
+            SetupMissionContent(modelBuilder);
         }
 
         /// <summary>
@@ -151,6 +167,441 @@ namespace Rasa.Context.World
             modelBuilder.Entity<ItemTemplateItemClassEntry>()
                 .Property(e => e.ItemClass)
                 .AsUnsignedInt(_dbContextPropertyModifier, 11);
+        }
+
+        private void SetupMissionContent(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<MissionContentDefinitionEntry>()
+                .HasKey(entry => new { entry.MissionId, entry.ContentRevision });
+            modelBuilder.Entity<MissionContentDefinitionEntry>()
+                .Property(entry => entry.MissionId)
+                .AsIdColumn(_dbContextPropertyModifier)
+                .HasAnnotation("MySql:ValueGenerationStrategy", MySqlValueGenerationStrategy.None);
+            modelBuilder.Entity<MissionContentDefinitionEntry>()
+                .Property(entry => entry.Requirement)
+                .HasConversion<byte>()
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionContentDefinitionEntry>()
+                .Property(entry => entry.ClientNameTextId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionContentDefinitionEntry>()
+                .Property(entry => entry.GiverId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionContentDefinitionEntry>()
+                .Property(entry => entry.ReceiverId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionContentDefinitionEntry>()
+                .Property(entry => entry.Level)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionContentDefinitionEntry>()
+                .Property(entry => entry.GroupType)
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionContentDefinitionEntry>()
+                .Property(entry => entry.CategoryId)
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+
+            modelBuilder.Entity<MissionPrerequisiteEntry>()
+                .HasKey(entry => new { entry.MissionId, entry.ContentRevision, entry.PrerequisiteId });
+            modelBuilder.Entity<MissionPrerequisiteEntry>()
+                .HasOne(entry => entry.Content)
+                .WithMany(content => content.Prerequisites)
+                .HasForeignKey(entry => new { entry.MissionId, entry.ContentRevision })
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionPrerequisiteEntry>()
+                .Property(entry => entry.PrerequisiteId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionPrerequisiteEntry>()
+                .Property(entry => entry.Requirement)
+                .HasConversion<byte>()
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionPrerequisiteEntry>()
+                .Property(entry => entry.Kind)
+                .HasConversion<byte>()
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionPrerequisiteEntry>()
+                .Property(entry => entry.RequiredMissionId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionPrerequisiteEntry>()
+                .Property(entry => entry.RequiredMissionState)
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionPrerequisiteEntry>()
+                .Property(entry => entry.RequiredLevel)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionPrerequisiteEntry>()
+                .Property(entry => entry.PlayerFlagId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionPrerequisiteEntry>()
+                .Property(entry => entry.PlayerFlagValue)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+
+            modelBuilder.Entity<MissionObjectiveDefinitionEntry>()
+                .HasKey(entry => new { entry.MissionId, entry.ContentRevision, entry.ObjectiveId });
+            modelBuilder.Entity<MissionObjectiveDefinitionEntry>()
+                .HasOne(entry => entry.Content)
+                .WithMany(content => content.Objectives)
+                .HasForeignKey(entry => new { entry.MissionId, entry.ContentRevision })
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionObjectiveDefinitionEntry>()
+                .Property(entry => entry.ObjectiveId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionObjectiveDefinitionEntry>()
+                .Property(entry => entry.Requirement)
+                .HasConversion<byte>()
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionObjectiveDefinitionEntry>()
+                .Property(entry => entry.ClientNameTextId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionObjectiveDefinitionEntry>()
+                .Property(entry => entry.ClientBodyTextId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionObjectiveDefinitionEntry>()
+                .Property(entry => entry.Ordinal)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionObjectiveDefinitionEntry>()
+                .Property(entry => entry.InitialState)
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+
+            modelBuilder.Entity<MissionObjectiveTransitionEntry>()
+                .HasKey(entry => new
+                {
+                    entry.MissionId,
+                    entry.ContentRevision,
+                    entry.ObjectiveId,
+                    entry.TransitionId
+                });
+            modelBuilder.Entity<MissionObjectiveTransitionEntry>()
+                .HasOne(entry => entry.Objective)
+                .WithMany(objective => objective.Transitions)
+                .HasForeignKey(entry => new { entry.MissionId, entry.ContentRevision, entry.ObjectiveId })
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionObjectiveTransitionEntry>()
+                .Property(entry => entry.TransitionId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionObjectiveTransitionEntry>()
+                .Property(entry => entry.Requirement)
+                .HasConversion<byte>()
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionObjectiveTransitionEntry>()
+                .Property(entry => entry.Sequence)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionObjectiveTransitionEntry>()
+                .Property(entry => entry.FromState)
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionObjectiveTransitionEntry>()
+                .Property(entry => entry.ToState)
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+
+            modelBuilder.Entity<MissionTriggerEntry>()
+                .HasKey(entry => new
+                {
+                    entry.MissionId,
+                    entry.ContentRevision,
+                    entry.ObjectiveId,
+                    entry.TransitionId,
+                    entry.TriggerId
+                });
+            modelBuilder.Entity<MissionTriggerEntry>()
+                .HasOne(entry => entry.Transition)
+                .WithMany(transition => transition.Triggers)
+                .HasForeignKey(entry => new
+                {
+                    entry.MissionId,
+                    entry.ContentRevision,
+                    entry.ObjectiveId,
+                    entry.TransitionId
+                })
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionTriggerEntry>()
+                .Property(entry => entry.TriggerId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionTriggerEntry>()
+                .Property(entry => entry.Requirement)
+                .HasConversion<byte>()
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionTriggerEntry>()
+                .Property(entry => entry.Kind)
+                .HasConversion<byte>()
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionTriggerEntry>()
+                .Property(entry => entry.Sequence)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionTriggerEntry>()
+                .Property(entry => entry.RelatedObjectiveId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionTriggerEntry>()
+                .Property(entry => entry.RelatedState)
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionTriggerEntry>()
+                .Property(entry => entry.EventKind)
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionTriggerEntry>()
+                .Property(entry => entry.SubjectId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionTriggerEntry>()
+                .Property(entry => entry.CounterId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionTriggerEntry>()
+                .Property(entry => entry.InitialValue)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionTriggerEntry>()
+                .Property(entry => entry.TargetValue)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionTriggerEntry>()
+                .Property(entry => entry.AreaId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionTriggerEntry>()
+                .Property(entry => entry.DurationSeconds)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionTriggerEntry>()
+                .Property(entry => entry.NpcPackageId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionTriggerEntry>()
+                .Property(entry => entry.PlayerFlagId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+
+            modelBuilder.Entity<MissionActionEntry>()
+                .HasKey(entry => new
+                {
+                    entry.MissionId,
+                    entry.ContentRevision,
+                    entry.ObjectiveId,
+                    entry.TransitionId,
+                    entry.ActionId
+                });
+            modelBuilder.Entity<MissionActionEntry>()
+                .HasOne(entry => entry.Transition)
+                .WithMany(transition => transition.Actions)
+                .HasForeignKey(entry => new
+                {
+                    entry.MissionId,
+                    entry.ContentRevision,
+                    entry.ObjectiveId,
+                    entry.TransitionId
+                })
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionActionEntry>()
+                .Property(entry => entry.ActionId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionActionEntry>()
+                .Property(entry => entry.Requirement)
+                .HasConversion<byte>()
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionActionEntry>()
+                .Property(entry => entry.Kind)
+                .HasConversion<byte>()
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionActionEntry>()
+                .Property(entry => entry.Sequence)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionActionEntry>()
+                .Property(entry => entry.TargetObjectiveId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionActionEntry>()
+                .Property(entry => entry.ObjectiveState)
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionActionEntry>()
+                .Property(entry => entry.RewardId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionActionEntry>()
+                .Property(entry => entry.SpawnGroupId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionActionEntry>()
+                .Property(entry => entry.ScenarioId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionActionEntry>()
+                .Property(entry => entry.IndicatorId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionActionEntry>()
+                .Property(entry => entry.PlayerFlagId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionActionEntry>()
+                .Property(entry => entry.PlayerFlagValue)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+
+            modelBuilder.Entity<MissionRewardDefinitionEntry>()
+                .HasKey(entry => new { entry.MissionId, entry.ContentRevision, entry.RewardId });
+            modelBuilder.Entity<MissionRewardDefinitionEntry>()
+                .HasOne(entry => entry.Content)
+                .WithMany(content => content.Rewards)
+                .HasForeignKey(entry => new { entry.MissionId, entry.ContentRevision })
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionRewardDefinitionEntry>()
+                .Property(entry => entry.RewardId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionRewardDefinitionEntry>()
+                .Property(entry => entry.Requirement)
+                .HasConversion<byte>()
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionRewardDefinitionEntry>()
+                .Property(entry => entry.Kind)
+                .HasConversion<byte>()
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionRewardDefinitionEntry>()
+                .Property(entry => entry.Experience)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionRewardDefinitionEntry>()
+                .Property(entry => entry.Credits)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionRewardDefinitionEntry>()
+                .Property(entry => entry.Prestige)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+
+            modelBuilder.Entity<MissionRewardItemEntry>()
+                .HasKey(entry => new { entry.MissionId, entry.ContentRevision, entry.RewardId, entry.ItemId });
+            modelBuilder.Entity<MissionRewardItemEntry>()
+                .HasOne(entry => entry.Reward)
+                .WithMany(reward => reward.Items)
+                .HasForeignKey(entry => new { entry.MissionId, entry.ContentRevision, entry.RewardId })
+                .OnDelete(DeleteBehavior.Cascade);
+            modelBuilder.Entity<MissionRewardItemEntry>()
+                .Property(entry => entry.ItemId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionRewardItemEntry>()
+                .Property(entry => entry.ItemTemplateId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionRewardItemEntry>()
+                .Property(entry => entry.Quantity)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+
+            modelBuilder.Entity<MissionIndicatorEntry>()
+                .HasKey(entry => new { entry.MissionId, entry.ContentRevision, entry.ObjectiveId, entry.IndicatorId });
+            modelBuilder.Entity<MissionIndicatorEntry>()
+                .HasOne(entry => entry.Objective)
+                .WithMany(objective => objective.Indicators)
+                .HasForeignKey(entry => new { entry.MissionId, entry.ContentRevision, entry.ObjectiveId })
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionIndicatorEntry>()
+                .Property(entry => entry.IndicatorId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionIndicatorEntry>()
+                .Property(entry => entry.Requirement)
+                .HasConversion<byte>()
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+
+            modelBuilder.Entity<MissionAreaEntry>()
+                .HasKey(entry => new { entry.MissionId, entry.ContentRevision, entry.AreaId });
+            modelBuilder.Entity<MissionAreaEntry>()
+                .HasOne(entry => entry.Content)
+                .WithMany(content => content.Areas)
+                .HasForeignKey(entry => new { entry.MissionId, entry.ContentRevision })
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionAreaEntry>()
+                .Property(entry => entry.AreaId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionAreaEntry>()
+                .Property(entry => entry.Requirement)
+                .HasConversion<byte>()
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionAreaEntry>()
+                .Property(entry => entry.MapContextId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionAreaEntry>()
+                .Property(entry => entry.Shape)
+                .HasConversion<byte>()
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+
+            modelBuilder.Entity<MissionSpawnGroupEntry>()
+                .HasKey(entry => new { entry.MissionId, entry.ContentRevision, entry.SpawnGroupId });
+            modelBuilder.Entity<MissionSpawnGroupEntry>()
+                .HasOne(entry => entry.Content)
+                .WithMany(content => content.SpawnGroups)
+                .HasForeignKey(entry => new { entry.MissionId, entry.ContentRevision })
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionSpawnGroupEntry>()
+                .Property(entry => entry.SpawnGroupId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionSpawnGroupEntry>()
+                .Property(entry => entry.Requirement)
+                .HasConversion<byte>()
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionSpawnGroupEntry>()
+                .Property(entry => entry.AreaId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionSpawnGroupEntry>()
+                .Property(entry => entry.MapContextId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionSpawnGroupEntry>()
+                .Property(entry => entry.RespawnSeconds)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+
+            modelBuilder.Entity<MissionSpawnEntry>()
+                .HasKey(entry => new { entry.MissionId, entry.ContentRevision, entry.SpawnGroupId, entry.SpawnId });
+            modelBuilder.Entity<MissionSpawnEntry>()
+                .HasOne(entry => entry.SpawnGroup)
+                .WithMany(group => group.Spawns)
+                .HasForeignKey(entry => new { entry.MissionId, entry.ContentRevision, entry.SpawnGroupId })
+                .OnDelete(DeleteBehavior.Cascade);
+            modelBuilder.Entity<MissionSpawnEntry>()
+                .Property(entry => entry.SpawnId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionSpawnEntry>()
+                .Property(entry => entry.CreatureId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionSpawnEntry>()
+                .Property(entry => entry.Quantity)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+
+            modelBuilder.Entity<MissionScenarioEntry>()
+                .HasKey(entry => new { entry.MissionId, entry.ContentRevision, entry.ScenarioId });
+            modelBuilder.Entity<MissionScenarioEntry>()
+                .HasOne(entry => entry.Content)
+                .WithMany(content => content.Scenarios)
+                .HasForeignKey(entry => new { entry.MissionId, entry.ContentRevision })
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionScenarioEntry>()
+                .Property(entry => entry.ScenarioId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionScenarioEntry>()
+                .Property(entry => entry.Requirement)
+                .HasConversion<byte>()
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .HasKey(entry => new { entry.MissionId, entry.ContentRevision, entry.ScenarioId, entry.StepId });
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .HasOne(entry => entry.Scenario)
+                .WithMany(scenario => scenario.Steps)
+                .HasForeignKey(entry => new { entry.MissionId, entry.ContentRevision, entry.ScenarioId })
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .Property(entry => entry.StepId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .Property(entry => entry.Requirement)
+                .HasConversion<byte>()
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .Property(entry => entry.Kind)
+                .HasConversion<byte>()
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionScenarioStepEntry>()
+                .Property(entry => entry.Sequence)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+
+            modelBuilder.Entity<MissionEvidenceEntry>()
+                .HasKey(entry => new { entry.MissionId, entry.ContentRevision, entry.EvidenceId });
+            modelBuilder.Entity<MissionEvidenceEntry>()
+                .HasOne(entry => entry.Content)
+                .WithMany(content => content.Evidence)
+                .HasForeignKey(entry => new { entry.MissionId, entry.ContentRevision })
+                .OnDelete(DeleteBehavior.Cascade);
+            modelBuilder.Entity<MissionEvidenceEntry>()
+                .Property(entry => entry.EvidenceId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionEvidenceEntry>()
+                .Property(entry => entry.OwnerKind)
+                .HasConversion<byte>()
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionEvidenceEntry>()
+                .Property(entry => entry.OwnerId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionEvidenceEntry>()
+                .Property(entry => entry.SourceKind)
+                .HasConversion<byte>()
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<MissionEvidenceEntry>()
+                .Property(entry => entry.Confidence)
+                .AsUnsignedDouble(_dbContextPropertyModifier);
         }
     }
 }

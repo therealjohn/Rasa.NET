@@ -1271,6 +1271,7 @@ namespace Rasa.Test.Missions
             public IRecipeRepository Recipes => null;
             public INpcMissionRepository NpcMissions { get; }
             public INpcMissionRewardRepository NpcMissionRewards { get; }
+            public IMissionContentRepository MissionContent => null;
             public INpcPackageRepository NpcPackages => null;
             public IPlayerRandomNameRepository RandomNames => null;
             public ISpawnpoolRepository Spawnpools => null;

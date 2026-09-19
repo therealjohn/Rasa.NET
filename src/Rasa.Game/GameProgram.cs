@@ -138,6 +138,7 @@ namespace Rasa
             services.AddScoped<IRecipeRepository, RecipeRepository>();
             services.AddScoped<INpcMissionRepository, NpcMissionRepository>();
             services.AddScoped<INpcMissionRewardRepository, NpcMissionRewardRepository>();
+            services.AddScoped<IMissionContentRepository, MissionContentRepository>();
             services.AddScoped<INpcPackageRepository, NpcPackageRepository>();
             services.AddScoped<IPlayerRandomNameRepository, PlayerRandomNameRepository>();
             services.AddScoped<ISpawnpoolRepository, SpawnpoolRepository>();
