@@ -333,17 +333,13 @@ namespace Rasa.Managers
             using var unitOfWork = _gameUnitOfWorkFactory.CreateWorld();
             foreach (var mission in unitOfWork.NpcMissions.Get())
             {
-                var definition = new Mission(mission, isOperational: true);
                 var rewardRows = unitOfWork.NpcMissionRewards.Get(mission.Id);
-                if (rewardRows.Count == 0)
-                    _rewardDefinitions[mission.Id] = new MissionRewardDefinition(
-                        0,
-                        new Dictionary<CurencyType, int>(),
-                        Array.Empty<MissionRewardItem>(),
-                        Array.Empty<MissionRewardItem>());
-                else
-                    definition = definition.DisableOperational(
-                        "mission reward rows use an undocumented type contract");
+                // Temporary compatibility gate until Task 3 replaces legacy npc_mission loading
+                // with mission_content_definition hydration.
+                var diagnostic = rewardRows.Count == 0
+                    ? "legacy npc_mission rows stay inactive until mission_content_definition loading replaces this temporary loader"
+                    : "legacy npc_mission rows stay inactive until mission_content_definition loading replaces this temporary loader; mission reward rows use an undocumented type contract";
+                var definition = new Mission(mission).DisableOperational(diagnostic);
                 _loadedMissions[mission.Id] = definition;
             }
             foreach (var recovered in MissionDefinitionCatalog.CreateRecoveredInactiveDefinitions())

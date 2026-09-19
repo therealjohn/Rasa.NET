@@ -4,12 +4,6 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace Rasa.Structures.World
 {
-    public enum MissionRewardKind : byte
-    {
-        Fixed = 1,
-        Selectable = 2
-    }
-
     [Table(TableName)]
     public class MissionRewardDefinitionEntry
     {
@@ -32,10 +26,6 @@ namespace Rasa.Structures.World
         public MissionContentRequirement Requirement { get; set; } =
             MissionContentRequirement.Required;
 
-        [Column("kind")]
-        [Required]
-        public MissionRewardKind Kind { get; set; }
-
         [Column("experience")]
         [Required]
         public uint Experience { get; set; }
@@ -47,6 +37,10 @@ namespace Rasa.Structures.World
         [Column("prestige")]
         [Required]
         public uint Prestige { get; set; }
+
+        [Column("selection_count")]
+        [Required]
+        public byte SelectionCount { get; set; }
 
         [Column("comment", TypeName = "varchar(64)")]
         [Required]

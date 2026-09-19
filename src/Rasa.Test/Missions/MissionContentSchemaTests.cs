@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Migrations.Operations;
 using Microsoft.Extensions.Options;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -143,6 +144,9 @@ namespace Rasa.Test.Missions
 
             Assert.AreEqual("content_revision", content.FindProperty("ContentRevision")?.GetColumnName());
             Assert.AreEqual("requirement", content.FindProperty("Requirement")?.GetColumnName());
+            Assert.IsNull(reward.FindProperty("Kind"), "Reward definitions should no longer encode fixed/selectable shape.");
+            Assert.AreEqual("selection_count", reward.FindProperty("SelectionCount")?.GetColumnName());
+            Assert.AreEqual("kind", rewardItem.FindProperty("Kind")?.GetColumnName());
             Assert.IsNull(legacyReward.FindPrimaryKey(), "Legacy reward rows should remain keyless.");
         }
 
@@ -196,8 +200,12 @@ namespace Rasa.Test.Missions
             StringAssert.Contains(sql, "constraint ck_mission_trigger_kind_parameter_set check");
             StringAssert.Contains(sql, "constraint ck_mission_action_kind_parameter_set check");
             StringAssert.Contains(sql, "constraint ck_mission_evidence_source_location check");
+            StringAssert.Contains(sql, "constraint ck_mission_reward_definition_selection_count check");
+            StringAssert.Contains(sql, "constraint ck_mission_reward_item_kind check");
             StringAssert.Contains(sql, "kind in (1, 2, 3, 4, 5)");
             StringAssert.Contains(sql, "kind in (1, 2, 3, 4, 5, 6, 7, 8)");
+            StringAssert.Contains(sql, "selection_count in (0, 1)");
+            StringAssert.Contains(sql, "kind in (1, 2)");
             StringAssert.Contains(sql, "source_uri is not null or local_client_path is not null");
             StringAssert.Contains(
                 sql,
@@ -472,10 +480,66 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
-        public void SqliteMissionContentMigrationBackfillsLegacyNpcMissionRows()
+        [DataRow(typeof(SqliteWorldContext),
+            "20260919034933_MissionContentReviewFixes",
+            "MissionContentLegacyNpcMissionBackfill")]
+        [DataRow(typeof(MySqlWorldContext),
+            "20260919034939_MissionContentReviewFixes",
+            "MissionContentLegacyNpcMissionBackfill")]
+        public void MissionContentMigrationsOrderSchemaBeforeDataAndKeepDataMigrationSchemaFree(
+            Type contextType,
+            string schemaMigrationName,
+            string dataMigrationTypeName)
+        {
+            using var context = CreateContext(contextType, "unused");
+            var migrations = context.Database.GetMigrations().ToArray();
+            var schemaIndex = Array.IndexOf(migrations, schemaMigrationName);
+            var dataIndex = Array.FindIndex(
+                migrations,
+                migration => migration.EndsWith(
+                    "_" + dataMigrationTypeName,
+                    StringComparison.Ordinal));
+
+            Assert.IsTrue(schemaIndex >= 0, schemaMigrationName);
+            Assert.IsTrue(dataIndex >= 0, dataMigrationTypeName);
+            Assert.IsTrue(schemaIndex < dataIndex, contextType.Name);
+
+            var assembly = context.GetService<IMigrationsAssembly>();
+            var schemaMigration = assembly.Migrations.Values
+                .Select(type => assembly.CreateMigration(type, context.Database.ProviderName))
+                .Single(candidate => candidate.GetType().Name == "MissionContentReviewFixes");
+            var dataMigration = assembly.Migrations.Values
+                .Select(type => assembly.CreateMigration(type, context.Database.ProviderName))
+                .Single(candidate => candidate.GetType().Name == dataMigrationTypeName);
+
+            Assert.IsFalse(
+                schemaMigration.UpOperations.OfType<SqlOperation>().Any(),
+                "Schema review migration should no longer perform data backfills.");
+            Assert.AreEqual(0, schemaMigration.DownOperations.OfType<SqlOperation>().Count());
+            Assert.IsTrue(dataMigration.UpOperations.Count > 0, dataMigrationTypeName);
+            Assert.IsTrue(
+                dataMigration.UpOperations.All(operation => operation is SqlOperation),
+                "Data migration should contain SQL only.");
+            Assert.AreEqual(0, dataMigration.DownOperations.Count);
+            StringAssert.Contains(
+                ((SqlOperation)dataMigration.UpOperations.Single()).Sql,
+                "mission_content_definition",
+                dataMigrationTypeName);
+            StringAssert.Contains(
+                ((SqlOperation)dataMigration.UpOperations.Single()).Sql,
+                "npc_mission",
+                dataMigrationTypeName);
+        }
+
+        [TestMethod]
+        public void SqliteMissionContentDataMigrationBackfillsLegacyNpcMissionRows()
         {
             WithDisposableSqliteWorld((context, database) =>
             {
+                var dataMigrationId = context.Database.GetMigrations().Single(id =>
+                    id.EndsWith(
+                        "_MissionContentLegacyNpcMissionBackfill",
+                        StringComparison.Ordinal));
                 context.GetService<IMigrator>().Migrate("20260919033748_MissionContentDefinition");
                 context.Database.ExecuteSqlRaw(
                     "INSERT INTO npc_mission " +
@@ -486,7 +550,11 @@ namespace Rasa.Test.Missions
                     "(id, giver_id, reciver_id, level, group_type, category_id, shareable, radio_completeable, comment) " +
                     "VALUES (900429, 201, 202, 12, 4, 5, 0, 1, 'Legacy final assault')");
 
-                context.Database.Migrate();
+                context.GetService<IMigrator>().Migrate("20260919034933_MissionContentReviewFixes");
+                Assert.AreEqual(0, context.MissionContentDefinitionEntries.Count(
+                    entry => entry.MissionId == 900321 || entry.MissionId == 900429));
+
+                context.GetService<IMigrator>().Migrate(dataMigrationId);
 
                 var backfilled = context.MissionContentDefinitionEntries
                     .Where(entry => entry.MissionId == 900321 || entry.MissionId == 900429)
@@ -529,7 +597,7 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
-        public void MySqlMissionContentMigrationSqlBackfillsLegacyNpcMissionRowsUpgradeSafely()
+        public void MySqlMissionContentDataMigrationSqlBackfillsLegacyNpcMissionRowsUpgradeSafely()
         {
             using var context = CreateContext(typeof(MySqlWorldContext), "unused");
             var sql = NormalizeSql(context.GetService<IMigrator>().GenerateScript());
@@ -678,7 +746,7 @@ namespace Rasa.Test.Missions
                 ContentRevision = "deployment_11",
                 RewardId = 40,
                 Requirement = MissionContentRequirement.Required,
-                Kind = MissionRewardKind.Fixed,
+                SelectionCount = 0,
                 Experience = 100,
                 Credits = 50,
                 Prestige = 10,

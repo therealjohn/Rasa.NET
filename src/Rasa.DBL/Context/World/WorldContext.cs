@@ -230,6 +230,8 @@ namespace Rasa.Context.World
                 "AND target_objective_id IS NULL AND objective_state IS NULL " +
                 "AND reward_id IS NULL AND spawn_group_id IS NULL " +
                 "AND scenario_id IS NULL AND indicator_id IS NULL))";
+            const string rewardSelectionCountConstraint = "selection_count IN (0, 1)";
+            const string rewardItemKindConstraint = "kind IN (1, 2)";
 
             modelBuilder.Entity<MissionContentDefinitionEntry>()
                 .HasKey(entry => new { entry.MissionId, entry.ContentRevision });
@@ -606,14 +608,14 @@ namespace Rasa.Context.World
                 .HasForeignKey(entry => new { entry.MissionId, entry.ContentRevision })
                 .OnDelete(DeleteBehavior.Restrict);
             modelBuilder.Entity<MissionRewardDefinitionEntry>()
+                .ToTable(table => table.HasCheckConstraint(
+                    "CK_mission_reward_definition_selection_count",
+                    rewardSelectionCountConstraint));
+            modelBuilder.Entity<MissionRewardDefinitionEntry>()
                 .Property(entry => entry.RewardId)
                 .AsUnsignedInt(_dbContextPropertyModifier, 11);
             modelBuilder.Entity<MissionRewardDefinitionEntry>()
                 .Property(entry => entry.Requirement)
-                .HasConversion<byte>()
-                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
-            modelBuilder.Entity<MissionRewardDefinitionEntry>()
-                .Property(entry => entry.Kind)
                 .HasConversion<byte>()
                 .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
             modelBuilder.Entity<MissionRewardDefinitionEntry>()
@@ -625,6 +627,9 @@ namespace Rasa.Context.World
             modelBuilder.Entity<MissionRewardDefinitionEntry>()
                 .Property(entry => entry.Prestige)
                 .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionRewardDefinitionEntry>()
+                .Property(entry => entry.SelectionCount)
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
 
             modelBuilder.Entity<MissionRewardItemEntry>()
                 .HasKey(entry => new { entry.MissionId, entry.ContentRevision, entry.RewardId, entry.ItemId });
@@ -634,8 +639,16 @@ namespace Rasa.Context.World
                 .HasForeignKey(entry => new { entry.MissionId, entry.ContentRevision, entry.RewardId })
                 .OnDelete(DeleteBehavior.Cascade);
             modelBuilder.Entity<MissionRewardItemEntry>()
+                .ToTable(table => table.HasCheckConstraint(
+                    "CK_mission_reward_item_kind",
+                    rewardItemKindConstraint));
+            modelBuilder.Entity<MissionRewardItemEntry>()
                 .Property(entry => entry.ItemId)
                 .AsUnsignedInt(_dbContextPropertyModifier, 11);
+            modelBuilder.Entity<MissionRewardItemEntry>()
+                .Property(entry => entry.Kind)
+                .HasConversion<byte>()
+                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
             modelBuilder.Entity<MissionRewardItemEntry>()
                 .Property(entry => entry.ItemTemplateId)
                 .AsUnsignedInt(_dbContextPropertyModifier, 11);

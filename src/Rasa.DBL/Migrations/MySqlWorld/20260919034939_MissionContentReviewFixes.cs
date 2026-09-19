@@ -65,15 +65,6 @@ namespace Rasa.Migrations.MySqlWorld
                 table: "mission_action",
                 sql: "(kind IN (1, 2, 3, 4, 5, 6, 7, 8)) AND (kind <> 1 OR (target_objective_id IS NOT NULL AND objective_state IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL)) AND (kind <> 2 OR (target_objective_id IS NOT NULL AND objective_state IS NOT NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL)) AND (kind <> 3 OR (target_objective_id IS NOT NULL AND objective_state IS NOT NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL)) AND (kind <> 4 OR (reward_id IS NOT NULL AND target_objective_id IS NULL AND objective_state IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL)) AND (kind <> 5 OR (scenario_id IS NOT NULL AND target_objective_id IS NULL AND objective_state IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL)) AND (kind <> 6 OR (spawn_group_id IS NOT NULL AND target_objective_id IS NULL AND objective_state IS NULL AND reward_id IS NULL AND scenario_id IS NULL AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL)) AND (kind <> 7 OR (indicator_id IS NOT NULL AND target_objective_id IS NULL AND objective_state IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL)) AND (kind <> 8 OR (player_flag_id IS NOT NULL AND player_flag_value IS NOT NULL AND target_objective_id IS NULL AND objective_state IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL AND indicator_id IS NULL))");
 
-            migrationBuilder.Sql(
-                "INSERT INTO mission_content_definition " +
-                "(mission_id, content_revision, requirement, client_name_text_id, giver_id, receiver_id, level, group_type, category_id, shareable, radio_completeable, comment) " +
-                "SELECT npc_mission.id, 'legacy', 2, 0, npc_mission.giver_id, npc_mission.reciver_id, npc_mission.level, npc_mission.group_type, npc_mission.category_id, npc_mission.shareable, npc_mission.radio_completeable, npc_mission.comment " +
-                "FROM npc_mission " +
-                "WHERE NOT EXISTS (" +
-                "SELECT 1 FROM mission_content_definition existing " +
-                "WHERE existing.mission_id = npc_mission.id AND existing.content_revision = 'legacy')");
-
             migrationBuilder.AddForeignKey(
                 name: "FK_mission_action_mission_indicator_mission_id_content_revision~",
                 table: "mission_action",

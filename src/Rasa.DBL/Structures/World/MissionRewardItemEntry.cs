@@ -3,6 +3,12 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace Rasa.Structures.World
 {
+    public enum MissionRewardItemKind : byte
+    {
+        Fixed = 1,
+        Selectable = 2
+    }
+
     [Table(TableName)]
     public class MissionRewardItemEntry
     {
@@ -23,6 +29,10 @@ namespace Rasa.Structures.World
         [Column("item_id")]
         [Required]
         public uint ItemId { get; set; }
+
+        [Column("kind")]
+        [Required]
+        public MissionRewardItemKind Kind { get; set; }
 
         [Column("item_template_id")]
         [Required]

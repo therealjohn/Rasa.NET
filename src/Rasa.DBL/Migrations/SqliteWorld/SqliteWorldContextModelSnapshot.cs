@@ -1597,10 +1597,6 @@ namespace Rasa.Migrations.SqliteWorld
                         .HasColumnType("int(11)")
                         .HasColumnName("experience");
 
-                    b.Property<byte>("Kind")
-                        .HasColumnType("tinyint(3)")
-                        .HasColumnName("kind");
-
                     b.Property<uint>("Prestige")
                         .HasColumnType("int(11)")
                         .HasColumnName("prestige");
@@ -1609,9 +1605,16 @@ namespace Rasa.Migrations.SqliteWorld
                         .HasColumnType("tinyint(3)")
                         .HasColumnName("requirement");
 
+                    b.Property<byte>("SelectionCount")
+                        .HasColumnType("tinyint(3)")
+                        .HasColumnName("selection_count");
+
                     b.HasKey("MissionId", "ContentRevision", "RewardId");
 
-                    b.ToTable("mission_reward_definition");
+                    b.ToTable("mission_reward_definition", t =>
+                        {
+                            t.HasCheckConstraint("CK_mission_reward_definition_selection_count", "selection_count IN (0, 1)");
+                        });
                 });
 
             modelBuilder.Entity("Rasa.Structures.World.MissionRewardItemEntry", b =>
@@ -1636,13 +1639,20 @@ namespace Rasa.Migrations.SqliteWorld
                         .HasColumnType("int(11)")
                         .HasColumnName("item_template_id");
 
+                    b.Property<byte>("Kind")
+                        .HasColumnType("tinyint(3)")
+                        .HasColumnName("kind");
+
                     b.Property<uint>("Quantity")
                         .HasColumnType("int(11)")
                         .HasColumnName("quantity");
 
                     b.HasKey("MissionId", "ContentRevision", "RewardId", "ItemId");
 
-                    b.ToTable("mission_reward_item");
+                    b.ToTable("mission_reward_item", t =>
+                        {
+                            t.HasCheckConstraint("CK_mission_reward_item_kind", "kind IN (1, 2)");
+                        });
                 });
 
             modelBuilder.Entity("Rasa.Structures.World.MissionScenarioEntry", b =>

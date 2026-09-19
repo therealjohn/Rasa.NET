@@ -31,7 +31,7 @@ namespace Rasa.Test.Missions
     public class MissionReviewFindingTests
     {
         [TestMethod]
-        public void DatabaseMissionLoadsOperationalAndCompletesThroughSuccessThenReward()
+        public void DatabaseMissionLoadsInactiveDuringLegacyTransition()
         {
             using var context = MissionTestContext.WithCustomDefinitions(
                 new Dictionary<uint, Mission>());
@@ -67,29 +67,59 @@ namespace Rasa.Test.Missions
             var manager = new MissionManager(factory, new Dictionary<uint, Mission>());
             manager.LoadMissions();
 
-            Assert.IsTrue(manager.LoadedMissions[321].IsOperational);
-            Assert.IsTrue(manager.LoadedMissions[429].IsOperational);
-            Assert.IsNull(manager.LoadedMissions[321].OperationalDiagnostic);
-            Assert.IsTrue(manager.TryGetRewardInfo(321, out var reward));
-            Assert.AreEqual(0, reward.FixedReward.Credits.Count);
+            Assert.IsFalse(manager.LoadedMissions[321].IsOperational);
+            Assert.IsFalse(manager.LoadedMissions[429].IsOperational);
+            StringAssert.Contains(
+                manager.LoadedMissions[321].OperationalDiagnostic,
+                "legacy npc_mission rows stay inactive");
+            StringAssert.Contains(
+                manager.LoadedMissions[429].OperationalDiagnostic,
+                "legacy npc_mission rows stay inactive");
+            Assert.IsFalse(manager.TryGetRewardInfo(321, out _));
             Assert.AreEqual(0, manager.LoadedMissions[321].Objectives.Count);
 
             var giver = context.AddNpc(101);
-            var receiver = context.AddNpc(100);
-            Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
-            Assert.IsTrue(context.Client.Player.Missions[321].Completeable);
+            Assert.IsFalse(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            Assert.IsFalse(context.Client.Player.Missions.ContainsKey(321));
+        }
 
-            Assert.IsTrue(manager.TryCompleteNpcMission(
-                context.Client, receiver.EntityId, 321, null, null));
-            Assert.AreEqual(MissionState.Success, context.Client.Player.Missions[321].State);
-            Assert.AreEqual((uint)MissionState.Success, context.ReadMission(321).MissionState);
-            Assert.AreEqual(1, context.Drain().OfType<MissionCompletedPacket>().Count());
+        [TestMethod]
+        public void RewardlessLegacyNpcMissionRowsAreInactiveAndCannotBeAdvertisedOrAccepted()
+        {
+            using var context = MissionTestContext.WithCustomDefinitions(
+                new Dictionary<uint, Mission>());
+            var factory = new MissionLoadingFactory(
+                context,
+                new[]
+                {
+                    new NpcMissionEntry
+                    {
+                        Id = 321,
+                        GiverId = 101,
+                        ReciverId = 100,
+                        Level = 5,
+                        GroupType = 1,
+                        CategoryId = 1,
+                        Shareable = false,
+                        RadioCompleteable = false,
+                        Comment = "Legacy rewardless mission"
+                    }
+                });
+            var manager = new MissionManager(factory, new Dictionary<uint, Mission>());
+            manager.LoadMissions();
 
-            Assert.IsTrue(manager.TryRewardNpcMission(
-                context.Client, receiver.EntityId, 321, null, null));
-            Assert.AreEqual(MissionState.Completed, context.Client.Player.Missions[321].State);
-            Assert.AreEqual((uint)MissionState.Completed, context.ReadMission(321).MissionState);
-            Assert.AreEqual(1, context.Drain().OfType<MissionRewardedPacket>().Count());
+            Assert.IsFalse(manager.LoadedMissions[321].IsOperational);
+            StringAssert.Contains(
+                manager.LoadedMissions[321].OperationalDiagnostic,
+                "legacy npc_mission rows stay inactive");
+            Assert.IsFalse(manager.TryGetRewardInfo(321, out _));
+
+            var giver = context.AddNpc(101);
+            var classification = manager.ClassifyNpcConversation(context.Client.Player, giver);
+            Assert.IsFalse(classification.TryGetStatus(out var status, out var missionIds));
+            Assert.AreEqual(ConversationStatus.None, status);
+            CollectionAssert.AreEqual(Array.Empty<uint>(), missionIds);
+            Assert.IsFalse(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
         }
 
         [TestMethod]
