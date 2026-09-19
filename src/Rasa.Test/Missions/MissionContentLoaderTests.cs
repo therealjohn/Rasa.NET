@@ -57,7 +57,7 @@ namespace Rasa.Test.Missions
             var snapshot = new MissionContentLoader().Load(fixture.CreateRepository());
             var steps = snapshot.Definitions[321].Scenarios[60].Steps;
 
-            Assert.AreEqual(22, steps.Count);
+            Assert.AreEqual(23, steps.Count);
             Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.SpawnGroup, steps[0].Kind);
             Assert.AreEqual(50U, steps[0].SpawnGroupId);
             Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.SpawnDynamicObject, steps[2].Kind);
@@ -102,6 +102,8 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepEntry.RemovedQualificationValue, steps[20].QualificationValue);
             Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.SetAccountSkipEntitlement, steps[21].Kind);
             Assert.AreEqual(true, steps[21].AccountSkipEntitlement);
+            Assert.AreEqual(Rasa.Structures.World.MissionScenarioStepKind.EscortSpawnGroup, steps[22].Kind);
+            Assert.AreEqual(50U, steps[22].SpawnGroupId);
 
             fixture.ScenarioSteps[0].SpawnGroupId = 999;
             Assert.AreEqual(50U, steps[0].SpawnGroupId);
@@ -714,6 +716,18 @@ namespace Rasa.Test.Missions
                     Sequence = 22,
                     AccountSkipEntitlement = true,
                     Comment = "Grant the account skip entitlement"
+                },
+                new Rasa.Structures.World.MissionScenarioStepEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ScenarioId = 60,
+                    StepId = 23,
+                    Requirement = Rasa.Structures.World.MissionContentRequirement.Required,
+                    Kind = Rasa.Structures.World.MissionScenarioStepKind.EscortSpawnGroup,
+                    Sequence = 23,
+                    SpawnGroupId = 50,
+                    Comment = "Escort the spawned group"
                 }});
         }
 

@@ -40,6 +40,9 @@ namespace Rasa.Services.Preloader
         private const byte ProgressItemEquipped = 8;
         private const byte ProgressAbilityHit = 9;
         private const byte ProgressCreatureKilled = 2;
+        private const uint CaptureTheFlagPromotionRewardId = 59;
+        private const uint CaptureTheFlagPromotionExperience = 43000;
+        private const uint CaptureTheFlagYoungbloodDelayMilliseconds = 7000;
 
         internal static void Insert(
             MigrationBuilder migrationBuilder,
@@ -307,15 +310,15 @@ namespace Rasa.Services.Preloader
             yield return RewardAction(1992, 7, 1, 2, 1, "Reference mission reward");
 
             yield return CompleteAction(1994, 4, 1, 1, 4, "Complete DeSimone promotion");
-            yield return StartScenarioAction(1994, 4, 1, 2, 1, "Start cave encounter scene");
+            yield return StartScenarioAction(1994, 4, 1, 2, 1, "Start promotion scene");
             yield return RevealAction(1994, 4, 1, 3, 2, "Reveal cave exit");
             yield return ActivateAction(1994, 4, 1, 4, 2, "Activate cave exit");
             yield return CompleteAction(1994, 2, 1, 1, 2, "Complete cave exit");
-            yield return RevealAction(1994, 2, 1, 2, 1, "Reveal Tizzik encounter");
-            yield return ActivateAction(1994, 2, 1, 3, 1, "Activate Tizzik encounter");
+            yield return StartScenarioAction(1994, 2, 1, 2, 2, "Start the assault scene");
+            yield return RevealAction(1994, 2, 1, 3, 1, "Reveal Tizzik encounter");
+            yield return ActivateAction(1994, 2, 1, 4, 1, "Activate Tizzik encounter");
             yield return CompleteAction(1994, 1, 1, 1, 1, "Complete Tizzik encounter");
-            yield return RevealAction(1994, 1, 1, 2, 3, "Reveal Youngblood debrief");
-            yield return ActivateAction(1994, 1, 1, 3, 3, "Activate Youngblood debrief");
+            yield return StartScenarioAction(1994, 1, 1, 2, 3, "Schedule Youngblood arrival");
             yield return CompleteAction(1994, 3, 1, 1, 3, "Complete Youngblood debrief");
             yield return RewardAction(1994, 3, 1, 2, 1, "Reference mission reward");
 
@@ -342,6 +345,7 @@ namespace Rasa.Services.Preloader
             yield return new object[] { 1992U, Revision, 1U, MissionContentRequirement.Required, 1250U, 200U, 0U, (byte)0, "1992 completion reward" };
             yield return new object[] { 1992U, Revision, 58U, MissionContentRequirement.Required, 0U, 0U, 0U, (byte)0, "1992 equipment crate loadout" };
             yield return new object[] { 1994U, Revision, 1U, MissionContentRequirement.Required, 5000U, 0U, 0U, (byte)0, "1994 completion reward" };
+            yield return new object[] { 1994U, Revision, CaptureTheFlagPromotionRewardId, MissionContentRequirement.Required, CaptureTheFlagPromotionExperience, 0U, 0U, (byte)0, "1994 promotion reward" };
         }
 
         internal static IEnumerable<object[]> MissionRewardItems()
@@ -429,7 +433,10 @@ namespace Rasa.Services.Preloader
             yield return Scenario(1992, 2, "bootcamp-1992-loadout", "1992 loadout scene");
             yield return Scenario(1992, 3, "bootcamp-1992-firearm", "1992 firearm range scene");
             yield return Scenario(1992, 4, "bootcamp-1992-lightning", "1992 Lightning range scene");
-            yield return Scenario(1994, 1, "bootcamp-1994-world", "1994 world content");
+            yield return Scenario(1994, 1, "bootcamp-1994-promotion", "1994 promotion");
+            yield return Scenario(1994, 2, "bootcamp-1994-assault", "1994 assault");
+            yield return Scenario(1994, 3, "bootcamp-1994-youngblood-delay", "1994 delayed Youngblood");
+            yield return Scenario(1994, 4, "bootcamp-1994-youngblood-arrival", "1994 Youngblood arrival");
             yield return Scenario(1995, 1, "bootcamp-1995-world", "1995 missing-team scene");
             yield return Scenario(1995, 2, "bootcamp-1995-exit", "1995 exit handoff");
             yield return Scenario(1995, 3, "bootcamp-1995-fuse", "1995 extraction fuse");
@@ -449,9 +456,14 @@ namespace Rasa.Services.Preloader
             yield return PlayTutorialStep(1992, 4, 2, 10000015U, null, "Prompt the player to use Lightning");
             yield return SpawnGroupStep(1992, 4, 3, 2, "Spawn Lightning dummy");
 
-            yield return SpawnGroupStep(1994, 1, 1, 1, "Spawn escort group");
-            yield return SpawnGroupStep(1994, 1, 2, 2, "Spawn Tizzik encounter");
-            yield return SpawnGroupStep(1994, 1, 3, 3, "Spawn Youngblood arrival");
+            yield return GrantRewardPackageStep(1994, 1, 1, CaptureTheFlagPromotionRewardId, "Grant the promotion");
+            yield return SpawnGroupStep(1994, 2, 1, 1, "Spawn escort group");
+            yield return EscortSpawnGroupStep(1994, 2, 2, 1, "Escort the player");
+            yield return SpawnGroupStep(1994, 2, 3, 2, "Spawn Tizzik encounter");
+            yield return ScheduleScenarioStep(1994, 3, 1, 4, CaptureTheFlagYoungbloodDelayMilliseconds, "Delay Youngblood arrival");
+            yield return SpawnGroupStep(1994, 4, 1, 3, "Spawn Youngblood arrival");
+            yield return RevealObjectiveStep(1994, 4, 2, 3, "Reveal Youngblood debrief");
+            yield return ActivateObjectiveStep(1994, 4, 3, 3, "Activate Youngblood debrief");
 
             yield return SpawnDynamicObjectStep(1995, 1, 1, "bootcamp-conrad-corpse", 24990, -102.4, 85.69, 66.8, 0.0, true, "Spawn Conrad corpse");
             yield return SpawnDynamicObjectStep(1995, 1, 2, "bootcamp-dropship-debris", 24911, -225.35, 99.60, -70.52, 0.0, true, "Spawn dropship debris");
@@ -773,6 +785,20 @@ namespace Rasa.Services.Preloader
             {
                 missionId, Revision, scenarioId, stepId, MissionContentRequirement.Required,
                 MissionScenarioStepKind.SpawnGroup, stepId, null, null, spawnGroupId, null,
+                null, null, null, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, comment
+            };
+
+        private static object[] EscortSpawnGroupStep(
+            uint missionId,
+            uint scenarioId,
+            uint stepId,
+            uint spawnGroupId,
+            string comment) =>
+            new object[]
+            {
+                missionId, Revision, scenarioId, stepId, MissionContentRequirement.Required,
+                MissionScenarioStepKind.EscortSpawnGroup, stepId, null, null, spawnGroupId, null,
                 null, null, null, null, null, null, null, null, null, null, null, null,
                 null, null, null, null, null, null, null, null, null, comment
             };

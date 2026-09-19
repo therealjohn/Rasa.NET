@@ -27,7 +27,8 @@ namespace Rasa.Structures.World
         SetQualification = 18,
         SetAccountSkipEntitlement = 19,
         SpawnDynamicObject = 20,
-        DespawnDynamicObject = 21
+        DespawnDynamicObject = 21,
+        EscortSpawnGroup = 22
     }
 
     [Table(TableName)]

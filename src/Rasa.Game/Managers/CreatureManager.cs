@@ -207,10 +207,26 @@ namespace Rasa.Managers
                 LootDispenserManager.Instance.Loot(client, creature);
             }
 
-            if (client != null)
+            if (client != null &&
+                CanCreditScenarioProgress(mapChannel, creature, client))
                 (_missionManager ?? MissionManager.Instance).RecordProgress(
                     client,
                     MissionProgressEvent.Creature(creature.DbId));
+        }
+
+        private static bool CanCreditScenarioProgress(
+            MapChannel mapChannel,
+            Creature creature,
+            Client client)
+        {
+            if (client?.Player == null ||
+                creature?.SpawnPool?.ScenarioKey == null)
+                return client != null;
+
+            if (!mapChannel.IsPrivateInstance || mapChannel.OwnerCharacterId == 0)
+                return true;
+
+            return mapChannel.OwnerCharacterId == client.Player.Id;
         }
 
         public Creature CreateCreature(uint dbId, SpawnPool spawnPool)

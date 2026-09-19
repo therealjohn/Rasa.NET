@@ -28,6 +28,8 @@ namespace Rasa.Structures
         internal List<Creature> QueuedCreatureList { get; set; }
         public string ScenarioKey { get; set; }
         public uint? ScenarioGroupId { get; set; }
+        public uint FollowOwnerCharacterId { get; set; }
+        public ulong FollowTargetEntityId { get; set; }
 
         // Runtime milliseconds; the persisted RespawnTime is in seconds.
         public long UpdateTimer { get; set; }

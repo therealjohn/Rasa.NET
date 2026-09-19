@@ -297,6 +297,11 @@ namespace Rasa.Managers
                 try
                 {
                     RandomizePosition(creature, creatureList.Count);
+                    if (spawnPool.FollowOwnerCharacterId != 0 ||
+                        spawnPool.FollowTargetEntityId != 0)
+                        BehaviorManager.Instance.SetActionFollow(
+                            creature,
+                            spawnPool.FollowTargetEntityId);
                     CellManager.Instance.AddToWorld(mapChannel, creature);
                 }
                 catch
@@ -416,7 +421,9 @@ namespace Rasa.Managers
                 MapContextId = mapChannel.MapInfo.MapContextId,
                 RuntimeMapChannel = mapChannel,
                 RespawnTime = template.RespawnTime,
-                UpdateTimer = template.RespawnTime
+                UpdateTimer = template.RespawnTime,
+                FollowOwnerCharacterId = template.FollowOwnerCharacterId,
+                FollowTargetEntityId = template.FollowTargetEntityId
             };
         }
     }

@@ -300,6 +300,10 @@ namespace Rasa.Managers
                     PlanDespawnDynamicObject(context, step);
                     return;
 
+                case MissionScenarioStepKind.EscortSpawnGroup:
+                    PlanEscortSpawnGroup(context, step);
+                    return;
+
                 case MissionScenarioStepKind.EnableInteraction:
                     PlanInteraction(context, step, true);
                     return;
@@ -479,6 +483,38 @@ namespace Rasa.Managers
                         step.ContentRevision,
                         step.AttemptKey,
                         step.DynamicObjectKey)));
+        }
+
+        private void PlanEscortSpawnGroup(
+            MissionActionContext context,
+            MissionScenarioStepDefinition step)
+        {
+            if (!step.SpawnGroupId.HasValue ||
+                !context.MissionManager.TryGetSpawnGroupDefinition(
+                    context.MissionDefinition.MissionId,
+                    step.SpawnGroupId.Value,
+                    out var spawnGroup))
+                throw new GameplayRejectionException("Scenario escort spawn group is missing.");
+
+            var mapChannel = ResolveMap(
+                context.Client.Player,
+                spawnGroup.MapContextId,
+                context.MapChannel,
+                context.UnitOfWork);
+            if (mapChannel == null)
+                throw new GameplayRejectionException("Scenario escort spawn group map is unavailable.");
+
+            context.Plan.AddRuntimeConvergence(() =>
+                EnsureSpawnGroupEscortRuntime(
+                    mapChannel,
+                    BuildSpawnGroupRuntimeKey(
+                        context.Client.Player.Id,
+                        context.MissionDefinition.MissionId,
+                        spawnGroup.ContentRevision,
+                        step.AttemptKey,
+                        spawnGroup.SpawnGroupId),
+                    context.Client.Player.Id,
+                    context.Client.Player.EntityId));
         }
 
         private void PlanInteraction(
@@ -826,6 +862,27 @@ namespace Rasa.Managers
                                 step.DynamicObjectKey));
                     return;
 
+                case MissionScenarioStepKind.EscortSpawnGroup:
+                    if (step.SpawnGroupId.HasValue &&
+                        manager.TryGetSpawnGroupDefinition(
+                            missionId,
+                            step.SpawnGroupId.Value,
+                            out var escortGroup) &&
+                        escortGroup.MapContextId == mapChannel.MapInfo.MapContextId)
+                    {
+                        EnsureSpawnGroupEscortRuntime(
+                            mapChannel,
+                            BuildSpawnGroupRuntimeKey(
+                                characterId,
+                                missionId,
+                                escortGroup.ContentRevision,
+                                step.AttemptKey,
+                                escortGroup.SpawnGroupId),
+                            characterId,
+                            0);
+                    }
+                    return;
+
                 case MissionScenarioStepKind.EnableInteraction:
                     foreach (var dynamicObject in FindInteractionObjects(mapChannel, step))
                         _objects().SetScenarioInteractionEnabled(mapChannel, dynamicObject, true);
@@ -911,6 +968,39 @@ namespace Rasa.Managers
                         CellManager.Instance.AddToWorld(mapChannel, creature);
                 }
             }
+        }
+
+        private void EnsureSpawnGroupEscortRuntime(
+            MapChannel mapChannel,
+            string runtimeKey,
+            uint ownerCharacterId,
+            ulong followTargetEntityId)
+        {
+            if (mapChannel == null ||
+                string.IsNullOrWhiteSpace(runtimeKey) ||
+                ownerCharacterId == 0)
+                return;
+
+            var registry = GetRegistry(mapChannel);
+            if (!registry.SpawnGroupsByKey.TryGetValue(runtimeKey, out var pools))
+                pools = mapChannel.SpawnPools
+                    .Where(pool => string.Equals(pool.ScenarioKey, runtimeKey, StringComparison.Ordinal))
+                    .ToList();
+            if (pools.Count == 0)
+                return;
+
+            foreach (var pool in pools)
+            {
+                pool.FollowOwnerCharacterId = ownerCharacterId;
+                pool.FollowTargetEntityId = followTargetEntityId;
+            }
+
+            foreach (var creature in mapChannel.MapCellInfo.Cells.Values
+                         .SelectMany(cell => cell.CreatureList)
+                         .Distinct()
+                         .Where(creature => pools.Contains(creature.SpawnPool))
+                         .ToArray())
+                BehaviorManager.Instance.SetActionFollow(creature, followTargetEntityId);
         }
 
         private void RemoveSpawnGroupRuntime(MapChannel mapChannel, string runtimeKey)

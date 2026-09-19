@@ -41,6 +41,9 @@ namespace Rasa.Test.Missions
         internal const uint CaptainDelessioCreatureId = 510204;
         internal const uint CorporalHartmannCreatureId = 510205;
         internal const uint CorporalDeSimoneCreatureId = 510206;
+        internal const uint CaptainYoungbloodCreatureId = 510207;
+        internal const uint CorporalVanValkenbergCreatureId = 510209;
+        internal const uint TizzikGiCreatureId = 510210;
         internal const uint PracticeDummyCreatureId = 510211;
         internal const uint LightningDummyCreatureId = 510212;
 
@@ -62,6 +65,7 @@ namespace Rasa.Test.Missions
             var context = MissionTestContext.WithCustomDefinitions(new Dictionary<uint, Mission>());
             context.Map.MapInfo = new MapInfo(BootcampMapContextId, "bootcamp_runtime", 1556, 0);
             context.Client.Player.MapContextId = BootcampMapContextId;
+            context.Client.Player.Class = (uint)CharacterClass.Recruit;
             context.Client.Player.AppearanceData = new Dictionary<EquipmentData, AppearanceData>();
             context.Client.Player.Attributes[Attributes.Body] =
                 new ActorAttributes(Attributes.Body, 10, 10, 10, 0, 0);
@@ -91,6 +95,9 @@ namespace Rasa.Test.Missions
                      {
                          39U,
                          50U,
+                         CaptainYoungbloodCreatureId,
+                         CorporalVanValkenbergCreatureId,
+                         TizzikGiCreatureId,
                          PracticeDummyCreatureId,
                          LightningDummyCreatureId
                      })
@@ -99,7 +106,14 @@ namespace Rasa.Test.Missions
                 {
                     DbId = creatureId,
                     EntityClass = (EntityClasses)4001,
-                    Npc = new Npc { NpcPackageId = creatureId },
+                    Npc = new Npc
+                    {
+                        NpcPackageId = creatureId == CaptainYoungbloodCreatureId
+                            ? 2561U
+                            : creatureId == CorporalVanValkenbergCreatureId
+                                ? 2564U
+                                : creatureId
+                    },
                     AppearanceData = new Dictionary<EquipmentData, AppearanceData>()
                 };
             }
@@ -469,6 +483,9 @@ namespace Rasa.Test.Missions
                          {
                              39U,
                              50U,
+                             CaptainYoungbloodCreatureId,
+                             CorporalVanValkenbergCreatureId,
+                             TizzikGiCreatureId,
                              PracticeDummyCreatureId,
                              LightningDummyCreatureId
                          })
@@ -477,7 +494,14 @@ namespace Rasa.Test.Missions
                     {
                         DbId = creatureId,
                         EntityClass = (EntityClasses)4001,
-                        Npc = new Npc { NpcPackageId = creatureId },
+                        Npc = new Npc
+                        {
+                            NpcPackageId = creatureId == CaptainYoungbloodCreatureId
+                                ? 2561U
+                                : creatureId == CorporalVanValkenbergCreatureId
+                                    ? 2564U
+                                    : creatureId
+                        },
                         AppearanceData = new Dictionary<EquipmentData, AppearanceData>()
                     };
                 }
@@ -534,6 +558,7 @@ namespace Rasa.Test.Missions
                     .SetValue(freshClient, accountEntry);
                 freshClient.Player.AppearanceData ??=
                     new Dictionary<EquipmentData, AppearanceData>();
+                freshClient.Player.Class = Client.Player.Class;
                 new InventoryManager(Context, Manager).InitCharacterInventory(freshClient);
                 freshClient.Player.Skills = Maps.GetPlayerSkills(characterId);
                 freshClient.Player.Abilities = Maps.GetPlayerAbilities(characterId);

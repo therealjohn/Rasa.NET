@@ -256,6 +256,70 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
+        public void EscortSpawnGroupStepMakesScenarioCreaturesFollowTheOwnerAcrossReconnect()
+        {
+            using var context = MissionTestContext.WithCustomDefinitions(
+                new Dictionary<uint, Mission>());
+            PrepareScenarioCreatureClass();
+            var fixture = CreateEscortRuntimeFixture();
+            context.Map.MapInfo = new MapInfo(1985, "bootcamp_fixture", 1556, 0);
+            context.Client.Player.MapContextId = 1985;
+            context.Client.Player.Class = (uint)CharacterClass.Recruit;
+            var now = new DateTime(2026, 9, 19, 12, 0, 0, DateTimeKind.Utc);
+            MissionManager manager = null;
+            MapChannelManager maps = null;
+            var objects = new DynamicObjectManager(null, maps);
+            var creatures = new CreatureManager(null, new ManifestationManager(context));
+            creatures.LoadedCreatures[501] = new Creature
+            {
+                DbId = 501,
+                EntityClass = (EntityClasses)4001,
+                Npc = new Npc { NpcPackageId = 501 },
+                AppearanceData = new Dictionary<EquipmentData, AppearanceData>()
+            };
+            var service = new MissionScenarioService(
+                () => context,
+                () => manager,
+                new ManifestationManager(context),
+                () => maps,
+                () => creatures,
+                () => objects,
+                () => CommunicatorManager.Instance,
+                () => now);
+            maps = new MapChannelManager(
+                null,
+                privateInstances: new PrivateMapInstanceService(),
+                scenarioService: service);
+            maps.MapChannelArray.Add(1985, context.Map);
+            objects = new DynamicObjectManager(null, maps);
+            manager = LoadManager(context, fixture, () => now, maps, objects, creatures, service);
+            context.AddRewardTemplate(28, 3147);
+            using var singletons = new ManagerInstances(maps, objects, creatures, manager);
+            var owned = maps.GetOrCreatePrivateInstance(1985, context.Client.Player.Id);
+            MoveClientToMap(context.Client, context.Map, owned);
+            var giver = context.AddNpc(101, owned);
+
+            Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            context.Drain();
+            Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 60));
+
+            var escort = GetScenarioCreature(owned);
+            Assert.AreEqual(BehaviorManager.BehaviorActionFollow, escort.Controller.CurrentAction);
+            Assert.AreEqual(context.Client.Player.EntityId, escort.Controller.ActionFollow.FollowTargetId);
+            Assert.AreEqual(context.Client.Player.Id, escort.SpawnPool.FollowOwnerCharacterId);
+
+            maps.ReleaseOwnedPrivateInstances(context.Client.Player.Id);
+            var rebuilt = maps.GetOrCreatePrivateInstance(1985, context.Client.Player.Id);
+            MoveClientToMap(context.Client, owned, rebuilt);
+            BehaviorManager.Instance.MapChannelThink(rebuilt, 250);
+
+            var rebuiltEscort = GetScenarioCreature(rebuilt);
+            Assert.AreEqual(BehaviorManager.BehaviorActionFollow, rebuiltEscort.Controller.CurrentAction);
+            Assert.AreEqual(context.Client.Player.EntityId, rebuiltEscort.Controller.ActionFollow.FollowTargetId);
+            Assert.AreEqual(context.Client.Player.Id, rebuiltEscort.SpawnPool.FollowOwnerCharacterId);
+        }
+
+        [TestMethod]
         public void ObjectiveDeadlineTransferAndScenarioEventStepsApplyThroughAuthoritativeMissionFlows()
         {
             using var context = MissionTestContext.WithCustomDefinitions(
@@ -1099,6 +1163,24 @@ namespace Rasa.Test.Missions
                     ScenarioEventId = 99,
                     Comment = "Scout follow-up placeholder"
                 });
+            return fixture;
+        }
+
+        private static MissionContentFixture CreateEscortRuntimeFixture()
+        {
+            var fixture = CreateRuntimeActorFixture();
+            fixture.ScenarioSteps.Add(new MissionScenarioStepEntry
+            {
+                MissionId = 321,
+                ContentRevision = "deployment_11",
+                ScenarioId = 60,
+                StepId = 99,
+                Requirement = MissionContentRequirement.Required,
+                Kind = MissionScenarioStepKind.EscortSpawnGroup,
+                Sequence = 4,
+                SpawnGroupId = 50,
+                Comment = "Escort the spawned group"
+            });
             return fixture;
         }
 

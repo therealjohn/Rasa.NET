@@ -338,7 +338,21 @@ namespace Rasa.Managers
 
                 if (!creature.Controller.ActionFollow.HasAnchor)
                 {
-                    var followed = EntityManager.Instance.GetActor(creature.Controller.ActionFollow.FollowTargetId);
+                    Actor followed = null;
+                    if (creature.Controller.ActionFollow.FollowTargetId != 0)
+                        EntityManager.Instance.Actors.TryGetValue(
+                            creature.Controller.ActionFollow.FollowTargetId,
+                            out followed);
+                    if (followed == null &&
+                        creature.SpawnPool?.FollowOwnerCharacterId > 0)
+                    {
+                        followed = mapChannel.ClientList
+                            .Select(client => client?.Player)
+                            .FirstOrDefault(player =>
+                                player?.Id == creature.SpawnPool.FollowOwnerCharacterId);
+                        if (followed != null)
+                            creature.Controller.ActionFollow.FollowTargetId = followed.EntityId;
+                    }
 
                     // Nothing left to follow - the master logged out, or the followed player has
                     // gone. Stand still rather than walking to the origin; MinionManager's worker
@@ -348,6 +362,8 @@ namespace Rasa.Managers
 
                     destination = followed.Position;
                 }
+
+                creature.HomePos.Position = destination;
 
                 var gap = Vector3.Distance(creature.Position, destination);
 
@@ -449,14 +465,14 @@ namespace Rasa.Managers
                 if (target == 0)
                 {
                     // target disappeared (player logout or deleted for some reason) - leave combat mode
-                    SetActionWander(creature);
+                    RestorePassiveAction(creature);
                     return;
                 }
 
                 // leave combat after 
                 if (creature.LastAgression > creature.AggressionTime)
                 {
-                    SetActionWander(creature);
+                    RestorePassiveAction(creature);
                     return;
                 }
 
@@ -470,7 +486,7 @@ namespace Rasa.Managers
                     // if target dead, set wander state
                     if (player.Attributes[Attributes.Health].Current <= 0 || player.State == CharacterState.Dead)
                     {
-                        SetActionWander(creature);
+                        RestorePassiveAction(creature);
                         return;
                     }
 
@@ -486,7 +502,7 @@ namespace Rasa.Managers
                         // exit visual combat mode
                         CellManager.Instance.CellCallMethod(mapChannel, creature, new RequestVisualCombatModePacket(false));
 
-                        SetActionWander(creature);
+                        RestorePassiveAction(creature);
                         return;
                     }
 
@@ -508,7 +524,7 @@ namespace Rasa.Managers
                 if (homeLocDist >= 60.0f * 60.0f)
                 {
                     creature.LastRestTime = 0; // forces AI to immediately calculate new wander position
-                    SetActionWander(creature);
+                    RestorePassiveAction(creature);
                     return;
                 }
                 creature.LastAgression = 0; // update aggression time if we found our target
@@ -845,6 +861,21 @@ namespace Rasa.Managers
             creature.Controller.ActionWander.State = WanderIdle;
             creature.Controller.Path.Clear();
             creature.Controller.PathIndex = 0;
+        }
+
+        private void RestorePassiveAction(Creature creature)
+        {
+            if (creature.Controller.ActionFollow.HasAnchor ||
+                creature.Controller.ActionFollow.FollowTargetId != 0)
+            {
+                creature.Controller.CurrentAction = BehaviorActionFollow;
+                creature.Controller.ActionFollow.PathUpdateTime = 0;
+                creature.Controller.Path.Clear();
+                creature.Controller.PathIndex = 0;
+                return;
+            }
+
+            SetActionWander(creature);
         }
 
         /// <summary>

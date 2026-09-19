@@ -271,7 +271,7 @@ namespace Rasa.Context.World
             }
 
             var scenarioStepParameterSetConstraint =
-                "(kind IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21)) " +
+                "(kind IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22)) " +
                 $"AND (kind <> 1 OR (spawn_group_id IS NOT NULL AND {ScenarioStepNullColumns("spawn_group_id")})) " +
                 $"AND (kind <> 2 OR (spawn_group_id IS NOT NULL AND {ScenarioStepNullColumns("spawn_group_id")})) " +
                 $"AND (kind <> 3 OR ((((entity_class_id IS NOT NULL AND spawn_group_id IS NULL AND spawn_id IS NULL) " +
@@ -308,7 +308,8 @@ namespace Rasa.Context.World
                     $"AND entity_class_id IS NOT NULL AND pos_x IS NOT NULL AND pos_y IS NOT NULL AND pos_z IS NOT NULL AND orientation IS NOT NULL " +
                     $"AND {ScenarioStepNullColumns("dynamic_object_key", "entity_class_id", "pos_x", "pos_y", "pos_z", "orientation", "initial_interaction_enabled")})) " +
                 $"AND (kind <> 21 OR (dynamic_object_key IS NOT NULL AND dynamic_object_key <> '' " +
-                    $"AND {ScenarioStepNullColumns("dynamic_object_key")}))";
+                    $"AND {ScenarioStepNullColumns("dynamic_object_key")})) " +
+                $"AND (kind <> 22 OR (spawn_group_id IS NOT NULL AND {ScenarioStepNullColumns("spawn_group_id")}))";
 
             var scenarioStepNumericBoundsConstraint =
                 "(target_objective_id IS NULL OR target_objective_id > 0) " +
