@@ -44,14 +44,18 @@ namespace Rasa.Test.Missions
         internal const uint CorporalHartmannCreatureId = 510205;
         internal const uint CorporalDeSimoneCreatureId = 510206;
         internal const uint CaptainYoungbloodCreatureId = 510207;
+        internal const uint WoundedSurvivorCreatureId = 510208;
         internal const uint CorporalVanValkenbergCreatureId = 510209;
         internal const uint TizzikGiCreatureId = 510210;
         internal const uint PracticeDummyCreatureId = 510211;
         internal const uint LightningDummyCreatureId = 510212;
 
         internal const uint CaptainDelessioPackageId = 2560;
+        internal const uint CaptainYoungbloodPackageId = 2561;
         internal const uint CorporalHartmannPackageId = 2563;
         internal const uint CorporalDeSimonePackageId = 2562;
+        internal const uint WoundedSurvivorPackageId = 2584;
+        internal const uint CorporalVanValkenbergPackageId = 2564;
 
         internal static Harness Create()
         {
@@ -98,7 +102,7 @@ namespace Rasa.Test.Missions
                          39U,
                          50U,
                          CaptainYoungbloodCreatureId,
-                         510208U,
+                         WoundedSurvivorCreatureId,
                          CorporalVanValkenbergCreatureId,
                          TizzikGiCreatureId,
                          PracticeDummyCreatureId,
@@ -112,11 +116,11 @@ namespace Rasa.Test.Missions
                     Npc = new Npc
                     {
                         NpcPackageId = creatureId == CaptainYoungbloodCreatureId
-                            ? 2561U
-                            : creatureId == 510208U
-                                ? 2584U
+                            ? CaptainYoungbloodPackageId
+                            : creatureId == WoundedSurvivorCreatureId
+                                ? WoundedSurvivorPackageId
                             : creatureId == CorporalVanValkenbergCreatureId
-                                ? 2564U
+                                ? CorporalVanValkenbergPackageId
                                 : creatureId
                     },
                     AppearanceData = new Dictionary<EquipmentData, AppearanceData>()

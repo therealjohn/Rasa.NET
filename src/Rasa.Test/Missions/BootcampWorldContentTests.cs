@@ -208,6 +208,7 @@ namespace Rasa.Test.Missions
                     (3U, MissionObjectiveState.Inactive));
                 AssertObjectiveStates(snapshot, 1995,
                     (2U, MissionObjectiveState.Incomplete),
+                    (10U, MissionObjectiveState.Inactive),
                     (3U, MissionObjectiveState.Inactive),
                     (1U, MissionObjectiveState.Inactive),
                     (4U, MissionObjectiveState.Inactive));
@@ -241,10 +242,38 @@ namespace Rasa.Test.Missions
                         MissionActionKind.ActivateObjective
                     },
                     scoutTransition.Actions.Select(action => action.Kind).ToArray());
+                CollectionAssert.AreEqual(
+                    new[] { 2U, 10U, 10U },
+                    scoutTransition.Actions
+                        .Where(action => action.TargetObjectiveId.HasValue)
+                        .Select(action => action.TargetObjectiveId!.Value)
+                        .ToArray());
 
-                var crashSiteScene = finalMission.Scenarios[1];
-                Assert.IsTrue(crashSiteScene.Steps.Any(step =>
+                var survivorScene = finalMission.Scenarios[1];
+                Assert.IsTrue(survivorScene.Steps.Any(step =>
                     step.Kind == MissionScenarioStepKind.SpawnGroup &&
+                    step.SpawnGroupId == 1U));
+                Assert.IsFalse(survivorScene.Steps.Any(step =>
+                    step.Kind == MissionScenarioStepKind.SpawnDynamicObject &&
+                    step.DynamicObjectKey == "bootcamp-conrad-corpse"));
+                Assert.IsFalse(survivorScene.Steps.Any(step =>
+                    step.Kind == MissionScenarioStepKind.SpawnDynamicObject &&
+                    step.DynamicObjectKey == "bootcamp-dropship-debris"));
+
+                var survivorConversationTransition = finalMission.Transitions[(10U, 1U)];
+                var survivorConversationTrigger = survivorConversationTransition.Triggers.Single();
+                Assert.AreEqual(MissionTriggerKind.Conversation, survivorConversationTrigger.Kind);
+                Assert.AreEqual(2584U, survivorConversationTrigger.NpcPackageId);
+                CollectionAssert.AreEqual(
+                    new[] { 10U, 3U, 3U },
+                    survivorConversationTransition.Actions
+                        .Where(action => action.TargetObjectiveId.HasValue)
+                        .Select(action => action.TargetObjectiveId!.Value)
+                        .ToArray());
+
+                var crashSiteScene = finalMission.Scenarios[7];
+                Assert.IsTrue(crashSiteScene.Steps.Any(step =>
+                    step.Kind == MissionScenarioStepKind.DespawnGroup &&
                     step.SpawnGroupId == 1U));
                 Assert.IsTrue(crashSiteScene.Steps.Any(step =>
                     step.Kind == MissionScenarioStepKind.SpawnDynamicObject &&
@@ -259,6 +288,9 @@ namespace Rasa.Test.Missions
                 Assert.AreEqual(
                     MissionScenarioStepKind.SatisfyDeadline,
                     retryMission.Scenarios[1].Steps.First().Kind);
+
+                Assert.IsFalse(context.SpawnPoolEntries.Any(entry =>
+                    entry.Id == BootcampRuntimeTestHarness.WoundedSurvivorCreatureId));
             });
         }
 
@@ -289,6 +321,43 @@ namespace Rasa.Test.Missions
                 StringAssert.Contains(
                     reconstructedHandoff.ReconstructionNote,
                     "McAllister handoff");
+            });
+        }
+
+        [TestMethod]
+        public void BootcampMissionContentAddsAReconstructedSurvivorConversationObjectiveBetweenClientObjectivesTwoAndThree()
+        {
+            WithDisposableSqliteWorld((context, _) =>
+            {
+                context.Database.Migrate();
+
+                var snapshot = LoadSnapshot(context);
+                var orderedObjectiveIds = snapshot.Definitions[1995].Mission.Objectives.Values
+                    .OrderBy(objective => objective.Ordinal)
+                    .Select(objective => objective.ObjectiveId)
+                    .ToArray();
+                CollectionAssert.AreEqual(
+                    new uint[] { 2, 10, 3, 1, 4 },
+                    orderedObjectiveIds);
+
+                var reconstructedConversation = context.MissionObjectiveDefinitionEntries.Single(entry =>
+                    entry.MissionId == 1995 &&
+                    entry.ContentRevision == BootcampRevision &&
+                    entry.ObjectiveId == 10);
+                Assert.AreEqual(21556U, reconstructedConversation.ClientNameTextId);
+                Assert.AreEqual(21557U, reconstructedConversation.ClientBodyTextId);
+
+                var reconstructionEvidence = context.MissionEvidenceEntries.Single(entry =>
+                    entry.MissionId == 1995 &&
+                    entry.ContentRevision == BootcampRevision &&
+                    entry.OwnerKind == MissionEvidenceOwnerKind.Objective &&
+                    entry.OwnerId == 10);
+                Assert.AreEqual(
+                    MissionEvidenceSourceKind.Reconstruction,
+                    reconstructionEvidence.SourceKind);
+                StringAssert.Contains(
+                    reconstructionEvidence.ReconstructionNote,
+                    "server-authored reconstruction objective");
             });
         }
 

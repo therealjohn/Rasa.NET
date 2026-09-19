@@ -190,6 +190,16 @@ namespace Rasa.Test.Missions
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Client,
                 MissionProgressEvent.Area(1995, MissingScoutAreaId)));
+            var survivor = BootcampRuntimeTestHarness.FindNpcByPackage(
+                harness.BootcampMap,
+                BootcampRuntimeTestHarness.WoundedSurvivorPackageId)
+                ?? throw new AssertFailedException("Missing wounded survivor.");
+            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+                harness.Client,
+                survivor.EntityId,
+                1995,
+                10,
+                1));
         }
 
         private static DynamicObject FindScenarioObject(

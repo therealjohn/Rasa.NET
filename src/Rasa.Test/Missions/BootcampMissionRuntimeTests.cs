@@ -67,8 +67,31 @@ namespace Rasa.Test.Missions
                 MissionProgressEvent.Area(1995, MissingScoutAreaId)));
             Assert.AreEqual(
                 MissionObjectiveState.Incomplete,
+                harness.Context.Client.Player.Missions[1995].Objectives[10].State);
+            Assert.AreEqual(
+                MissionObjectiveState.Inactive,
                 harness.Context.Client.Player.Missions[1995].Objectives[3].State);
             Assert.IsNotNull(FindNpcByPackage(harness.BootcampMap, 2584));
+            Assert.IsNull(FindScenarioObject(harness.BootcampMap, "bootcamp-conrad-corpse"));
+            Assert.IsNull(FindScenarioObject(harness.BootcampMap, "bootcamp-dropship-debris"));
+
+            var survivor = FindNpcByPackage(
+                harness.BootcampMap,
+                BootcampRuntimeTestHarness.WoundedSurvivorPackageId);
+            Assert.IsNotNull(survivor);
+            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+                harness.Context.Client,
+                survivor.EntityId,
+                1995,
+                10,
+                1));
+            Assert.AreEqual(
+                MissionObjectiveState.Completed,
+                harness.Context.Client.Player.Missions[1995].Objectives[10].State);
+            Assert.AreEqual(
+                MissionObjectiveState.Incomplete,
+                harness.Context.Client.Player.Missions[1995].Objectives[3].State);
+            Assert.IsNull(FindNpcByPackage(harness.BootcampMap, 2584));
             Assert.IsNotNull(FindScenarioObject(harness.BootcampMap, "bootcamp-conrad-corpse"));
             Assert.IsNotNull(FindScenarioObject(harness.BootcampMap, "bootcamp-dropship-debris"));
 
@@ -155,6 +178,7 @@ namespace Rasa.Test.Missions
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Context.Client,
                 MissionProgressEvent.Area(1995, MissingScoutAreaId)));
+            CompleteSurvivorConversation(harness);
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Context.Client,
                 MissionProgressEvent.Interaction(24990)));
@@ -183,6 +207,7 @@ namespace Rasa.Test.Missions
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Context.Client,
                 MissionProgressEvent.Area(1995, MissingScoutAreaId)));
+            CompleteSurvivorConversation(harness);
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Context.Client,
                 MissionProgressEvent.Interaction(24990)));
@@ -278,6 +303,20 @@ namespace Rasa.Test.Missions
                 return;
 
             CollectionAssert.DoesNotContain(missionIds, missionId);
+        }
+
+        private static void CompleteSurvivorConversation(BootcampRuntimeHarness harness)
+        {
+            var survivor = FindNpcByPackage(
+                harness.BootcampMap,
+                BootcampRuntimeTestHarness.WoundedSurvivorPackageId)
+                ?? throw new AssertFailedException("Missing wounded survivor.");
+            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+                harness.Context.Client,
+                survivor.EntityId,
+                1995,
+                10,
+                1));
         }
 
         private static Creature FindNpcByPackage(MapChannel map, uint npcPackageId, uint? missionId = null) =>

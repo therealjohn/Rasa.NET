@@ -24,7 +24,7 @@ namespace Rasa.Test.Missions
         public void ConradInteractionStartsTheDeadlineAndDropshipUsesConfiguredWindup()
         {
             using var harness = BootcampRuntimeTestHarness.Create();
-            StartTimedFinale(harness);
+            StartCrashSiteScene(harness);
 
             using (var unit = harness.Context.CreateChar())
                 Assert.IsNull(unit.CharacterMissionDeadlines.Get(harness.Client.Player.Id, 1995));
@@ -46,7 +46,7 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
-        public void MissingScoutAreaStartsTheCrashSiteSceneOnlyInTheOwnedInstanceAndRebuildsItAfterReconnect()
+        public void MissingScoutAreaStartsOnlyTheSurvivorSceneAndReconnectRebuildsTheCorrectActorsAcrossTheConversation()
         {
             using var harness = BootcampRuntimeTestHarness.Create();
             var youngblood = harness.AddNpc(
@@ -68,13 +68,16 @@ namespace Rasa.Test.Missions
                 MissionProgressEvent.Area(1995, MissingScoutAreaId)));
 
             Assert.IsNotNull(BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, 2584));
-            Assert.IsNotNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-conrad-corpse"));
-            Assert.IsNotNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-dropship-debris"));
+            Assert.IsNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-conrad-corpse"));
+            Assert.IsNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-dropship-debris"));
             Assert.AreEqual(
                 MissionObjectiveState.Completed,
                 harness.Client.Player.Missions[1995].Objectives[2].State);
             Assert.AreEqual(
                 MissionObjectiveState.Incomplete,
+                harness.Client.Player.Missions[1995].Objectives[10].State);
+            Assert.AreEqual(
+                MissionObjectiveState.Inactive,
                 harness.Client.Player.Missions[1995].Objectives[3].State);
 
             var foreignMap = harness.Maps.GetOrCreatePrivateInstance(
@@ -87,6 +90,35 @@ namespace Rasa.Test.Missions
             harness.ReconnectFresh();
 
             Assert.IsNotNull(BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, 2584));
+            Assert.IsNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-conrad-corpse"));
+            Assert.IsNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-dropship-debris"));
+
+            var survivor = BootcampRuntimeTestHarness.FindNpcByPackage(
+                harness.BootcampMap,
+                BootcampRuntimeTestHarness.WoundedSurvivorPackageId);
+            Assert.IsNotNull(survivor);
+            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+                harness.Client,
+                survivor.EntityId,
+                1995,
+                10,
+                1));
+
+            Assert.IsNull(BootcampRuntimeTestHarness.FindNpcByPackage(
+                harness.BootcampMap,
+                BootcampRuntimeTestHarness.WoundedSurvivorPackageId));
+            Assert.IsNotNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-conrad-corpse"));
+            Assert.IsNotNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-dropship-debris"));
+            Assert.AreEqual(
+                MissionObjectiveState.Completed,
+                harness.Client.Player.Missions[1995].Objectives[10].State);
+            Assert.AreEqual(
+                MissionObjectiveState.Incomplete,
+                harness.Client.Player.Missions[1995].Objectives[3].State);
+
+            harness.ReconnectFresh();
+
+            Assert.IsNull(BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, 2584));
             Assert.IsNotNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-conrad-corpse"));
             Assert.IsNotNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-dropship-debris"));
         }
@@ -95,7 +127,7 @@ namespace Rasa.Test.Missions
         public void DisconnectDuringIncompletePlantCancelsTheUseButPreservesTheExistingDeadline()
         {
             using var harness = BootcampRuntimeTestHarness.Create();
-            StartTimedFinale(harness);
+            StartCrashSiteScene(harness);
             harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
 
             var dropship = FindScenarioObject(harness, "bootcamp-dropship-debris");
@@ -132,7 +164,7 @@ namespace Rasa.Test.Missions
         public void PlantCompletionWithFiveSecondsRemainingAllowsTheFuseToFinishAfterExpiry()
         {
             using var harness = BootcampRuntimeTestHarness.Create();
-            StartTimedFinale(harness);
+            StartCrashSiteScene(harness);
             harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
 
             var dropship = FindScenarioObject(harness, "bootcamp-dropship-debris");
@@ -172,7 +204,7 @@ namespace Rasa.Test.Missions
         public void AbandoningDuringTheFuseFailsTheMissionAndMakesRetryAvailable()
         {
             using var harness = BootcampRuntimeTestHarness.Create();
-            var youngblood = StartTimedFinale(harness);
+            var youngblood = StartCrashSiteScene(harness);
             harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
             harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-dropship-debris"));
 
@@ -192,7 +224,7 @@ namespace Rasa.Test.Missions
             CollectionAssert.Contains(missionIds, 2005U);
         }
 
-        private static Creature StartTimedFinale(BootcampRuntimeTestHarness.Harness harness)
+        private static Creature StartCrashSiteScene(BootcampRuntimeTestHarness.Harness harness)
         {
             var youngblood = harness.AddNpc(
                 BootcampRuntimeTestHarness.CaptainYoungbloodCreatureId,
@@ -207,6 +239,16 @@ namespace Rasa.Test.Missions
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Client,
                 MissionProgressEvent.Area(1995, MissingScoutAreaId)));
+            var survivor = BootcampRuntimeTestHarness.FindNpcByPackage(
+                harness.BootcampMap,
+                BootcampRuntimeTestHarness.WoundedSurvivorPackageId)
+                ?? throw new AssertFailedException("Missing wounded survivor.");
+            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+                harness.Client,
+                survivor.EntityId,
+                1995,
+                10,
+                1));
 
             return youngblood;
         }
