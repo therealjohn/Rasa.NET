@@ -72,19 +72,38 @@ namespace Rasa.Test.Missions
                 startPackets,
                 typeof(ObjectiveCompletedPacket),
                 typeof(ObjectiveRevealedPacket),
-                typeof(ObjectiveActivatedPacket));
-            AssertTimeRemainingNear(
-                FindMissionInfo(startPackets, MissionCallingForReinforcements),
+                typeof(ObjectiveActivatedPacket),
+                typeof(MissionStatusInfoPacket));
+            var startStatus = startPackets
+                .Single(packet => packet.GetType() == typeof(MissionStatusInfoPacket)) as MissionStatusInfoPacket;
+            Assert.IsNotNull(startStatus);
+            Assert.AreEqual(1, startStatus.MissionStatusDict.Count);
+            CollectionAssert.AreEqual(
+                new[] { MissionCallingForReinforcements },
+                startStatus.MissionStatusDict.Keys.ToArray());
+            var dueAt = ReadDeadline(harness, MissionCallingForReinforcements).DueAtUtc;
+            AssertObjectiveTimer(
+                startStatus.MissionStatusDict[MissionCallingForReinforcements],
                 objectiveId: 1,
-                expectedSeconds: 600);
+                expectedState: MissionObjectiveState.Incomplete,
+                expectedSeconds: checked((uint)Math.Ceiling((dueAt - harness.UtcNow).TotalSeconds)));
 
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Client,
                 MissionProgressEvent.Interaction(24911)));
             var satisfactionPackets = harness.Drain();
-            AssertPacketTypes(satisfactionPackets, typeof(MissionStatusInfoPacket));
+            AssertRelativeOrder(
+                satisfactionPackets,
+                typeof(MissionStatusInfoPacket));
+            Assert.AreEqual(
+                CharacterMissionDeadlineState.Satisfied,
+                ReadDeadline(harness, MissionCallingForReinforcements).State);
+            var satisfactionStatus = satisfactionPackets
+                .Single(packet => packet.GetType() == typeof(MissionStatusInfoPacket)) as MissionStatusInfoPacket;
+            Assert.IsNotNull(satisfactionStatus);
+            Assert.AreEqual(1, satisfactionStatus.MissionStatusDict.Count);
             AssertObjectiveTimerCleared(
-                satisfactionPackets.OfType<MissionStatusInfoPacket>().Single().MissionStatusDict[MissionCallingForReinforcements],
+                satisfactionStatus.MissionStatusDict[MissionCallingForReinforcements],
                 objectiveId: 1,
                 expectedState: MissionObjectiveState.Incomplete);
         }
@@ -107,8 +126,15 @@ namespace Rasa.Test.Missions
                 typeof(ObjectiveFailedPacket),
                 typeof(MissionFailedPacket),
                 typeof(MissionStatusInfoPacket));
+            Assert.AreEqual(
+                CharacterMissionDeadlineState.Expired,
+                ReadDeadline(harness, MissionCallingForReinforcements).State);
+            var failureStatus = failurePackets
+                .Single(packet => packet.GetType() == typeof(MissionStatusInfoPacket)) as MissionStatusInfoPacket;
+            Assert.IsNotNull(failureStatus);
+            Assert.AreEqual(1, failureStatus.MissionStatusDict.Count);
             AssertObjectiveTimerCleared(
-                failurePackets.OfType<MissionStatusInfoPacket>().Single().MissionStatusDict[MissionCallingForReinforcements],
+                failureStatus.MissionStatusDict[MissionCallingForReinforcements],
                 objectiveId: 1,
                 expectedState: MissionObjectiveState.Failed);
         }
@@ -495,39 +521,25 @@ namespace Rasa.Test.Missions
             harness.Drain();
         }
 
-        private static MissionInfo FindMissionInfo(
-            IReadOnlyList<PythonPacket> packets,
+        private static CharacterMissionDeadlineEntry ReadDeadline(
+            BootcampRuntimeTestHarness.Harness harness,
             uint missionId)
         {
-            foreach (var packet in packets)
-            {
-                if (packet is ObjectiveRevealedPacket revealed &&
-                    revealed.MissionId == missionId)
-                    return revealed.MissionInfo;
-                if (packet is MissionGainedPacket gained &&
-                    gained.MissionId == missionId)
-                    return gained.MissionInfo;
-                if (packet is MissionStatusInfoPacket status &&
-                    status.MissionStatusDict.TryGetValue(missionId, out var info))
-                    return info;
-            }
-
-            throw new AssertFailedException(
-                $"Missing mission info payload for mission {missionId} in {DescribePackets(packets)}.");
+            using var unit = harness.Context.CreateChar();
+            return unit.CharacterMissionDeadlines.Get(harness.Client.Player.Id, missionId)
+                   ?? throw new AssertFailedException($"Missing deadline row for mission {missionId}.");
         }
 
-        private static void AssertTimeRemainingNear(
+        private static void AssertObjectiveTimer(
             MissionInfo info,
             uint objectiveId,
-            uint expectedSeconds,
-            uint toleranceSeconds = 1)
+            MissionObjectiveState expectedState,
+            uint expectedSeconds)
         {
             var objective = info.ObjectivesList.Single(entry => entry.ObjectiveId == objectiveId);
+            Assert.AreEqual(expectedState, objective.State);
             Assert.IsTrue(objective.TimeRemaining.HasValue);
-            Assert.IsTrue(
-                objective.TimeRemaining.Value >= expectedSeconds - toleranceSeconds &&
-                objective.TimeRemaining.Value <= expectedSeconds,
-                $"Expected time remaining near {expectedSeconds}s but found {objective.TimeRemaining.Value}s.");
+            Assert.AreEqual(expectedSeconds, objective.TimeRemaining.Value);
         }
 
         private static void AssertObjectiveTimerCleared(

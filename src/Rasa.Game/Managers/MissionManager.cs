@@ -1754,12 +1754,22 @@ namespace Rasa.Managers
                             required.ObjectiveState == (byte)MissionObjectiveState.Completed);
                     var completeableChanged = durableMission.Completeable != completeable;
                     durableMission.Completeable = completeable;
+                    var priorDeadline = unitOfWork.CharacterMissionDeadlines.Get(
+                        client.Player.Id,
+                        missionId);
+                    var priorDeadlineState = priorDeadline?.State;
                     _deadlineService.SynchronizeMission(
                         unitOfWork,
                         client.Player.Id,
                         definition,
                         durableMission,
                         durableObjectives);
+                    var currentDeadline = unitOfWork.CharacterMissionDeadlines.Get(
+                        client.Player.Id,
+                        missionId);
+                    var deadlineBecameActive =
+                        priorDeadlineState != CharacterMissionDeadlineState.Active &&
+                        currentDeadline?.State == CharacterMissionDeadlineState.Active;
 
                     scenarioPlan.AddRuntimeConvergence(() =>
                     {
@@ -1806,6 +1816,11 @@ namespace Rasa.Managers
                                 client,
                                 new MissionCompleteablePacket(missionId, true),
                                 $"mission {missionId} completable");
+                        if (deadlineBecameActive)
+                            PublishMissionStatus(
+                                client,
+                                missionId,
+                                $"mission {missionId} status after deadline start");
                     });
                     return true;
 
@@ -2228,6 +2243,7 @@ namespace Rasa.Managers
             var publications = new List<ProgressPublication>();
             var failurePlans = new List<MissionFailurePublicationPlan>();
             var completableMissions = new SortedSet<uint>();
+            var missionStatusMissionIds = new SortedSet<uint>();
             var waypointIds = new HashSet<uint>(
                 client.Player.GainedWaypoints.Select(entry => entry.WaypointId));
             var logosIds = new HashSet<uint>(client.Player.Logos);
@@ -2242,6 +2258,10 @@ namespace Rasa.Managers
                     client.Player.Id, first.Definition.MissionId);
                 var durableObjectives = unitOfWork.CharacterMissionProgress.GetTracked(
                     client.Player.Id, first.Definition.MissionId);
+                var priorDeadline = unitOfWork.CharacterMissionDeadlines.Get(
+                    client.Player.Id,
+                    first.Definition.MissionId);
+                var priorDeadlineState = priorDeadline?.State;
                 if (durableMission?.MissionState != (uint)MissionState.Active ||
                     durableMission.Completeable != first.RuntimeMission.Completeable)
                     throw new GameplayRejectionException(
@@ -2470,12 +2490,19 @@ namespace Rasa.Managers
                     first.Definition,
                     durableMission,
                     durableObjectives);
+                var currentDeadline = unitOfWork.CharacterMissionDeadlines.Get(
+                    client.Player.Id,
+                    first.Definition.MissionId);
+                if (priorDeadlineState != CharacterMissionDeadlineState.Active &&
+                    currentDeadline?.State == CharacterMissionDeadlineState.Active)
+                    missionStatusMissionIds.Add(first.Definition.MissionId);
             }
 
             return new MissionProgressPublicationPlan(
                 publications,
                 failurePlans,
                 completableMissions,
+                missionStatusMissionIds,
                 (progressClient, progressedMissionId, scenarioId) =>
                     _scenarioService.TryExecute(progressClient, progressedMissionId, scenarioId),
                 (progressClient, progressedMissionId, scenarioId) =>
@@ -3096,11 +3123,19 @@ namespace Rasa.Managers
         internal sealed class MissionProgressPublicationPlan
         {
             internal static readonly MissionProgressPublicationPlan Empty =
-                new(Array.Empty<ProgressPublication>(), Array.Empty<MissionFailurePublicationPlan>(), Array.Empty<uint>(), null, null, null);
+                new(
+                    Array.Empty<ProgressPublication>(),
+                    Array.Empty<MissionFailurePublicationPlan>(),
+                    Array.Empty<uint>(),
+                    Array.Empty<uint>(),
+                    null,
+                    null,
+                    null);
 
             private readonly ProgressPublication[] _publications;
             private readonly MissionFailurePublicationPlan[] _failurePlans;
             private readonly uint[] _completableMissions;
+            private readonly uint[] _missionStatusMissionIds;
             private readonly Func<Client, uint, uint, bool> _startScenario;
             private readonly Func<Client, uint, uint, bool> _startFailureScenario;
             private readonly MissionManager _manager;
@@ -3111,6 +3146,7 @@ namespace Rasa.Managers
                 IEnumerable<ProgressPublication> publications,
                 IEnumerable<MissionFailurePublicationPlan> failurePlans,
                 IEnumerable<uint> completableMissions,
+                IEnumerable<uint> missionStatusMissionIds,
                 Func<Client, uint, uint, bool> startScenario,
                 Func<Client, uint, uint, bool> startFailureScenario,
                 MissionManager manager)
@@ -3118,6 +3154,7 @@ namespace Rasa.Managers
                 _publications = publications.ToArray();
                 _failurePlans = failurePlans.ToArray();
                 _completableMissions = completableMissions.ToArray();
+                _missionStatusMissionIds = missionStatusMissionIds.ToArray();
                 _startScenario = startScenario;
                 _startFailureScenario = startFailureScenario;
                 _manager = manager;
@@ -3234,6 +3271,12 @@ namespace Rasa.Managers
                                     objectiveId)),
                             $"mission {publication.MissionId} objective {objectiveId} activated");
                 }
+
+                foreach (var missionId in _missionStatusMissionIds)
+                    _manager.PublishMissionStatus(
+                        client,
+                        missionId,
+                        $"mission {missionId} status after deadline start");
 
                 foreach (var missionId in _completableMissions)
                     TryPublish(

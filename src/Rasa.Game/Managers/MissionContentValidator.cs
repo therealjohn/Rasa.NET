@@ -211,7 +211,9 @@ namespace Rasa.Managers
                     {
                         diagnostics.Add(new MissionValidationDiagnostic(
                             "missing-npc-package",
-                            $"conversation trigger references missing npc_package {trigger.NpcPackageId?.ToString() ?? "null"}.",
+                            $"conversation trigger references missing npc_package.package_id {trigger.NpcPackageId?.ToString() ?? "null"}; " +
+                            "restore npc_package.package_id " +
+                            $"{trigger.NpcPackageId?.ToString() ?? "null"} or update mission_trigger.npc_package_id to a valid package.",
                             definition.MissionId,
                             definition.ContentRevision,
                             transition.ObjectiveId,
