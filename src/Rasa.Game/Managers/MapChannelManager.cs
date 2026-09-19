@@ -883,6 +883,8 @@ namespace Rasa.Managers
                          .ToArray())
                 CellManager.Instance.RemoveCreatureFromWorld(map, creature);
 
+            DynamicObjectManager.Instance.CleanupMapDropships(map);
+
             var dynamicObjects = map.MapCellInfo.Cells.Values
                 .SelectMany(cell => cell.DynamicObjectList)
                 .Concat(map.DynamicObjects)

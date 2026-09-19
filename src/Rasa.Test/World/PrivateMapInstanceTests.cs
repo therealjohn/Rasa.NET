@@ -492,12 +492,106 @@ namespace Rasa.Test.World
             CleanupClient(loadingClient);
         }
 
+        [TestMethod]
+        public void SameContextDropshipsTickOnlyOnTheirExactRuntimeMapChannel()
+        {
+            var service = new PrivateMapInstanceService();
+            var maps = new MapChannelManager(null, privateInstances: service);
+            var publicMap = CreateMap(1985);
+            maps.MapChannelArray.Add(publicMap.MapInfo.MapContextId, publicMap);
+            var first = maps.GetOrCreatePrivateInstance(publicMap.MapInfo.MapContextId, 7);
+            var second = maps.GetOrCreatePrivateInstance(publicMap.MapInfo.MapContextId, 8);
+            var objects = new DynamicObjectManager(null, maps);
+            using var singletons = new ManagerInstances(objects);
+            var publicDropship = AddDropship(objects, publicMap, 5001);
+            var firstDropship = AddDropship(objects, first, 5002);
+            var secondDropship = AddDropship(objects, second, 5003);
+            try
+            {
+                maps.MapChannelWorker(1000);
+
+                Assert.AreEqual(4000L, publicDropship.PhaseTimeleft);
+                Assert.AreEqual(4000L, firstDropship.PhaseTimeleft);
+                Assert.AreEqual(4000L, secondDropship.PhaseTimeleft);
+                Assert.AreEqual((byte)0, publicDropship.Phase);
+                Assert.AreEqual((byte)0, firstDropship.Phase);
+                Assert.AreEqual((byte)0, secondDropship.Phase);
+            }
+            finally
+            {
+                CleanupDropships(objects);
+                maps.ReleaseOwnedPrivateInstances(7);
+                maps.ReleaseOwnedPrivateInstances(8);
+            }
+        }
+
+        [TestMethod]
+        public void ReleasingOwnedPrivateInstanceRemovesOnlyThatInstancesDropshipsFromEntitiesAndWorkers()
+        {
+            var service = new PrivateMapInstanceService();
+            var maps = new MapChannelManager(null, privateInstances: service);
+            var publicMap = CreateMap(1985);
+            maps.MapChannelArray.Add(publicMap.MapInfo.MapContextId, publicMap);
+            var first = maps.GetOrCreatePrivateInstance(publicMap.MapInfo.MapContextId, 7);
+            var second = maps.GetOrCreatePrivateInstance(publicMap.MapInfo.MapContextId, 8);
+            var objects = new DynamicObjectManager(null, maps);
+            using var singletons = new ManagerInstances(objects);
+            var publicDropship = AddDropship(objects, publicMap, 6001);
+            var firstDropship = AddDropship(objects, first, 6002);
+            var secondDropship = AddDropship(objects, second, 6003);
+            try
+            {
+                maps.ReleaseOwnedPrivateInstances(7);
+
+                Assert.IsFalse(objects.Dropships.ContainsKey(firstDropship.EntityId));
+                Assert.IsFalse(EntityManager.Instance.RegisteredEntities.ContainsKey(firstDropship.EntityId));
+                Assert.IsFalse(EntityManager.Instance.DynamicObjects.ContainsKey(firstDropship.EntityId));
+                Assert.IsTrue(objects.Dropships.ContainsKey(publicDropship.EntityId));
+                Assert.IsTrue(objects.Dropships.ContainsKey(secondDropship.EntityId));
+                Assert.IsTrue(EntityManager.Instance.RegisteredEntities.ContainsKey(publicDropship.EntityId));
+                Assert.IsTrue(EntityManager.Instance.RegisteredEntities.ContainsKey(secondDropship.EntityId));
+
+                maps.MapChannelWorker(1000);
+
+                Assert.AreEqual(4000L, publicDropship.PhaseTimeleft);
+                Assert.AreEqual(5000L, firstDropship.PhaseTimeleft);
+                Assert.AreEqual(4000L, secondDropship.PhaseTimeleft);
+
+                maps.ReleaseOwnedPrivateInstances(8);
+
+                Assert.IsFalse(objects.Dropships.ContainsKey(secondDropship.EntityId));
+                Assert.IsFalse(EntityManager.Instance.RegisteredEntities.ContainsKey(secondDropship.EntityId));
+                Assert.IsFalse(EntityManager.Instance.DynamicObjects.ContainsKey(secondDropship.EntityId));
+                Assert.IsTrue(objects.Dropships.ContainsKey(publicDropship.EntityId));
+                Assert.IsTrue(EntityManager.Instance.RegisteredEntities.ContainsKey(publicDropship.EntityId));
+            }
+            finally
+            {
+                CleanupDropships(objects);
+            }
+        }
+
         private static MapChannel CreateMap(uint contextId = 1985) => new()
         {
             MapInfo = new MapInfo(contextId, "fixture", 1556, 0),
             ClientList = new List<Client>(),
             PlayerLimit = 128
         };
+
+        private static Dropship AddDropship(DynamicObjectManager objects, MapChannel map, uint spawnPoolId)
+        {
+            var dropship = new Dropship(Factions.AFS, DropshipType.Spawner, new SpawnPool
+            {
+                DbId = spawnPoolId,
+                MapContextId = map.MapInfo.MapContextId,
+                RuntimeMapChannel = map,
+                Position = Vector3.Zero,
+                SpawnSlot = new List<SpawnPoolSlot>()
+            });
+            CellManager.Instance.AddToWorld(map, dropship);
+            objects.Dropships.Add(dropship.EntityId, dropship);
+            return dropship;
+        }
 
         private static Client CreateClient(MapChannel map, uint characterId)
         {
@@ -531,6 +625,20 @@ namespace Rasa.Test.World
             if (EntityManager.Instance.Actors.ContainsKey(client.Player.EntityId))
                 EntityManager.Instance.UnregisterActor(client.Player.EntityId);
             EntityManager.Instance.FreeEntity(client.Player.EntityId);
+        }
+
+        private static void CleanupDropships(DynamicObjectManager objects)
+        {
+            foreach (var dropship in objects.Dropships.Values.ToArray())
+            {
+                if (dropship.RuntimeMapChannel != null &&
+                    EntityManager.Instance.RegisteredEntities.ContainsKey(dropship.EntityId))
+                {
+                    CellManager.Instance.RemoveFromWorld(dropship.RuntimeMapChannel, dropship);
+                }
+
+                objects.Dropships.Remove(dropship.EntityId);
+            }
         }
 
         private sealed class ManagerInstances : System.IDisposable

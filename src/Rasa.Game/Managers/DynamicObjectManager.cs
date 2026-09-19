@@ -538,7 +538,7 @@ namespace Rasa.Managers
             foreach (var entry in Dropships.ToArray())
             {
                 var dropship = entry.Value;
-                if (dropship.MapContextId != mapChannel.MapInfo.MapContextId)
+                if (!ReferenceEquals(dropship.RuntimeMapChannel, mapChannel))
                     continue;
 
                 if (dropship.DropshipType != DropshipType.Spawner && dropship.DropshipType != DropshipType.Teleporter)
@@ -1111,6 +1111,20 @@ namespace Rasa.Managers
                 var map = dropship.RuntimeMapChannel ?? Maps.FindByContextId(dropship.MapContextId);
                 if (map != null)
                     CellManager.Instance.RemoveFromWorld(map, dropship);
+                Dropships.Remove(dropship.EntityId);
+            }
+        }
+
+        internal void CleanupMapDropships(MapChannel mapChannel)
+        {
+            if (mapChannel == null)
+                return;
+
+            foreach (var dropship in Dropships.Values
+                         .Where(ship => ReferenceEquals(ship.RuntimeMapChannel, mapChannel))
+                         .ToArray())
+            {
+                CellManager.Instance.RemoveFromWorld(mapChannel, dropship);
                 Dropships.Remove(dropship.EntityId);
             }
         }
