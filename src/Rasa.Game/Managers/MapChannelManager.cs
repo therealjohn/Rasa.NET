@@ -34,6 +34,7 @@ namespace Rasa.Managers
         private readonly Action<Client> _enterMapChannels;
         private readonly PrivateMapInstanceService _privateInstances;
         private readonly MissionDeadlineService _missionDeadlineService;
+        private readonly IMissionScenarioService _missionScenarioService;
         public static MapChannelManager Instance
         {
             get
@@ -56,7 +57,8 @@ namespace Rasa.Managers
             Action<Client> disconnect = null, Action<Client, bool> refreshStats = null,
             Action<Client> assignPlayer = null, Action<Client> enterMapChannels = null,
             PrivateMapInstanceService privateInstances = null,
-            MissionDeadlineService missionDeadlineService = null)
+            MissionDeadlineService missionDeadlineService = null,
+            IMissionScenarioService scenarioService = null)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
             _clock = clock ?? (() => Environment.TickCount64);
@@ -69,6 +71,7 @@ namespace Rasa.Managers
             _enterMapChannels = enterMapChannels ?? CommunicatorManager.Instance.PlayerEnterMap;
             _privateInstances = privateInstances ?? PrivateMapInstanceService.Instance;
             _missionDeadlineService = missionDeadlineService ?? MissionDeadlineService.Instance;
+            _missionScenarioService = scenarioService;
         }
 
         /// <summary>
@@ -148,16 +151,22 @@ namespace Rasa.Managers
 
         public MapChannel GetOrCreatePrivateInstance(uint contextId, uint ownerCharacterId)
         {
-            return !MapChannelArray.TryGetValue(contextId, out var template)
+            var map = !MapChannelArray.TryGetValue(contextId, out var template)
                 ? null
                 : _privateInstances.GetOrCreate(template, ownerCharacterId,
                     map => InitializePrivateMapChannel(template, map));
+            if (map != null)
+                _missionScenarioService?.Rebuild(ownerCharacterId, map);
+            return map;
         }
 
         public void ReleaseOwnedPrivateInstances(uint ownerCharacterId)
         {
             foreach (var map in _privateInstances.ReleaseOwned(ownerCharacterId))
+            {
                 CleanupPrivateMapChannel(map);
+                _missionScenarioService?.Release(ownerCharacterId, map);
+            }
         }
 
         public Dictionary<int, AbilityDrawerData> GetPlayerAbilities(uint characterId)
@@ -301,7 +310,10 @@ namespace Rasa.Managers
 
                     if (Timer.IsTriggered("MissionDeadlineUpdate"))
                         foreach (var client in mapChannel.ClientList.ToArray())
+                        {
                             _missionDeadlineService.Evaluate(client);
+                            _missionScenarioService?.Tick(client);
+                        }
 
                     // warn idle players and flag long-idle ones for removal below
                     ManifestationManager.Instance.CheckInactivity(mapChannel);
@@ -633,11 +645,22 @@ namespace Rasa.Managers
         /// <returns>false when the map is not loaded or the player is not in a state to move.</returns>
         public bool ChangeMap(Client client, uint mapContextId, Vector3 position, float orientation)
         {
+            if (!MapChannelArray.TryGetValue(mapContextId, out var mapChannel))
+                return false;
+            return ChangeMap(client, mapChannel, position, orientation);
+        }
+
+        internal bool ChangeMap(
+            Client client,
+            MapChannel destinationMap,
+            Vector3 position,
+            float orientation)
+        {
             lock (client.SyncRoot)
             {
                 if (client.Player == null || client.State != ClientState.Ingame ||
                     client.PendingTransfer != null || !CellManager.Instance.IsInWorld(client) ||
-                    !MapChannelArray.TryGetValue(mapContextId, out var mapChannel) ||
+                    destinationMap == null ||
                     !CellManager.TryGetCellCoordinates(position, out _, out _))
                     return false;
 
@@ -652,7 +675,7 @@ namespace Rasa.Managers
                     OriginMap = origin,
                     OriginPosition = client.Player.Position,
                     OriginRotation = client.Player.Rotation,
-                    DestinationMap = mapChannel,
+                    DestinationMap = destinationMap,
                     DestinationPosition = position,
                     DestinationRotation = orientation,
                     Deadline = checked(_clock() + timeout * 1000L),
@@ -673,16 +696,16 @@ namespace Rasa.Managers
                 CellManager.Instance.RemoveFromWorld(client);
                 origin.ClientList.RemoveAll(member => member == client);
 
-                client.Player.MapChannel = mapChannel;
-                client.Player.MapContextId = mapContextId;
+                client.Player.MapChannel = destinationMap;
+                client.Player.MapContextId = destinationMap.MapInfo.MapContextId;
                 client.SetWorldPosition(position, orientation);
-                client.LoadingMap = mapContextId;
+                client.LoadingMap = destinationMap.MapInfo.MapContextId;
                 client.CallMethod(SysEntity.ClientMethodId, new RequestMovementBlockPacket());
                 client.CallMethod(SysEntity.ClientMethodId, new PreWonkavatePacket());
                 client.CallMethod(SysEntity.CurrentInputStateId, new WonkavatePacket(
-                    mapChannel.MapInfo.MapContextId,
-                    mapChannel.InstanceId,
-                    mapChannel.MapInfo.MapVersion,
+                    destinationMap.MapInfo.MapContextId,
+                    destinationMap.InstanceId,
+                    destinationMap.MapInfo.MapVersion,
                     position,
                     orientation));
                 client.AwaitingMapLoaded = true;

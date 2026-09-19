@@ -27,6 +27,7 @@ namespace Rasa.Structures
         public DynamicObjectType DynamicObjectType { get; set; }
         public List<Client> TriggeredByPlayers = new List<Client>();
         public string Comment { get; set; }
+        public string ScenarioKey { get; set; }
 
         /// <summary>
         /// What keeps this shut, or null if nothing does. Only a locked object can be ciphered,

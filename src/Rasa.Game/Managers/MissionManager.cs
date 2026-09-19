@@ -82,6 +82,24 @@ namespace Rasa.Managers
                 beforeItemPublication);
         }
 
+        internal MissionRewardGrant CreateScenarioGrant(
+            Action<Item> beforeItemPublication = null)
+        {
+            if (Currencies.Any(entry =>
+                    entry.Value < 0 ||
+                    entry.Key is not CurencyType.Credits and not CurencyType.Prestige))
+                throw new GameplayRejectionException("Mission reward contains an unsupported currency.");
+            if (FixedItems.Any(item => item.ItemTemplateId == 0 || item.Quantity == 0) ||
+                SelectableItems.Any(item => item.ItemTemplateId == 0 || item.Quantity == 0))
+                throw new GameplayRejectionException("Mission reward contains an invalid item.");
+
+            return new MissionRewardGrant(
+                Experience,
+                Currencies,
+                FixedItems.Concat(SelectableItems).ToArray(),
+                beforeItemPublication);
+        }
+
         internal RewardInfo CreateInfo()
         {
             var info = new RewardInfo();
@@ -273,15 +291,20 @@ namespace Rasa.Managers
         private readonly Dictionary<uint, Mission> _loadedMissions;
         private readonly IReadOnlyDictionary<uint, Mission> _loadedMissionsView;
         private readonly Dictionary<uint, MissionRewardDefinition> _rewardDefinitions;
+        private readonly Dictionary<uint, IReadOnlyDictionary<uint, MissionRewardDefinition>> _rewardPackagesByMission;
         private readonly Dictionary<uint, IReadOnlyList<MissionPrerequisiteDefinition>> _prerequisitesByMission;
         private readonly Dictionary<uint, IReadOnlyDictionary<uint, MissionAreaDefinition>> _areasByMission;
+        private readonly Dictionary<uint, IReadOnlyDictionary<uint, MissionSpawnGroupDefinition>> _spawnGroupsByMission;
         private readonly Dictionary<uint, IReadOnlyDictionary<uint, MissionScenarioDefinition>> _scenariosByMission;
         private readonly ManifestationManager _manifestationManager;
         private readonly Action<Item> _beforeRewardItemPublication;
         private readonly Action<PythonPacket> _beforeMissionPacketPublication;
         private readonly MissionDeadlineService _deadlineService;
+        private readonly IMissionScenarioService _scenarioService;
 
         public IReadOnlyDictionary<uint, Mission> LoadedMissions => _loadedMissionsView;
+        internal IMissionScenarioService ScenarioService => _scenarioService;
+        internal Action<Item> BeforeRewardItemPublication => _beforeRewardItemPublication;
         internal MissionValidationReport LatestValidationReport { get; private set; } =
             new MissionValidationReport(
                 Array.Empty<MissionValidationDiagnostic>(),
@@ -329,15 +352,18 @@ namespace Rasa.Managers
             ManifestationManager manifestationManager,
             Action<Item> beforeRewardItemPublication = null,
             Action<PythonPacket> beforeMissionPacketPublication = null,
-            MissionDeadlineService deadlineService = null)
+            MissionDeadlineService deadlineService = null,
+            IMissionScenarioService scenarioService = null)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
             _loadedMissions = definitions.ToDictionary(entry => entry.Key, entry => entry.Value);
             _loadedMissionsView = new ReadOnlyDictionary<uint, Mission>(_loadedMissions);
             _rewardDefinitions = new Dictionary<uint, MissionRewardDefinition>(
                 rewardDefinitions ?? new Dictionary<uint, MissionRewardDefinition>());
+            _rewardPackagesByMission = new Dictionary<uint, IReadOnlyDictionary<uint, MissionRewardDefinition>>();
             _prerequisitesByMission = new Dictionary<uint, IReadOnlyList<MissionPrerequisiteDefinition>>();
             _areasByMission = new Dictionary<uint, IReadOnlyDictionary<uint, MissionAreaDefinition>>();
+            _spawnGroupsByMission = new Dictionary<uint, IReadOnlyDictionary<uint, MissionSpawnGroupDefinition>>();
             _scenariosByMission = new Dictionary<uint, IReadOnlyDictionary<uint, MissionScenarioDefinition>>();
             _manifestationManager = manifestationManager;
             _beforeRewardItemPublication = beforeRewardItemPublication;
@@ -345,6 +371,10 @@ namespace Rasa.Managers
             _deadlineService = deadlineService ?? new MissionDeadlineService(
                 () => _gameUnitOfWorkFactory,
                 () => this);
+            _scenarioService = scenarioService ?? new MissionScenarioService(
+                () => _gameUnitOfWorkFactory,
+                () => this,
+                _manifestationManager);
         }
 
         internal MissionValidationReport LoadMissions()
@@ -352,8 +382,10 @@ namespace Rasa.Managers
             using var unitOfWork = _gameUnitOfWorkFactory.CreateWorld();
             _loadedMissions.Clear();
             _rewardDefinitions.Clear();
+            _rewardPackagesByMission.Clear();
             _prerequisitesByMission.Clear();
             _areasByMission.Clear();
+            _spawnGroupsByMission.Clear();
             _scenariosByMission.Clear();
 
             if (unitOfWork.MissionContent != null)
@@ -364,10 +396,13 @@ namespace Rasa.Managers
                     _loadedMissions[definition.Key] = definition.Value;
                 foreach (var reward in MissionDefinitionCatalog.CreateRewardDefinitions(snapshot, report))
                     _rewardDefinitions[reward.Key] = reward.Value;
+                foreach (var rewardPackages in MissionDefinitionCatalog.CreateRewardPackages(snapshot, report))
+                    _rewardPackagesByMission[rewardPackages.Key] = rewardPackages.Value;
                 foreach (var definition in snapshot.Definitions.Values)
                 {
                     _prerequisitesByMission[definition.MissionId] = definition.Prerequisites;
                     _areasByMission[definition.MissionId] = definition.Areas;
+                    _spawnGroupsByMission[definition.MissionId] = definition.SpawnGroups;
                     _scenariosByMission[definition.MissionId] = definition.Scenarios;
                 }
                 LatestValidationReport = report;
@@ -540,6 +575,42 @@ namespace Rasa.Managers
             return false;
         }
 
+        internal bool TryGetSpawnGroupDefinition(
+            uint missionId,
+            uint spawnGroupId,
+            out MissionSpawnGroupDefinition spawnGroup)
+        {
+            if (_spawnGroupsByMission.TryGetValue(missionId, out var spawnGroups) &&
+                spawnGroups.TryGetValue(spawnGroupId, out spawnGroup))
+                return true;
+
+            spawnGroup = null;
+            return false;
+        }
+
+        internal bool TryGetScenarioDefinitions(
+            uint missionId,
+            out IReadOnlyDictionary<uint, MissionScenarioDefinition> scenarios) =>
+            _scenariosByMission.TryGetValue(missionId, out scenarios);
+
+        internal bool TryGetScenarioDefinition(
+            uint missionId,
+            uint scenarioId,
+            out MissionScenarioDefinition scenario)
+        {
+            if (_scenariosByMission.TryGetValue(missionId, out var scenarios) &&
+                scenarios.TryGetValue(scenarioId, out scenario))
+                return true;
+
+            scenario = null;
+            return false;
+        }
+
+        internal IReadOnlyDictionary<uint, MissionRewardDefinition> GetRewardPackages(uint missionId) =>
+            _rewardPackagesByMission.TryGetValue(missionId, out var rewards)
+                ? rewards
+                : new Dictionary<uint, MissionRewardDefinition>();
+
         private bool TryGetScenarioStepDefinition(
             uint missionId,
             uint scenarioId,
@@ -632,6 +703,15 @@ namespace Rasa.Managers
 
         internal bool EvaluateDeadlines(Client client) =>
             _deadlineService.Evaluate(client);
+
+        internal bool TryExecuteScenario(Client client, uint missionId, uint scenarioId) =>
+            _scenarioService.TryExecute(client, missionId, scenarioId);
+
+        internal bool TickScenarios(Client client) =>
+            _scenarioService.Tick(client);
+
+        internal void RebuildScenarioRuntime(uint characterId, MapChannel mapChannel) =>
+            _scenarioService.Rebuild(characterId, mapChannel);
 
         private static string CreateScenarioStepKey(uint scenarioId, uint stepId) =>
             $"scenario:{scenarioId}:step:{stepId}";
@@ -1396,6 +1476,215 @@ namespace Rasa.Managers
                     new MissionFailedPacket(missionId));
                 return true;
             }
+        }
+
+        internal bool TryPlanScenarioObjectiveAction(
+            Client client,
+            uint missionId,
+            uint objectiveId,
+            MissionScenarioStepKind actionKind,
+            ICharUnitOfWork unitOfWork,
+            MissionScenarioPlan scenarioPlan)
+        {
+            if (client?.Player == null ||
+                unitOfWork == null ||
+                scenarioPlan == null ||
+                !TryGetOperationalMission(missionId, out var definition) ||
+                !client.Player.Missions.TryGetValue(missionId, out var runtimeMission) ||
+                runtimeMission.State != MissionState.Active ||
+                !definition.Objectives.TryGetValue(objectiveId, out var objectiveDefinition) ||
+                !runtimeMission.Objectives.TryGetValue(objectiveId, out var runtimeObjective))
+                return false;
+
+            var durableMission = unitOfWork.CharacterMissions.GetByCharacterAndMission(
+                client.Player.Id,
+                missionId);
+            var durableObjectives = unitOfWork.CharacterMissionProgress.GetTracked(
+                client.Player.Id,
+                missionId);
+            if (durableMission?.MissionState != (uint)MissionState.Active ||
+                !durableObjectives.TryGetValue(objectiveId, out var durableObjective))
+                return false;
+
+            switch (actionKind)
+            {
+                case MissionScenarioStepKind.RevealObjective:
+                    if (durableObjective.ObjectiveState != (byte)MissionObjectiveState.Inactive)
+                        return durableObjective.ObjectiveState ==
+                            (byte)MissionObjectiveState.NotAssigned;
+
+                    durableObjective.ObjectiveState = (byte)MissionObjectiveState.NotAssigned;
+                    scenarioPlan.AddRuntimeConvergence(() =>
+                        runtimeObjective.State = MissionObjectiveState.NotAssigned);
+                    scenarioPlan.AddPublication(() =>
+                        PublishMissionPacket(
+                            client,
+                            new ObjectiveRevealedPacket(
+                                missionId,
+                                objectiveId,
+                                definition.CreateInfo(
+                                    runtimeMission.State,
+                                    runtimeMission.Completeable,
+                                    runtimeMission.Objectives)),
+                            $"mission {missionId} objective {objectiveId} revealed"));
+                    return true;
+
+                case MissionScenarioStepKind.ActivateObjective:
+                    if (durableObjective.ObjectiveState is
+                        (byte)MissionObjectiveState.Incomplete or
+                        (byte)MissionObjectiveState.Completed or
+                        (byte)MissionObjectiveState.Failed)
+                        return true;
+                    if (durableObjective.ObjectiveState is not
+                        ((byte)MissionObjectiveState.Inactive) and not
+                        ((byte)MissionObjectiveState.NotAssigned))
+                        return false;
+
+                    durableObjective.ObjectiveState = (byte)MissionObjectiveState.Incomplete;
+                    scenarioPlan.AddRuntimeConvergence(() =>
+                        runtimeObjective.State = MissionObjectiveState.Incomplete);
+                    scenarioPlan.AddPublication(() =>
+                        PublishMissionPacket(
+                            client,
+                            new ObjectiveActivatedPacket(missionId, objectiveId),
+                            $"mission {missionId} objective {objectiveId} activated"));
+                    return true;
+
+                case MissionScenarioStepKind.CompleteObjective:
+                    if (durableObjective.ObjectiveState != (byte)MissionObjectiveState.Incomplete ||
+                        runtimeObjective.State != MissionObjectiveState.Incomplete)
+                        return false;
+
+                    var revealed = objectiveDefinition.RevealedObjectiveIds.ToArray();
+                    var activated = objectiveDefinition.ActivatedObjectiveIds.ToArray();
+                    var appliedRevealed = new List<uint>();
+                    var appliedActivated = new List<uint>();
+                    durableObjective.ObjectiveState = (byte)MissionObjectiveState.Completed;
+                    foreach (var successorId in revealed)
+                    {
+                        if (!durableObjectives.TryGetValue(successorId, out var successor))
+                            throw new GameplayRejectionException(
+                                "Configured revealed mission objective is missing.");
+                        if (successor.ObjectiveState == (byte)MissionObjectiveState.Inactive)
+                        {
+                            successor.ObjectiveState = (byte)MissionObjectiveState.NotAssigned;
+                            appliedRevealed.Add(successorId);
+                        }
+                    }
+
+                    foreach (var successorId in activated)
+                    {
+                        if (!durableObjectives.TryGetValue(successorId, out var successor))
+                            throw new GameplayRejectionException(
+                                "Configured activated mission objective is missing.");
+                        if (successor.ObjectiveState is
+                            ((byte)MissionObjectiveState.Inactive) or
+                            ((byte)MissionObjectiveState.NotAssigned))
+                        {
+                            successor.ObjectiveState = (byte)MissionObjectiveState.Incomplete;
+                            appliedActivated.Add(successorId);
+                        }
+                    }
+
+                    var completeable = definition.Objectives.Values
+                        .Where(candidate => candidate.IsRequired.Value)
+                        .All(candidate =>
+                            durableObjectives.TryGetValue(candidate.ObjectiveId, out var required) &&
+                            required.ObjectiveState == (byte)MissionObjectiveState.Completed);
+                    var completeableChanged = durableMission.Completeable != completeable;
+                    durableMission.Completeable = completeable;
+                    _deadlineService.SynchronizeMission(
+                        unitOfWork,
+                        client.Player.Id,
+                        definition,
+                        durableMission,
+                        durableObjectives);
+
+                    scenarioPlan.AddRuntimeConvergence(() =>
+                    {
+                        foreach (var touchedObjectiveId in revealed
+                                     .Concat(activated)
+                                     .Append(objectiveId)
+                                     .Distinct())
+                        {
+                            var durable = durableObjectives[touchedObjectiveId];
+                            var runtime = runtimeMission.Objectives[touchedObjectiveId];
+                            runtime.State = (MissionObjectiveState)durable.ObjectiveState;
+                            foreach (var counter in durable.Counters)
+                                runtime.SetCounter(counter.CounterId, counter.CounterValue);
+                            foreach (var counter in durable.ItemCounters)
+                                runtime.SetItemCounter(counter.ItemClassId, counter.CounterValue);
+                        }
+
+                        runtimeMission.Completeable = completeable;
+                    });
+                    scenarioPlan.AddPublication(() =>
+                    {
+                        PublishMissionPacket(
+                            client,
+                            new ObjectiveCompletedPacket(missionId, objectiveId),
+                            $"mission {missionId} objective {objectiveId} completed");
+                        foreach (var successorId in revealed.Where(appliedRevealed.Contains))
+                            PublishMissionPacket(
+                                client,
+                                new ObjectiveRevealedPacket(
+                                    missionId,
+                                    successorId,
+                                    definition.CreateInfo(
+                                        runtimeMission.State,
+                                        runtimeMission.Completeable,
+                                        runtimeMission.Objectives)),
+                                $"mission {missionId} objective {successorId} revealed");
+                        foreach (var successorId in appliedActivated)
+                            PublishMissionPacket(
+                                client,
+                                new ObjectiveActivatedPacket(missionId, successorId),
+                                $"mission {missionId} objective {successorId} activated");
+                        if (completeableChanged && completeable)
+                            PublishMissionPacket(
+                                client,
+                                new MissionCompleteablePacket(missionId, true),
+                                $"mission {missionId} completable");
+                    });
+                    return true;
+
+                case MissionScenarioStepKind.FailObjective:
+                    if (durableObjective.ObjectiveState != (byte)MissionObjectiveState.Incomplete)
+                        return false;
+
+                    durableObjective.ObjectiveState = (byte)MissionObjectiveState.Failed;
+                    var failMission = objectiveDefinition.IsRequired.Value;
+                    var nextCompleteable = !failMission &&
+                        definition.Objectives.Values
+                            .Where(candidate => candidate.IsRequired.Value)
+                            .All(candidate =>
+                                durableObjectives.TryGetValue(
+                                    candidate.ObjectiveId,
+                                    out var requiredObjective) &&
+                                requiredObjective.ObjectiveState ==
+                                    (byte)MissionObjectiveState.Completed);
+                    var nextCompleteableChanged =
+                        durableMission.Completeable != nextCompleteable;
+                    durableMission.Completeable = nextCompleteable;
+                    if (failMission)
+                        durableMission.MissionState = (uint)MissionState.Failed;
+                    _deadlineService.SynchronizeMission(
+                        unitOfWork,
+                        client.Player.Id,
+                        definition,
+                        durableMission,
+                        durableObjectives);
+                    scenarioPlan.AddFailurePlan(
+                        new MissionFailurePublicationPlan(
+                            missionId,
+                            objectiveId,
+                            failMission ? MissionState.Failed : MissionState.Active,
+                            nextCompleteable,
+                            nextCompleteableChanged));
+                    return true;
+            }
+
+            return false;
         }
 
         internal bool TryClear(Client client, uint missionId)

@@ -31,5 +31,17 @@ namespace Rasa.Repositories.Char.CharacterQualification
             _charContext.CharacterQualificationEntries.Add(entry);
             _charContext.SaveChanges();
         }
+
+        public void Remove(uint characterId, CharacterQualificationKey qualificationKey)
+        {
+            var entry = _charContext.CharacterQualificationEntries.SingleOrDefault(candidate =>
+                candidate.CharacterId == characterId &&
+                candidate.QualificationKey == qualificationKey);
+            if (entry == null)
+                return;
+
+            _charContext.CharacterQualificationEntries.Remove(entry);
+            _charContext.SaveChanges();
+        }
     }
 }

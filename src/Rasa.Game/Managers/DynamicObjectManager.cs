@@ -381,6 +381,50 @@ namespace Rasa.Managers
             }
         }
 
+        internal DynamicObject CreateScenarioDynamicObject(
+            MapChannel mapChannel,
+            EntityClasses entityClassId,
+            Vector3 position,
+            double rotation,
+            string scenarioKey,
+            bool enabled)
+        {
+            var dynamicObject = new DynamicObject
+            {
+                EntityClassId = entityClassId,
+                Position = position,
+                Rotation = rotation,
+                MapContextId = mapChannel?.MapInfo?.MapContextId ?? 0,
+                RuntimeMapChannel = mapChannel,
+                DynamicObjectType = DynamicObjectType.Logos,
+                StateId = UseObjectState.IdStateActive,
+                IsEnabled = enabled,
+                WindupTime = 10000,
+                ScenarioKey = scenarioKey
+            };
+            return dynamicObject;
+        }
+
+        internal void SetScenarioInteractionEnabled(
+            MapChannel mapChannel,
+            DynamicObject dynamicObject,
+            bool enabled)
+        {
+            if (mapChannel == null || dynamicObject == null)
+                return;
+
+            dynamicObject.IsEnabled = enabled;
+            CellManager.Instance.CellCallMethod(
+                mapChannel,
+                dynamicObject,
+                new UsableInfoPacket(
+                    dynamicObject.IsEnabled,
+                    dynamicObject.StateId,
+                    0,
+                    dynamicObject.WindupTime,
+                    dynamicObject.ActivateMission));
+        }
+
         // 1 object to n client's
         internal void CellIntroduceDynamicObjectToClients(DynamicObject dynamicObject, List<Client> listOfClients)
         {
@@ -1270,6 +1314,7 @@ namespace Rasa.Managers
             clone.RespawnTime = source.RespawnTime;
             clone.DynamicObjectType = source.DynamicObjectType;
             clone.Comment = source.Comment;
+            clone.ScenarioKey = source.ScenarioKey;
             clone.Lock = CloneLock(source.Lock);
             clone.IsEnabled = source.IsEnabled;
             clone.StateId = source.StateId;

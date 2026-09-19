@@ -9,5 +9,7 @@ namespace Rasa.Repositories.Char.CharacterMissionScenario
         IReadOnlyList<CharacterMissionScenarioStepEntry> Get(uint characterId, uint missionId);
         bool HasStep(uint characterId, uint missionId, string stepKey);
         void Add(CharacterMissionScenarioStepEntry entry);
+        void Remove(uint characterId, uint missionId, string stepKey);
+        void RemoveByPrefix(uint characterId, uint missionId, string stepKeyPrefix);
     }
 }

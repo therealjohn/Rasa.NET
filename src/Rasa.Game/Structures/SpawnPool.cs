@@ -26,6 +26,8 @@ namespace Rasa.Structures
         public int AliveCreatures { get; set; } // number of spawned creatures that are alive
         public int DeadCreatures { get; set; }  // number of spawned creatures that are dead (either killed or spawned dead)
         internal List<Creature> QueuedCreatureList { get; set; }
+        public string ScenarioKey { get; set; }
+        public uint? ScenarioGroupId { get; set; }
 
         // Runtime milliseconds; the persisted RespawnTime is in seconds.
         public long UpdateTimer { get; set; }

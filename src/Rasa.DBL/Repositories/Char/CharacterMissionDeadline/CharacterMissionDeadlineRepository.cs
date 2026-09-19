@@ -45,5 +45,29 @@ namespace Rasa.Repositories.Char.CharacterMissionDeadline
             entry.State = state;
             _charContext.SaveChanges();
         }
+
+        public void AddOrUpdate(
+            uint characterId,
+            uint missionId,
+            DateTime dueAtUtc,
+            CharacterMissionDeadlineState state)
+        {
+            if (dueAtUtc.Kind != DateTimeKind.Utc)
+                throw new ArgumentException("Mission deadlines must be stored in UTC.", nameof(dueAtUtc));
+
+            var entry = Get(characterId, missionId);
+            if (entry == null)
+            {
+                _charContext.CharacterMissionDeadlineEntries.Add(
+                    new CharacterMissionDeadlineEntry(characterId, missionId, dueAtUtc, state));
+            }
+            else
+            {
+                entry.DueAtUtc = dueAtUtc;
+                entry.State = state;
+            }
+
+            _charContext.SaveChanges();
+        }
     }
 }

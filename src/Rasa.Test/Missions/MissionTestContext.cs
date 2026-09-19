@@ -26,6 +26,7 @@ namespace Rasa.Test.Missions
     using Rasa.Repositories.Char.Auction;
     using Rasa.Repositories.Char.Character;
     using Rasa.Repositories.Char.CharacterAppearance;
+    using Rasa.Repositories.Char.CharacterAbilityDrawer;
     using Rasa.Repositories.Char.CharacterInventory;
     using Rasa.Repositories.Char.CharacterLogos;
     using Rasa.Repositories.Char.CharacterMission;
@@ -33,6 +34,7 @@ namespace Rasa.Test.Missions
     using Rasa.Repositories.Char.CharacterMissionProgress;
     using Rasa.Repositories.Char.CharacterMissionScenario;
     using Rasa.Repositories.Char.CharacterQualification;
+    using Rasa.Repositories.Char.CharacterSkills;
     using Rasa.Repositories.Char.CharacterStartingExperience;
     using Rasa.Repositories.Char.CharacterTeleporter;
     using Rasa.Repositories.Char.Clan;
@@ -804,7 +806,7 @@ namespace Rasa.Test.Missions
             return new CharUnitOfWork(context,
                 gameAccounts: new GameAccountRepository(context), censoredWords: null,
                 characters: new CharacterRepository(context),
-                characterAbilityDrawers: null,
+                characterAbilityDrawers: new CharacterAbilityDrawerRepository(context),
                 characterAppearances: new CharacterAppearanceRepository(context),
                 characterInventories: new CharacterInventoryRepository(context),
                 characterLockboxes: null, characterLogoses: new CharacterLogosRepository(context),
@@ -814,7 +816,7 @@ namespace Rasa.Test.Missions
                 characterMissionScenario: new CharacterMissionScenarioRepository(context),
                 characterOptions: null,
                 characterQualifications: new CharacterQualificationRepository(context),
-                characterSkills: null, characterTeleporters: new CharacterTeleporterRepository(context),
+                characterSkills: new CharacterSkillsRepository(context), characterTeleporters: new CharacterTeleporterRepository(context),
                 characterStartingExperience: new CharacterStartingExperienceRepository(context),
                 characterTitles: null,
                 auctions: new AuctionRepository(context), clans: new ClanRepository(context),

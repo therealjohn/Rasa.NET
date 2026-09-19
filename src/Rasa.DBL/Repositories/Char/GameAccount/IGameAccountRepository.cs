@@ -30,5 +30,7 @@ namespace Rasa.Repositories.Char.GameAccount
         void UpdateSelectedSlot(uint id, byte selectedSlot);
 
         void UpdateAccountLevel(uint id, byte level);
+
+        void UpdateCanSkipBootcamp(uint id, bool canSkipBootcamp);
     }
 }

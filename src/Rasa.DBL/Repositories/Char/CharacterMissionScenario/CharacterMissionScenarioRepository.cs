@@ -35,5 +35,35 @@ namespace Rasa.Repositories.Char.CharacterMissionScenario
             _charContext.CharacterMissionScenarioStepEntries.Add(entry);
             _charContext.SaveChanges();
         }
+
+        public void Remove(uint characterId, uint missionId, string stepKey)
+        {
+            var entry = _charContext.CharacterMissionScenarioStepEntries.SingleOrDefault(candidate =>
+                candidate.CharacterId == characterId &&
+                candidate.MissionId == missionId &&
+                candidate.StepKey == stepKey);
+            if (entry == null)
+                return;
+
+            _charContext.CharacterMissionScenarioStepEntries.Remove(entry);
+            _charContext.SaveChanges();
+        }
+
+        public void RemoveByPrefix(uint characterId, uint missionId, string stepKeyPrefix)
+        {
+            if (string.IsNullOrWhiteSpace(stepKeyPrefix))
+                return;
+
+            var entries = _charContext.CharacterMissionScenarioStepEntries.Where(candidate =>
+                    candidate.CharacterId == characterId &&
+                    candidate.MissionId == missionId &&
+                    candidate.StepKey.StartsWith(stepKeyPrefix))
+                .ToArray();
+            if (entries.Length == 0)
+                return;
+
+            _charContext.CharacterMissionScenarioStepEntries.RemoveRange(entries);
+            _charContext.SaveChanges();
+        }
     }
 }

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Linq;
 
 namespace Rasa.Managers
 {
@@ -345,6 +346,73 @@ namespace Rasa.Managers
 
             // give some weapon to creature's
             GiveWeapon(creature);
+        }
+
+        internal Creature CreateScenarioCreature(
+            SpawnPool spawnPool,
+            uint creatureId,
+            Vector3 position,
+            double rotation)
+        {
+            if (!LoadedCreatures.TryGetValue(creatureId, out var template) ||
+                template == null)
+                return null;
+
+            if (!EntityClassManager.Instance.LoadedEntityClasses.TryGetValue(
+                    template.EntityClass,
+                    out var entityClass) ||
+                entityClass == null ||
+                entityClass.Augmentations == null ||
+                !entityClass.Augmentations.Contains(AugmentationType.Creature))
+                return null;
+
+            var creature = (Creature)template.Clone();
+            creature.SpawnPool = spawnPool;
+            creature.State = CharacterState.Idle;
+            creature.Name = entityClass.ClassName;
+            EnsureScenarioAttributes(creature);
+            SetLocation(creature, position, rotation, spawnPool?.MapContextId ?? creature.MapContextId);
+            if (spawnPool != null)
+                SpawnPoolManager.Instance.IncreaseAliveCreatureCount(spawnPool);
+            return creature;
+        }
+
+        internal void SetScenarioInteractionEnabled(
+            MapChannel mapChannel,
+            Creature creature,
+            bool enabled)
+        {
+            if (mapChannel == null || creature == null)
+                return;
+
+            creature.IsInteractable = enabled;
+            if (creature.Npc == null)
+                return;
+
+            foreach (var client in mapChannel.ClientList
+                         .Where(client => client?.Player?.MapChannel == mapChannel &&
+                             client.State == ClientState.Ingame)
+                         .ToArray())
+                NpcManager.Instance.UpdateConversationStatus(client, creature);
+        }
+
+        private static void EnsureScenarioAttributes(Creature creature)
+        {
+            if (creature.Attributes.Count != 0)
+                return;
+
+            var body = (int)Math.Max(15, creature.Level * 3);
+            var health = (int)Math.Max(100, creature.MaxHitPoints);
+            creature.Attributes.Add(Attributes.Body, new ActorAttributes(Attributes.Body, body, body, body, 5, 1000));
+            creature.Attributes.Add(Attributes.Mind, new ActorAttributes(Attributes.Mind, body, body, body, 5, 1000));
+            creature.Attributes.Add(Attributes.Spirit, new ActorAttributes(Attributes.Spirit, body, body, body, 5, 1000));
+            creature.Attributes.Add(Attributes.Health, new ActorAttributes(Attributes.Health, health, health, health, 10, 1000));
+            creature.Attributes.Add(Attributes.Chi, new ActorAttributes(Attributes.Chi, 0, 0, 0, 0, 0));
+            creature.Attributes.Add(Attributes.Power, new ActorAttributes(Attributes.Power, 0, 0, 0, 0, 0));
+            creature.Attributes.Add(Attributes.Aware, new ActorAttributes(Attributes.Aware, 0, 0, 0, 0, 0));
+            creature.Attributes.Add(Attributes.Armor, new ActorAttributes(Attributes.Armor, 100, 100, 100, 5, 1000));
+            creature.Attributes.Add(Attributes.Speed, new ActorAttributes(Attributes.Speed, 1, 1, 1, 0, 0));
+            creature.Attributes.Add(Attributes.Regen, new ActorAttributes(Attributes.Regen, 0, 0, 0, 0, 0));
         }
 
         public void CreatureInit()

@@ -147,7 +147,8 @@ namespace Rasa.Managers
                     client.Player.MapChannel,
                     packet.EntityId,
                     out var creature) ||
-                creature.Npc == null)
+                creature.Npc == null ||
+                !creature.IsInteractable)
                 return;
 
             var convoDataDict = Missions
@@ -271,6 +272,17 @@ namespace Rasa.Managers
 
         public void UpdateConversationStatus(Client client, Creature creature)
         {
+            if (creature == null)
+                return;
+
+            if (!creature.IsInteractable)
+            {
+                client.CallMethod(
+                    creature.EntityId,
+                    new NPCConversationStatusPacket(ConversationStatus.None, new List<uint>()));
+                return;
+            }
+
             var npc = creature.Npc;
             var vendor = creature.Npc.Vendor;
             var statusSet = false;

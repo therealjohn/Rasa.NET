@@ -83,6 +83,40 @@ namespace Rasa.Managers
             return new ReadOnlyDictionary<uint, MissionRewardDefinition>(rewards);
         }
 
+        internal static IReadOnlyDictionary<uint, IReadOnlyDictionary<uint, MissionRewardDefinition>> CreateRewardPackages(
+            MissionContentSnapshot snapshot,
+            MissionValidationReport report)
+        {
+            var result = new Dictionary<uint, IReadOnlyDictionary<uint, MissionRewardDefinition>>();
+            foreach (var content in snapshot.Definitions.Values.OrderBy(definition => definition.MissionId))
+            {
+                if (report.HasErrorsForMission(content.MissionId) || content.Rewards.Count == 0)
+                    continue;
+
+                var packages = content.Rewards.Values
+                    .OrderBy(reward => reward.RewardId)
+                    .ToDictionary(
+                        reward => reward.RewardId,
+                        reward => new MissionRewardDefinition(
+                            reward.Experience,
+                            new Dictionary<CurencyType, int>
+                            {
+                                [CurencyType.Credits] = checked((int)reward.Credits),
+                                [CurencyType.Prestige] = checked((int)reward.Prestige)
+                            },
+                            reward.FixedItems
+                                .Select(item => new MissionRewardItem(item.ItemTemplateId, item.Quantity))
+                                .ToArray(),
+                            reward.SelectableItems
+                                .Select(item => new MissionRewardItem(item.ItemTemplateId, item.Quantity))
+                                .ToArray()));
+                result[content.MissionId] =
+                    new ReadOnlyDictionary<uint, MissionRewardDefinition>(packages);
+            }
+
+            return new ReadOnlyDictionary<uint, IReadOnlyDictionary<uint, MissionRewardDefinition>>(result);
+        }
+
         public static IReadOnlyDictionary<uint, Mission> CreateRecoveredInactiveDefinitions()
         {
             var definitions = new Dictionary<uint, Mission>

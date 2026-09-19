@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System;
 using JetBrains.Annotations;
 
 namespace Rasa.Repositories.Char.CharacterMissionDeadline
@@ -12,5 +13,6 @@ namespace Rasa.Repositories.Char.CharacterMissionDeadline
         CharacterMissionDeadlineEntry Get(uint characterId, uint missionId);
         void Add(CharacterMissionDeadlineEntry entry);
         void SetState(uint characterId, uint missionId, CharacterMissionDeadlineState state);
+        void AddOrUpdate(uint characterId, uint missionId, DateTime dueAtUtc, CharacterMissionDeadlineState state);
     }
 }
