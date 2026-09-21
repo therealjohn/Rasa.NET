@@ -25,7 +25,7 @@ namespace Rasa.Repositories.Char.CharacterInventory
                 _charContext.CharacterInventoryEntries.Add(entry);
                 _charContext.SaveChanges();
             }
-            catch (Exception e)
+            catch (Exception e) when (_charContext.Database.CurrentTransaction == null)
             {
                 Logger.WriteLog(LogType.Error, "Error creating item:");
                 Logger.WriteLog(LogType.Error, e);

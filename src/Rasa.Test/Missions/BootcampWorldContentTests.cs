@@ -463,6 +463,62 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
+        public void BootcampCrateLootMigrationUpgradesAndDowngradesExistingWorldContent()
+        {
+            WithDisposableSqliteWorld((context, _) =>
+            {
+                const string previous = "20260919183000_BootcampFinalReviewFixes";
+                var migrator = context.GetService<IMigrator>();
+                migrator.Migrate(previous);
+                Assert.AreEqual(MissionScenarioStepKind.GrantRewardPackage,
+                    context.MissionScenarioStepEntries.AsNoTracking().Single(step =>
+                        step.MissionId == 1992 && step.ScenarioId == 2 && step.StepId == 1).Kind);
+
+                migrator.Migrate();
+
+                var steps = context.MissionScenarioStepEntries.AsNoTracking().Where(step =>
+                    step.MissionId == 1992 && step.ScenarioId == 2).ToArray();
+                Assert.AreEqual(MissionScenarioStepKind.DisableInteraction,
+                    steps.Single(step => step.StepId == 1).Kind);
+                Assert.AreEqual(29877U, steps.Single(step => step.StepId == 1).EntityClassId);
+                Assert.IsFalse(steps.Any(step =>
+                    step.Kind == MissionScenarioStepKind.GrantRewardPackage ||
+                    step.Kind == MissionScenarioStepKind.DespawnDynamicObject));
+                Assert.AreEqual(2, steps.Count(step => step.Kind == MissionScenarioStepKind.GrantSkillAbility));
+                Assert.IsFalse(Validate(LoadSnapshot(context), context).BlocksReadiness);
+
+                migrator.Migrate(previous);
+
+                steps = context.MissionScenarioStepEntries.AsNoTracking().Where(step =>
+                    step.MissionId == 1992 && step.ScenarioId == 2).ToArray();
+                Assert.AreEqual(MissionScenarioStepKind.GrantRewardPackage,
+                    steps.Single(step => step.StepId == 1).Kind);
+                Assert.AreEqual(MissionScenarioStepKind.DespawnDynamicObject,
+                    steps.Single(step => step.StepId == 2).Kind);
+                migrator.Migrate();
+                Assert.IsFalse(Validate(LoadSnapshot(context), context).BlocksReadiness);
+            });
+        }
+
+        [TestMethod]
+        [DataRow(typeof(SqliteWorldContext), "20260919183000_BootcampFinalReviewFixes", "20260921183000_BootcampCrateLoot")]
+        [DataRow(typeof(MySqlWorldContext), "20260919183010_BootcampFinalReviewFixes", "20260921183010_BootcampCrateLoot")]
+        public void BootcampCrateLootMigrationGeneratesBoundedUpgradeSqlForBothProviders(
+            Type contextType,
+            string previous,
+            string current)
+        {
+            using var context = CreateContext(contextType, "unused");
+            CollectionAssert.Contains(context.Database.GetMigrations().ToArray(), current);
+            var sql = NormalizeSql(context.GetService<IMigrator>().GenerateScript(previous, current));
+
+            StringAssert.Contains(sql, "set kind = 4, reward_id = null, entity_class_id = 29877");
+            StringAssert.Contains(sql, "where mission_id = 1992 and content_revision = 'deployment_11' and scenario_id = 2");
+            StringAssert.Contains(sql, "and step_id = 2 and kind = 21 and dynamic_object_key = 'bootcamp-equipment-crate'");
+            Assert.IsFalse(context.Database.HasPendingModelChanges());
+        }
+
+        [TestMethod]
         public void BootcampMissionContentSeedInsertThrowsWhenGenericRowsDoNotMatchEntityColumns()
         {
             var builder = new MigrationBuilder("Microsoft.EntityFrameworkCore.Sqlite");
@@ -561,7 +617,8 @@ namespace Rasa.Test.Missions
         {
             WithDisposableSqliteWorld((context, _) =>
             {
-                context.Database.Migrate();
+                // Compare seed inserts before later migrations update or remove authored rows.
+                context.GetService<IMigrator>().Migrate("20260919183000_BootcampFinalReviewFixes");
 
                 var sqliteCounts = new Dictionary<string, int>
                 {
@@ -598,7 +655,8 @@ namespace Rasa.Test.Missions
                 };
 
                 using var mysqlContext = CreateContext(typeof(MySqlWorldContext), "unused");
-                var sql = NormalizeSql(mysqlContext.GetService<IMigrator>().GenerateScript());
+                var sql = NormalizeSql(mysqlContext.GetService<IMigrator>().GenerateScript(
+                    toMigration: "20260919183010_BootcampFinalReviewFixes"));
 
                 foreach (var (table, expectedCount) in sqliteCounts)
                     Assert.AreEqual(

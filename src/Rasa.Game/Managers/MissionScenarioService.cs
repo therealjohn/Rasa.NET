@@ -173,19 +173,14 @@ namespace Rasa.Managers
             if (manager == null)
                 return;
 
-            // Rebuild has no Client of its own - only the two callers that build a private
-            // instance do - so the one it needs (to re-attach a loot dispenser to a
-            // scenario-spawned crate the owner had not yet looted) is looked up here rather than
-            // threaded through every method between here and there.
-            var client = Server.Clients.Find(candidate => candidate.Player?.Id == characterId);
-            Logger.WriteLog(LogType.Debug,
-                $"[MissionDiag] Rebuild character={characterId} map={mapChannel.MapInfo?.MapContextId} clientFound={client != null}");
-
             using var unitOfWork = _gameUnitOfWorkFactory().CreateChar();
             var missions = unitOfWork.CharacterMissions.Get(characterId)
                 .Where(mission =>
                     mission.MissionState == (uint)MissionState.Active ||
-                    mission.MissionState == (uint)MissionState.Failed)
+                    mission.MissionState == (uint)MissionState.Failed ||
+                    (mission.MissionState == (uint)MissionState.Completed &&
+                     mission.MissionId == BootcampEquipmentCrateLoot.MissionId &&
+                     mapChannel.MapInfo?.MapContextId == 1985))
                 .OrderBy(mission => mission.MissionId)
                 .ToArray();
             foreach (var durableMission in missions)
@@ -200,6 +195,10 @@ namespace Rasa.Managers
                 foreach (var scenario in scenarios.Values.OrderBy(scenario => scenario.ScenarioId))
                     foreach (var step in scenario.Steps)
                     {
+                        if (durableMission.MissionState == (uint)MissionState.Completed &&
+                            !IsRewardCrateSpawn(durableMission.MissionId, step))
+                            continue;
+
                         var key = MissionScenarioStepState.CreateCompletedKey(
                             scenario.ScenarioId,
                             step.StepId,
@@ -207,16 +206,13 @@ namespace Rasa.Managers
                         if (!state.CompletedSteps.ContainsKey(key))
                             continue;
 
-                        Logger.WriteLog(LogType.Debug,
-                            $"[MissionDiag] Rebuild mission={durableMission.MissionId} applying completed step {key} kind={step.Kind}");
                         ApplyRebuildStep(
                             characterId,
                             durableMission.MissionId,
                             step,
                             mapChannel,
                             manager,
-                            state,
-                            client);
+                            state);
                     }
             }
         }
@@ -549,7 +545,7 @@ namespace Rasa.Managers
             var enabled = step.InitialInteractionEnabled ?? true;
             context.Plan.AddRuntimeConvergence(() =>
             {
-                var dynamicObject = EnsureScenarioDynamicObject(
+                EnsureScenarioDynamicObject(
                     context.MapChannel,
                     BuildDynamicObjectRuntimeKey(
                         context.Client.Player.Id,
@@ -561,25 +557,20 @@ namespace Rasa.Managers
                     position,
                     step.Orientation.Value,
                     enabled,
-                    step.DelayMilliseconds);
-
-                // Bootcamp's equipment crate is scenario content, not a generic engine feature
-                // yet - nothing else needs a scenario-spawned object to double as a loot
-                // dispenser. If a second one shows up, generalize this (most likely by allowing
-                // reward_id on a SpawnDynamicObject step, which the schema constraint currently
-                // forbids) instead of growing this list.
-                if (dynamicObject != null &&
-                    dynamicObject.LootDispenserEntityId == 0 &&
-                    step.EntityClassId.Value == BootcampEquipmentCrateEntityClassId &&
-                    context.RewardPackages.TryGetValue(
-                        BootcampEquipmentCrateRewardId, out var rewardPackage))
-                    LootDispenserManager.Instance.AttachRewardLoot(
-                        context.Client, context.MapChannel, dynamicObject, rewardPackage.FixedItems);
+                    step.DelayMilliseconds,
+                    IsRewardCrateSpawn(context.MissionDefinition.MissionId, step)
+                        ? BootcampEquipmentCrateLoot
+                        : null);
             });
         }
 
         private const uint BootcampEquipmentCrateEntityClassId = 29877;
-        private const uint BootcampEquipmentCrateRewardId = 58;
+        private static readonly MissionLootSource BootcampEquipmentCrateLoot = new(1992, 1, 58);
+
+        private static bool IsRewardCrateSpawn(uint missionId, MissionScenarioStepDefinition step) =>
+            missionId == BootcampEquipmentCrateLoot.MissionId &&
+            step.Kind == MissionScenarioStepKind.SpawnDynamicObject &&
+            step.EntityClassId == BootcampEquipmentCrateEntityClassId;
 
         private void PlanDespawnDynamicObject(
             MissionActionContext context,
@@ -937,8 +928,7 @@ namespace Rasa.Managers
             MissionScenarioStepDefinition step,
             MapChannel mapChannel,
             MissionManager manager,
-            ScenarioState state,
-            Client client)
+            ScenarioState state)
         {
             switch (step.Kind)
             {
@@ -985,7 +975,7 @@ namespace Rasa.Managers
                         !step.Orientation.HasValue)
                         return;
                     {
-                        var dynamicObject = EnsureScenarioDynamicObject(
+                        EnsureScenarioDynamicObject(
                             mapChannel,
                             BuildDynamicObjectRuntimeKey(
                                 characterId,
@@ -1000,37 +990,8 @@ namespace Rasa.Managers
                                 (float)step.PosZ.Value),
                             step.Orientation.Value,
                             step.InitialInteractionEnabled ?? true,
-                            step.DelayMilliseconds);
-
-                        Logger.WriteLog(LogType.Debug,
-                            $"[MissionDiag] Rebuild SpawnDynamicObject key={step.DynamicObjectKey} entityClass={step.EntityClassId} " +
-                            $"objCreated={dynamicObject != null} lootAlready={dynamicObject?.LootDispenserEntityId} " +
-                            $"classMatches={step.EntityClassId.Value == BootcampEquipmentCrateEntityClassId} " +
-                            $"hasRewardPackage={manager.GetRewardPackages(missionId).ContainsKey(BootcampEquipmentCrateRewardId)}");
-
-                        // A relog tears the owner's private instance down and rebuilds it from
-                        // durable "completed steps" alone (MapChannelManager.ReleaseOwnedPrivateInstances
-                        // / GetOrCreatePrivateInstance) - a crate the owner had not yet looted
-                        // needs this same attachment redone here, or it comes back with no
-                        // dispenser (SpawnDynamicObject's own completed-step record does not know
-                        // whether the loot was ever taken - only DespawnDynamicObject completing
-                        // means that).
-                        //
-                        // Queued rather than attached here directly: this whole rebuild runs from
-                        // inside CharacterManager.ResolveReconnectMapChannel, before the client has
-                        // been placed in the cell (CellManager.AddToWorld(client) - which is what
-                        // actually introduces the crate to them - happens much later, in
-                        // MapChannelManager's post-load flow). Sending AttachInfo/CanLootItems for
-                        // an entity the client has never heard of left it with no loot option at
-                        // all. client.PendingLootAttaches is drained in
-                        // MissionManager.PublishInitialState, after that introduction has happened.
-                        if (client != null &&
-                            dynamicObject != null &&
-                            dynamicObject.LootDispenserEntityId == 0 &&
-                            step.EntityClassId.Value == BootcampEquipmentCrateEntityClassId &&
-                            manager.GetRewardPackages(missionId).TryGetValue(
-                                BootcampEquipmentCrateRewardId, out var rewardPackage))
-                            client.PendingLootAttaches.Add((dynamicObject, rewardPackage.FixedItems));
+                            step.DelayMilliseconds,
+                            IsRewardCrateSpawn(missionId, step) ? BootcampEquipmentCrateLoot : null);
                     }
                     return;
 
@@ -1231,7 +1192,8 @@ namespace Rasa.Managers
             Vector3 position,
             double rotation,
             bool enabled,
-            uint? windupTime)
+            uint? windupTime,
+            MissionLootSource lootSource)
         {
             if (mapChannel == null || string.IsNullOrWhiteSpace(runtimeKey))
                 return null;
@@ -1248,7 +1210,8 @@ namespace Rasa.Managers
             if (existing != null &&
                 MapInstanceScope.Contains(mapChannel, existing))
             {
-                _objects().SetScenarioInteractionEnabled(mapChannel, existing, enabled);
+                if (existing.LootDispenserEntityId == 0)
+                    _objects().SetScenarioInteractionEnabled(mapChannel, existing, enabled);
                 return existing;
             }
 
@@ -1260,6 +1223,9 @@ namespace Rasa.Managers
                 runtimeKey,
                 enabled,
                 windupTime);
+            dynamicObject.MissionLootSource = lootSource;
+            if (lootSource != null)
+                dynamicObject.StateId = UseObjectState.TdStateClosed;
             mapChannel.DynamicObjects.Add(dynamicObject);
             CellManager.Instance.AddToWorld(mapChannel, dynamicObject);
 

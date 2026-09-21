@@ -70,19 +70,6 @@ namespace Rasa.Game
         /// </summary>
         internal HashSet<uint> PendingMissionAnnouncements { get; } = new();
 
-        /// <summary>
-        /// Reward-crate loot dispensers deferred from a scenario rebuild (MissionScenarioService.
-        /// ApplyRebuildStep, itself run from inside CharacterManager.ResolveReconnectMapChannel,
-        /// long before this client is actually placed in the cell). Attaching there sends the loot
-        /// dispenser's AttachInfo/CanLootItems packets before the crate itself has ever been
-        /// introduced to this specific client, so the client has nothing to resolve
-        /// AttachedEntityId against and never learns it can loot the object - it just looked like
-        /// the crate did nothing. MissionManager.PublishInitialState drains this once
-        /// CellManager.AddToWorld(client) has already introduced every dynamic object in the
-        /// player's cell (crate included), so the attach packets arrive after the client already
-        /// knows the crate exists.
-        /// </summary>
-        internal List<(Structures.DynamicObject Obj, IReadOnlyList<Managers.MissionRewardItem> Items)> PendingLootAttaches { get; } = new();
         private readonly ClientPacketHandler _handler;
         private readonly PacketQueue _packetQueue = new();
         private readonly bool[] _receivedSequence = new bool[256];

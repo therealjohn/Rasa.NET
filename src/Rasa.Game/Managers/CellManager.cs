@@ -260,6 +260,9 @@ namespace Rasa.Managers
             if (!MapInstanceScope.Contains(mapChannel, dynObject))
                 return;
 
+            if (dynObject.LootDispenserEntityId != 0)
+                LootDispenserManager.Instance.RemoveForObject(mapChannel, dynObject);
+
             // unregister object entity
             EntityManager.Instance.UnregisterEntity(dynObject.EntityId);
             EntityManager.Instance.UnregisterDynamicObject(dynObject.EntityId);

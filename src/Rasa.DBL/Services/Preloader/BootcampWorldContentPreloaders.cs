@@ -564,6 +564,7 @@ namespace Rasa.Services.Preloader
             // it as. See FootlockerRecovery in DynamicObjectManager.cs, which used to be an empty
             // stub and is why completing the windup bar previously did nothing at all.
             yield return SpawnDynamicObjectStep(1992, 1, 1, "bootcamp-equipment-crate", 29877, 398.0, 122.0, 173.0, 0.0, true, "Spawn equipment crate", delayMilliseconds: 100);
+            // Historical rows: BootcampCrateLoot replaces the bulk grant and removes despawning.
             yield return GrantRewardPackageStep(1992, 2, 1, 58, "Grant crate loadout");
             yield return DespawnDynamicObjectStep(1992, 2, 2, "bootcamp-equipment-crate", "Remove used equipment crate");
             // Without these, the Motor Assist Armor and the rifle just granted are equipment the

@@ -47,5 +47,6 @@ namespace Rasa.Structures
         /// same mechanism, just attached to a scripted prop instead of a kill.
         /// </summary>
         public ulong LootDispenserEntityId { get; set; }
+        internal MissionLootSource MissionLootSource { get; set; }
     }
 }

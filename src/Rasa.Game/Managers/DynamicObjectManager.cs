@@ -186,12 +186,6 @@ namespace Rasa.Managers
                 return;
             }
 
-            // Nothing gated a second RequestUseObjectPacket for the same object before its first
-            // windup even finished - a double-click (or the client re-sending because a one-shot
-            // object gives no immediate feedback) queued a second, independent PerformRecovery
-            // entry, and each one ran the full completion again. A one-shot object (a mission
-            // reward crate) now clears IsEnabled the moment it completes, before it is despawned,
-            // so the second request is rejected here instead of granting twice.
             if (!obj.IsEnabled)
             {
                 Logger.WriteLog(LogType.Debug, $"{client.Player.FamilyName} asked to use {packet.EntityId}, which is not enabled right now.");
@@ -241,6 +235,14 @@ namespace Rasa.Managers
                 Logger.WriteLog(LogType.Security,
                     $"{client.Player.FamilyName} sent {packet.ActionId}/{packet.ActionArgId} to use object {packet.EntityId}; an object is used with {ActionId.UseObject}. Ignored.");
                 return;
+            }
+
+            if (obj.MissionLootSource != null || obj.LootDispenserEntityId != 0)
+            {
+                if (obj.LootDispenserEntityId == 0)
+                    LootDispenserManager.Instance.AttachRewardLoot(client, client.Player.MapChannel, obj);
+                if (obj.LootDispenserEntityId == 0 || !obj.IsEnabled)
+                    return;
             }
 
             switch (obj.DynamicObjectType)
@@ -499,6 +501,21 @@ namespace Rasa.Managers
                 entityData.Add(new LockInfoPacket(dynamicObject.Lock));
 
             client.CallMethod(SysEntity.ClientMethodId, new CreatePhysicalEntityPacket(dynamicObject.EntityId, dynamicObject.EntityClassId, entityData));
+            if (dynamicObject.MissionLootSource != null &&
+                MapInstanceScope.Contains(client.Player?.MapChannel, dynamicObject))
+            {
+                var lootManager = LootDispenserManager.Instance;
+                var map = client.Player.MapChannel;
+                if (dynamicObject.LootDispenserEntityId == 0)
+                    lootManager.AttachRewardLoot(client, map, dynamicObject);
+                else if (map.LootDispensers.TryGetValue(dynamicObject.LootDispenserEntityId, out var loot) &&
+                         ReferenceEquals(loot.OwnerClient, client))
+                {
+                    lootManager.AttachInfo(client, loot);
+                    lootManager.LootInfo(client, loot);
+                    lootManager.CanLootItems(client, loot);
+                }
+            }
         }
 
         internal void CellDiscardDynamicObjectToClients(ulong entityId, List<Client> clients)
@@ -733,18 +750,9 @@ namespace Rasa.Managers
 
         internal void FootlockerRecovery(MapChannel mapChannel, ActionData action)
         {
-            // ActionArgId 1 is not only real, persistent Footlockers (mapChannel.FootLockers,
-            // opened below - still unimplemented, a separate and much larger feature: generating
-            // random loot). It is also the client's own default: generated.client.usabledata has
-            // no entry at all for most scenario-spawned Usable classes (crates included - checked
-            // 7861/7862/7863/7864 and the V03-V06 family, all (None, None, None, None, None)), and
-            // usable.py falls back useObjectArgId to 1 whenever the table has none. So a mission's
-            // scenario-spawned crate - a plain DynamicObject, hardcoded to DynamicObjectType.Logos
-            // by CreateScenarioDynamicObject for windup purposes only - completes its windup here,
-            // not in LogosRecovery, regardless of what the object actually represents. Handle that
-            // case the same way LogosRecovery does (fire InteractionUsed keyed by EntityClassId),
-            // just without LogosRecovery's `is not Logos` filter, since this object is never that
-            // specific subtype.
+            // The client defaults usable props without usabledata rows to argument 1.
+            // Scenario props are DynamicObjects, not Logos, so they recover here.
+            // Reward props open their dispenser; other props emit InteractionUsed.
             foreach (var obj in mapChannel.DynamicObjects)
             {
                 if (action.SourceId != obj.EntityId)
@@ -767,18 +775,16 @@ namespace Rasa.Managers
                         return;
                     }
 
-                    // An object with a loot dispenser attached (a reward crate) completes through
-                    // this same generic Use windup, not a loot window: PhysicalEntity's action
-                    // resolution always picks Usable over Lootable on a priority tie (confirmed
-                    // via rcmenuitem.pyo_dis), and disabling Usable to force Lootable to win
-                    // instead makes the object stop responding to the mouse entirely (usable.py's
-                    // IsMouseTargetable() is wired to IsUsable(), with no Lootable equivalent). A
-                    // real client can never send Loot for this kind of object, so ClaimFromObject
-                    // - normally reached from RequestLootAllFromCorpse/RequestLootItemFromCorpse -
-                    // is invoked directly from here instead.
-                    if (obj.LootDispenserEntityId != 0)
+                    // Usable supplies mouse targeting; its completion opens loot, never claims it.
+                    if (obj.MissionLootSource != null || obj.LootDispenserEntityId != 0)
                     {
-                        LootDispenserManager.Instance.ClaimFromObject(client, obj.LootDispenserEntityId);
+                        if (obj.LootDispenserEntityId != 0)
+                            LootDispenserManager.Instance.RequestCorpseLooting(
+                                client,
+                                new Packets.LootDispenser.Client.RequestCorpseLootingPacket
+                                {
+                                    EntityId = obj.LootDispenserEntityId
+                                });
                         return;
                     }
 

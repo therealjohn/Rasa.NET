@@ -644,26 +644,6 @@ namespace Rasa.Managers
                 "mission status snapshot");
 
             AnnouncePendingMissionGrants(client);
-            AttachPendingLoot(client);
-        }
-
-        /// <summary>
-        /// See the comment on Client.PendingLootAttaches: a scenario rebuild queues a reward
-        /// crate's loot dispenser here instead of attaching it immediately, because rebuild runs
-        /// before this client has been placed in its cell. By the time PublishInitialState runs
-        /// (from AssignPlayer, after CellManager.AddToWorld(client) has already introduced every
-        /// dynamic object in the cell), the crate exists on the client and Player.MapChannel is
-        /// finally set, so attaching here is safe.
-        /// </summary>
-        private void AttachPendingLoot(Client client)
-        {
-            if (client.PendingLootAttaches.Count == 0)
-                return;
-
-            foreach (var (obj, items) in client.PendingLootAttaches)
-                LootDispenserManager.Instance.AttachRewardLoot(client, client.Player.MapChannel, obj, items);
-
-            client.PendingLootAttaches.Clear();
         }
 
         /// <summary>

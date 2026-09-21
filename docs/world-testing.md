@@ -237,8 +237,9 @@ No obstacle, collision or group-distribution data is inferred.
 Supported requests use the existing layouts:
 
 - `RequestCorpseLooting` (opcode 650): `(dispenserEntityId,)`. It refreshes
-  `AttachInfo`, `LootInfo`, `OverallQuality` and `CanLootItems`. It does not grant
-  items or credits, and does not send an invented window-opening payload.
+  item entity data, `LootInfo` and `CanLootItems`, then sends
+  `LootCorpse(actorId, lootItems)` on the dispenser entity to open the menu.
+  It does not grant items or credits.
 - `RequestLootAllFromCorpse` (opcode 651):
   `(dispenserEntityId, autoLootOnly)`. Both manual and automatic requests attempt
   the selected batch and can succeed without a preceding open request. Manual
@@ -282,18 +283,55 @@ Loot tables and random template, quantity, credit and quality selection are
 unchanged. Mission rewards use their own atomic turn-in path; party distribution
 remains separate work.
 
-Native 1.16.5.0 corpse/window interaction is **not verified**. The repo has no
-established `LootCorpse`/`Use` opening payload, and the packet snapshots only
-preserve existing server layouts. Verify opening, item display, manual take-all,
-receipt/inventory updates and closure in the native client before declaring the
-UI complete. Auto-loot threshold behavior is covered by automated manager tests,
-but its native option and window presentation remain unverified. The offline
-suite covers the shared transaction and migration paths without a live MySQL
-server. The loot implementation adds no provider-specific SQL, schema or
-dependencies.
+These automated checks do not drive the native 1.16.5.0 client. Verify opening,
+item display, manual take-all, inventory updates and closure in the native
+client before declaring the UI complete. Auto-loot threshold behavior is
+covered by automated manager tests, but its native option and window
+presentation need separate acceptance. The offline suite covers the shared
+transaction and migration paths without a live MySQL server.
 Loss of a database commit
 acknowledgement is still ambiguous; there is no durable distributed exactly-once
 claim ledger. Subsequent stale inventory/credit snapshots fail closed.
+
+## Bootcamp equipment crate
+
+Mission `1992` keeps the existing crate class `29877`. Right-click uses its
+normal `UseObject` request and short recovery to open the same loot menu as
+creature looting. The Use acknowledgement precedes the menu; it never transfers
+items. Do not disable Usable or substitute a different entity class to change
+click targeting.
+
+The dispenser is introduced after the crate enters the client's visible cells.
+Opening introduces the real item entities before the menu packet. Selecting a
+row claims only that row; Loot All claims the remaining contents. Proximity
+auto-loot cannot claim this crate. Opening and claiming use the existing object
+use distance, not the shorter configurable corpse-looting distance.
+
+Claims use the same inventory transaction as creature loot. Per-template
+receipts in `character_mission_scenario_step` commit with the inventory changes,
+so reconnect restores only unclaimed rows. Collecting the final row completes
+the crate objective and grants the existing equipment proficiencies. The empty
+crate stays visible in its opened state, including after reconnect and mission
+completion. A character whose crate objective was already completed by the old
+bulk-grant implementation does not receive a second loadout.
+
+Apply the `BootcampCrateLoot` **World** migration before running the updated
+server. It replaces the scripted bulk grant with interaction disablement and
+removes the crate's despawn step. SQLite applies pending migrations at startup;
+for MySQL, follow [Applying migrations](setup.md#applying-migrations).
+No character-schema migration or database reset is required.
+
+Run the focused server regressions with:
+
+```powershell
+dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~BootcampCrateLoot|FullyQualifiedName~LootConsolidationTests"
+```
+
+Native-client acceptance for this repair remains separate: right-click and
+confirm all six rows are visible without inventory changes; close and reopen;
+take one row and reconnect; collect the remainder with Loot All; confirm the
+crate stays in place and cannot grant duplicates. Repeat creature looting to
+check that its existing interaction is unchanged.
 
 ## Native-client Bootcamp acceptance checklist
 

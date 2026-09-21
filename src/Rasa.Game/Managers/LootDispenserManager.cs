@@ -18,6 +18,7 @@ namespace Rasa.Managers
     using Rasa.Packets.LootDispenser.Client;
     using Repositories.UnitOfWork;
     using Structures;
+    using Structures.Char;
 
     public class LootDispenserManager
     {
@@ -270,176 +271,139 @@ namespace Rasa.Managers
             CanLootItems(client, loot);
         }
 
-        /// <summary>
-        /// Attaches a loot dispenser to a scripted world prop (a mission reward crate) instead of
-        /// a kill - same client-visible mechanism (AttachInfo/LootInfo/OverallQuality/
-        /// CanLootItems) as a corpse, just without any of the kill/corpse semantics Create/Loot
-        /// assume; see the AttachedObject branch of TryGetLoot. The rows are real Item instances
-        /// (the corpse loot window's GetEntity(itemId) skips any row that does not resolve to
-        /// one) but are never saved or added to any inventory here - see ClaimFromObject for why
-        /// granting stays the mission's own job.
-        /// </summary>
-        // Takes mapChannel explicitly rather than reading owner.Player.MapChannel: this is called
-        // from MissionScenarioService's scenario-rebuild path, which runs while resolving a
-        // reconnecting client's private instance - specifically from inside the expression that
-        // CharacterManager.ResolveReconnectMapChannel's caller assigns to client.Player.MapChannel,
-        // meaning that property is still null (or stale) for the whole call. Reading it here
-        // instead of taking the map the caller already resolved silently no-opped this entire
-        // method on every relog - the loot dispenser was never attached, no packets went out, and
-        // nothing logged it, which looked exactly like "interacting does nothing".
-        internal void AttachRewardLoot(Client owner, MapChannel mapChannel, DynamicObject obj, IReadOnlyList<MissionRewardItem> previewItems)
+        internal void AttachRewardLoot(Client owner, MapChannel mapChannel, DynamicObject obj)
         {
-            if (owner?.Player == null || mapChannel == null || obj == null || obj.LootDispenserEntityId != 0)
+            if (owner?.Player == null || mapChannel == null || obj?.MissionLootSource == null)
             {
-                Logger.WriteLog(LogType.Debug,
-                    $"[MissionDiag] AttachRewardLoot bailed: hasPlayer={owner?.Player != null} " +
-                    $"hasMapChannel={mapChannel != null} hasObj={obj != null} " +
-                    $"lootAlready={obj?.LootDispenserEntityId}");
+                Logger.WriteLog(LogType.Error, "Cannot attach reward loot without its owner, map, and mission source.");
                 return;
             }
 
-            var loot = new LootDispenser
-            {
-                IsLootable = true,
-                AttachedTo = obj.EntityId,
-                AttachedObject = obj,
-                Owner = owner.Player.EntityId,
-                OwnerClient = owner,
-                Player = owner.Player,
-                Map = mapChannel,
-                CharacterId = owner.Player.Id,
-                AccountId = owner.AccountEntry?.Id ?? 0,
-                UnitOfWorkFactory = _gameUnitOfWorkFactory
-            };
-
-            foreach (var previewItem in previewItems)
-            {
-                var item = ItemManager.Instance.CreateFromTemplateId(
-                    previewItem.ItemTemplateId, previewItem.Quantity);
-                if (item != null)
-                    loot.LootItems.Add(new LootItem(item, owner.Player.EntityId, 0));
-            }
-
+            lock (owner.SyncRoot)
             lock (mapChannel.LootSyncRoot)
-                mapChannel.LootDispensers.Add(loot.EntityId, loot);
-            obj.LootDispenserEntityId = loot.EntityId;
-
-            // CreateScenarioDynamicObject hardcodes every scenario prop's initial state to
-            // IdStateActive - fine for most of them, wrong for a treasure dispenser, whose closed
-            // and opened states (TdStateClosed/TdStateOpened) are what its own FSM and "opening"
-            // animation are keyed on (usable.py's _SetState, reached through Recv_ForceState).
-            // The object was already broadcast once with the wrong state by the time this runs
-            // (EnsureScenarioDynamicObject's AddToWorld already fired), so correct it explicitly
-            // rather than relying on the initial creation packet.
-            obj.StateId = UseObjectState.TdStateClosed;
-            owner.CallMethod(obj.EntityId, new ForceStatePacket(UseObjectState.TdStateClosed, 0));
-
-            owner.CallMethod(SysEntity.ClientMethodId, new CreatePhysicalEntityPacket(loot.EntityId, loot.EntityClassId));
-            AttachInfo(owner, loot);
-            LootInfo(owner, loot);
-            OverallQuality(owner, loot);
-            CanLootItems(owner, loot);
-
-            // Not disabling Usable here: PhysicalEntity.GetUseActionInfo() breaks Usable-vs-Lootable
-            // priority ties in Usable's favor (rcmenuitem.USE_OBJECT sorts before LOOT at the same
-            // priority - confirmed via generated/client/rcmenuitem.pyo_dis), so Use wins over Loot
-            // whenever both are valid candidates. Disabling Usable to make Loot the only candidate
-            // was tried repeatedly (see git history) and reproduced "can't interact with the crate
-            // at all" every time, including after the attach-chain bugs elsewhere in this file were
-            // fixed and confirmed working via plain corpse loot - so something about this
-            // combination reliably breaks client interaction for this class, even though nothing
-            // in the decompiled client source conclusively explains why. Use is what a real client
-            // will actually send for this object; completion runs off Use, in
-            // DynamicObjectManager.FootlockerRecovery, via ClaimFromObject. The dispenser is still
-            // attached for the "Lootable" glow FX it drives client-side.
-            Logger.WriteLog(LogType.Debug,
-                $"[MissionDiag] AttachRewardLoot succeeded: lootEntity={loot.EntityId} attachedTo={obj.EntityId} " +
-                $"items={loot.LootItems.Count} map={mapChannel.MapInfo?.MapContextId}");
-        }
-
-        /// <summary>
-        /// Entry point for FootlockerRecovery (DynamicObjectManager.cs): a Usable+Lootable object
-        /// can never actually resolve "Loot" as its client action (see the comment in
-        /// AttachRewardLoot), so completion for a reward crate runs off the same generic Use
-        /// windup as everything else, and lands here instead of RequestLootAllFromCorpse/
-        /// RequestLootItemFromCorpse - the client-driven entry points this same finish normally
-        /// comes through for a real corpse.
-        /// </summary>
-        internal void ClaimFromObject(Client client, ulong lootDispenserEntityId)
-        {
-            var mapChannel = client?.Player?.MapChannel;
-            if (mapChannel == null)
-                return;
-
-            LootDispenser loot;
-            lock (mapChannel.LootSyncRoot)
-                if (!mapChannel.LootDispensers.TryGetValue(lootDispenserEntityId, out loot))
+            {
+                if (obj.LootDispenserEntityId != 0)
                     return;
 
-            ClaimFromObject(client, loot);
+                var source = obj.MissionLootSource;
+                var loot = new LootDispenser
+                {
+                    AttachedTo = obj.EntityId,
+                    AttachedObject = obj,
+                    Owner = owner.Player.EntityId,
+                    OwnerClient = owner,
+                    Player = owner.Player,
+                    Map = mapChannel,
+                    CharacterId = owner.Player.Id,
+                    AccountId = owner.AccountEntry?.Id ?? 0,
+                    UnitOfWorkFactory = _gameUnitOfWorkFactory,
+                    LootQuality = LootQuality.Mission
+                };
+                var stagedItems = new List<Item>();
+                var hasClaimedItems = false;
+                try
+                {
+                    if (!MapInstanceScope.Contains(mapChannel, obj) ||
+                        !mapChannel.DynamicObjects.Contains(obj) ||
+                        !EntityManager.Instance.TryGetObject(obj.EntityId, out var registered) ||
+                        !ReferenceEquals(obj, registered) ||
+                        _gameUnitOfWorkFactory == null || owner.AccountEntry == null ||
+                        !(_missionManager ?? MissionManager.Instance).GetRewardPackages(source.MissionId)
+                            .TryGetValue(source.RewardId, out var reward))
+                        throw new GameplayRejectionException("Reward loot source is unavailable.");
+
+                    if (reward.FixedItems.Count == 0 ||
+                        reward.FixedItems.Select(item => item.ItemTemplateId).Distinct().Count() != reward.FixedItems.Count)
+                        throw new GameplayRejectionException("Reward loot requires distinct, nonempty item rows.");
+
+                    using var unit = _gameUnitOfWorkFactory.CreateChar();
+                    unit.ExecuteTransaction(() =>
+                    {
+                        var character = unit.Characters.Find(owner.Player.Id);
+                        var objective = unit.CharacterMissionProgress.Get(
+                            owner.Player.Id, source.MissionId, source.ObjectiveId);
+                        if (character?.AccountId != owner.AccountEntry.Id || objective == null)
+                            throw new GameplayRejectionException("Reward loot ownership or objective is missing.");
+
+                        // This also recognizes characters that received the old all-at-once grant.
+                        if (objective.ObjectiveState == (byte)MissionObjectiveState.Completed)
+                        {
+                            hasClaimedItems = true;
+                            return;
+                        }
+                        if (objective.ObjectiveState != (byte)MissionObjectiveState.Incomplete)
+                            throw new GameplayRejectionException("Reward loot objective is not active.");
+
+                        foreach (var row in reward.FixedItems)
+                        {
+                            if (unit.CharacterMissionScenario.HasStep(
+                                owner.Player.Id, source.MissionId, source.ClaimKey(row.ItemTemplateId)))
+                            {
+                                hasClaimedItems = true;
+                                continue;
+                            }
+
+                            var template = ItemManager.Instance.GetItemTemplateById(row.ItemTemplateId);
+                            var info = template == null ? null :
+                                EntityClassManager.Instance.GetClassInfo(template.Class)?.ItemClassInfo;
+                            if (info == null || row.Quantity == 0 || row.Quantity > info.StackSize)
+                                throw new GameplayRejectionException($"Invalid reward loot template {row.ItemTemplateId}.");
+
+                            var item = ItemManager.StageItem(template, row.Quantity, string.Empty);
+                            stagedItems.Add(item);
+                            item.Id = unit.Items.CreateItem(item);
+                            if (item.Id == 0)
+                                throw new GameplayRejectionException("Reward loot item was not persisted.");
+                            loot.LootItems.Add(new LootItem(item, owner.Player.EntityId, 0));
+                        }
+                    });
+                }
+                catch (Exception error) when (GameplayRejectionException.IsExpected(error))
+                {
+                    foreach (var item in stagedItems)
+                        EntityManager.Instance.FreeEntity(item.EntityId);
+                    Logger.WriteLog(LogType.Error,
+                        $"Unable to attach reward loot for character {owner.Player.Id}: {error}");
+                    return;
+                }
+
+                foreach (var item in stagedItems)
+                {
+                    EntityManager.Instance.RegisterEntity(item.EntityId, EntityType.Item);
+                    EntityManager.Instance.RegisterItem(item.EntityId, item);
+                }
+                loot.IsLootable = loot.HasLoot;
+                loot.FullyLooted = !loot.HasLoot;
+                mapChannel.LootDispensers.Add(loot.EntityId, loot);
+                obj.LootDispenserEntityId = loot.EntityId;
+                obj.StateId = hasClaimedItems || loot.FullyLooted
+                    ? UseObjectState.TdStateOpened
+                    : UseObjectState.TdStateClosed;
+                obj.IsEnabled = loot.IsLootable;
+                owner.CallMethod(obj.EntityId, new ForceStatePacket(obj.StateId, 0));
+                owner.CallMethod(obj.EntityId,
+                    new UsableInfoPacket(obj.IsEnabled, obj.StateId, 0, obj.WindupTime, obj.ActivateMission));
+                owner.CallMethod(SysEntity.ClientMethodId,
+                    new CreatePhysicalEntityPacket(loot.EntityId, loot.EntityClassId));
+                AttachInfo(owner, loot);
+                LootInfo(owner, loot);
+                OverallQuality(owner, loot);
+                CanLootItems(owner, loot);
+            }
         }
 
-        /// <summary>
-        /// Taking loot from an object-attached dispenser never calls Claim/PlanAndSave - the
-        /// items shown are display copies, real enough to resolve in a loot window but never
-        /// saved to any inventory. What actually grants the reward is the mission's own scripted
-        /// GrantRewardPackage step, triggered by the same InteractionUsed progress event fired
-        /// here at the end - the one place that grants anything, reached only through the
-        /// ClaimFromObject(Client, ulong) overload above (FootlockerRecovery's Use completion),
-        /// since a real client can never resolve Loot as this object's action in the first place.
-        /// </summary>
-        private void ClaimFromObject(Client client, LootDispenser loot)
+        internal void RemoveForObject(MapChannel mapChannel, DynamicObject obj)
         {
-            var obj = loot.AttachedObject;
-            if (obj == null)
+            if (mapChannel == null || obj == null || obj.LootDispenserEntityId == 0)
                 return;
 
-            foreach (var lootItem in loot.LootItems)
-                lootItem.Taken = true;
-            loot.FullyLooted = true;
-            loot.IsLootable = false;
-            loot.CurrentLooter = 0;
-
-            MissionManager.TryPublish(
-                () => client.CallMethod(loot.EntityId, new ActorGotLootPacket(loot)),
-                $"object {loot.EntityId} actor loot result");
-            MissionManager.TryPublish(
-                () => client.CallMethod(
-                    loot.EntityId,
-                    new TakenInfoPacket(client.Player.EntityId, Taken(loot))),
-                $"object {loot.EntityId} taken state");
-            MissionManager.TryPublish(
-                () => CanLootItems(client, loot),
-                $"object {loot.EntityId} lootability");
-            MissionManager.TryPublish(
-                () => GotLoot(client, loot),
-                $"object {loot.EntityId} completion");
-
-            var mapChannel = client.Player?.MapChannel;
-            if (mapChannel != null)
-                lock (mapChannel.LootSyncRoot)
-                    mapChannel.LootDispensers.Remove(loot.EntityId);
-
-            // TdStateOpened is what usable.py's own FSM plays the "opening" animation on
-            // entering (Recv_ForceState -> _SetState -> _OnEnteredState) - forced here rather
-            // than left to a client-driven transition, since the generic Use windup path
-            // (FootlockerRecovery) that reaches this method for an object-attached dispenser
-            // does not otherwise transition object state on its own.
-            obj.StateId = UseObjectState.TdStateOpened;
-            MissionManager.TryPublish(
-                () => CellManager.Instance.CellCallMethod(
-                    obj, new ForceStatePacket(UseObjectState.TdStateOpened, 0)),
-                $"object {obj.EntityId} opened state");
-
-            // Cleared before RecordProgress: a one-shot object stops answering Use/Loot the
-            // moment its dispenser empties, not only once the mission's own DespawnDynamicObject
-            // step eventually removes it a beat later.
-            obj.IsEnabled = false;
-            obj.LootDispenserEntityId = 0;
-
-            (_missionManager ?? MissionManager.Instance).RecordProgress(
-                client,
-                MissionProgressEvent.Interaction((uint)obj.EntityClassId));
+            RetryPendingRetirements();
+            var notices = new List<RetirementNotice>();
+            lock (mapChannel.LootSyncRoot)
+                if (mapChannel.LootDispensers.TryGetValue(obj.LootDispenserEntityId, out var loot) &&
+                    ReferenceEquals(loot.AttachedObject, obj))
+                    notices.Add(Retire(mapChannel, loot, true));
+            Publish(notices);
         }
 
         /// <summary>
@@ -499,6 +463,12 @@ namespace Rasa.Managers
                 {
                     if (!TryGetLoot(client, packet.EntityId, out var loot))
                         return;
+
+                    if (loot.AttachedObject is { } obj && obj.StateId != UseObjectState.TdStateOpened)
+                    {
+                        obj.StateId = UseObjectState.TdStateOpened;
+                        CellManager.Instance.CellCallMethod(obj, new ForceStatePacket(obj.StateId, 0));
+                    }
 
                     var remaining = loot.Remaining();
                     foreach (var lootItem in remaining)
@@ -562,12 +532,7 @@ namespace Rasa.Managers
                         return;
                     }
 
-                    // A reward crate is one package, not a real itemized loot table - taking any
-                    // one row takes the whole thing, same as Loot All. See ClaimFromObject.
-                    if (loot.AttachedObject != null)
-                        ClaimFromObject(client, loot);
-                    else
-                        Claim(client, loot, new[] { lootItem }, packet.DestSlot, false);
+                    Claim(client, loot, new[] { lootItem }, packet.DestSlot, false);
                 }
             }
         }
@@ -604,11 +569,8 @@ namespace Rasa.Managers
                     if (!TryGetLoot(client, packet.EntityId, out var loot))
                         return;
 
-                    if (loot.AttachedObject != null)
-                    {
-                        ClaimFromObject(client, loot);
+                    if (loot.AttachedObject != null && packet.AutoLootOnly)
                         return;
-                    }
 
                     var threshold = client.Player.AutoLootThreshold;
                     var selected = loot.Remaining()
@@ -691,20 +653,42 @@ namespace Rasa.Managers
                         throw new GameplayRejectionException(
                             "Durable character ownership or credits changed.");
 
+                    var source = loot.AttachedObject?.MissionLootSource;
+                    CharacterMissionObjectiveEntry rewardObjective = null;
+                    if (loot.AttachedObject != null)
+                    {
+                        if (source == null ||
+                            unitOfWork.CharacterMissions.GetByCharacterAndMission(
+                                client.Player.Id, source.MissionId)?.MissionState != (uint)MissionState.Active ||
+                            !unitOfWork.CharacterMissionProgress.GetTracked(
+                                client.Player.Id, source.MissionId).TryGetValue(source.ObjectiveId, out rewardObjective) ||
+                            rewardObjective.ObjectiveState != (byte)MissionObjectiveState.Incomplete)
+                            throw new GameplayRejectionException("Reward loot objective is stale.");
+
+                        foreach (var item in items)
+                            if (unitOfWork.CharacterMissionScenario.HasStep(
+                                client.Player.Id, source.MissionId, source.ClaimKey(item.ItemTemplateId)))
+                                throw new GameplayRejectionException("Reward loot item was already claimed.");
+                    }
+
                     grant.PlanAndSave(client, items, unitOfWork, destSlot);
-                    progressPlan = missionManager.PlanProgress(
-                        client,
-                        items
-                            .GroupBy(item => item.ItemClassId)
-                            .Select(group =>
-                                MissionProgressEvent.ItemAcquired(
-                                    group.Key,
-                                    group.Aggregate(
-                                        0U,
-                                        (total, item) => checked(
-                                            total + item.ItemQuantity))))
-                            .ToArray(),
-                        unitOfWork);
+                    var events = items.GroupBy(item => item.ItemClassId)
+                        .Select(group => MissionProgressEvent.ItemAcquired(
+                            group.Key,
+                            group.Aggregate(0U, (total, item) => checked(total + item.ItemQuantity))))
+                        .ToList();
+                    var completesReward = source != null && loot.Remaining().All(items.Contains);
+                    if (source != null)
+                    {
+                        foreach (var item in items)
+                            unitOfWork.CharacterMissionScenario.Add(new CharacterMissionScenarioStepEntry(
+                                client.Player.Id, source.MissionId, source.ClaimKey(item.ItemTemplateId)));
+                        if (completesReward)
+                            events.Add(MissionProgressEvent.Interaction((uint)loot.AttachedObject.EntityClassId));
+                    }
+                    progressPlan = missionManager.PlanProgress(client, events, unitOfWork);
+                    if (completesReward && rewardObjective.ObjectiveState != (byte)MissionObjectiveState.Completed)
+                        throw new GameplayRejectionException("Reward loot did not complete its objective.");
 
                     if (includeCredits && loot.Credits != 0)
                         unitOfWork.Characters.UpdateCharacterCredits(
@@ -739,6 +723,17 @@ namespace Rasa.Managers
                 loot.FullyLooted = true;
                 loot.IsLootable = false;
                 loot.CurrentLooter = 0;
+                if (loot.AttachedObject is { } obj)
+                {
+                    obj.StateId = UseObjectState.TdStateOpened;
+                    obj.IsEnabled = false;
+                    MissionManager.TryPublish(
+                        () => CellManager.Instance.CellCallMethod(obj, new ForceStatePacket(obj.StateId, 0)),
+                        $"object {obj.EntityId} opened state");
+                    MissionManager.TryPublish(
+                        () => DynamicObjectManager.Instance.SetScenarioInteractionEnabled(loot.Map, obj, false),
+                        $"object {obj.EntityId} empty state");
+                }
             }
 
             if (creditsGranted)
@@ -778,11 +773,8 @@ namespace Rasa.Managers
             loot = null;
             var player = client?.Player;
             var map = player?.MapChannel;
-            var limit = client == null ? double.NaN : _distance(client);
-
             if (client == null || player == null || map == null ||
                 client.State != ClientState.Ingame ||
-                !double.IsFinite(limit) || limit <= 0 ||
                 player.State == CharacterState.Dead ||
                 !player.Attributes.TryGetValue(Attributes.Health, out var health) ||
                 health.Current <= 0 ||
@@ -807,14 +799,20 @@ namespace Rasa.Managers
             {
                 var attachedObject = loot.AttachedObject;
                 return attachedObject.LootDispenserEntityId == loot.EntityId &&
+                    attachedObject.IsEnabled &&
                     attachedObject.IsInWorld &&
-                    attachedObject.MapContextId == player.MapContextId &&
+                    client.PendingTransfer == null &&
+                    MapInstanceScope.Contains(map, attachedObject) &&
+                    EntityManager.Instance.TryGetObject(loot.AttachedTo, out var registeredObject) &&
+                    ReferenceEquals(attachedObject, registeredObject) &&
                     map.DynamicObjects.Contains(attachedObject) &&
                     IsFinite(attachedObject.Position) &&
-                    Vector3.Distance(player.Position, attachedObject.Position) <= limit;
+                    Vector3.Distance(player.Position, attachedObject.Position) <= DynamicObjectManager.MaxUseDistance;
             }
 
-            if (!EntityManager.Instance.Creatures.TryGetValue(loot.AttachedTo, out var corpse) ||
+            var limit = _distance(client);
+            if (!double.IsFinite(limit) || limit <= 0 ||
+                !EntityManager.Instance.Creatures.TryGetValue(loot.AttachedTo, out var corpse) ||
                 EntityManager.Instance.GetEntityType(corpse.EntityId) != EntityType.Creature ||
                 (loot.Corpse != null && !ReferenceEquals(loot.Corpse, corpse)) ||
                 corpse.CorpseLootEntityId != loot.EntityId ||
@@ -913,6 +911,8 @@ namespace Rasa.Managers
 
             if (loot.Corpse?.CorpseLootEntityId == loot.EntityId)
                 loot.Corpse.CorpseLootEntityId = 0;
+            if (loot.AttachedObject?.LootDispenserEntityId == loot.EntityId)
+                loot.AttachedObject.LootDispenserEntityId = 0;
 
             return notice;
         }

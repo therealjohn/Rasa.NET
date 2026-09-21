@@ -232,7 +232,7 @@ namespace Rasa.Test.Missions
         private static void PrepareBootcampScenarioClasses()
         {
             var classes = EntityClassManager.Instance.LoadedEntityClasses;
-            foreach (var entityClassId in new uint[] { 24911, 24990, 7862 })
+            foreach (var entityClassId in new uint[] { 24911, 24990, 7862, 29877 })
                 if (!classes.ContainsKey((EntityClasses)entityClassId))
                     classes.Add((EntityClasses)entityClassId, new EntityClass(
                         entityClassId,
@@ -459,7 +459,8 @@ namespace Rasa.Test.Missions
                 manifestation,
                 clan,
                 auction,
-                social);
+                social,
+                factory);
             objects.InitTeleporters();
 
             return new Bootstrap(
@@ -758,7 +759,8 @@ namespace Rasa.Test.Missions
                     manifestation,
                     clan,
                     auction,
-                    social);
+                    social,
+                    factory);
                 objects.InitTeleporters();
                 Manager = manager;
                 Maps = maps;
@@ -769,8 +771,7 @@ namespace Rasa.Test.Missions
                 var freshClient = Context.CreateCompetingClient(Manager);
                 typeof(Client).GetProperty(nameof(Client.AccountEntry))!
                     .SetValue(freshClient, accountEntry);
-                freshClient.Player.AppearanceData ??=
-                    new Dictionary<EquipmentData, AppearanceData>();
+                ConfigureRuntimePlayer(freshClient);
                 freshClient.Player.Class = Client.Player.Class;
                 new InventoryManager(Context, Manager).InitCharacterInventory(freshClient);
                 freshClient.Player.Skills = Maps.GetPlayerSkills(characterId);
@@ -936,6 +937,7 @@ namespace Rasa.Test.Missions
                     EntityManager.Instance.FreeEntity(Client.Player.EntityId);
                 }
 
+                Maps.ReleaseOwnedPrivateInstances(Client.Player.Id);
                 _singletons.Dispose();
                 var directory = Path.GetDirectoryName(WorldContext.Database.GetDbConnection().DataSource);
                 WorldContext.Dispose();
@@ -1075,6 +1077,10 @@ namespace Rasa.Test.Missions
                 .GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
             private readonly FieldInfo _socialField = typeof(SocialManager)
                 .GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+            private readonly FieldInfo _itemsField = typeof(ItemManager)
+                .GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+            private readonly FieldInfo _lootField = typeof(LootDispenserManager)
+                .GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
             private readonly object _previousMaps;
             private readonly object _previousObjects;
             private readonly object _previousCreatures;
@@ -1084,6 +1090,8 @@ namespace Rasa.Test.Missions
             private readonly object _previousClan;
             private readonly object _previousAuction;
             private readonly object _previousSocial;
+            private readonly object _previousItems;
+            private readonly object _previousLoot;
 
             internal ManagerInstances(
                 MapChannelManager maps,
@@ -1094,7 +1102,8 @@ namespace Rasa.Test.Missions
                 ManifestationManager manifestation,
                 object clan,
                 AuctionHouseManager auction,
-                object social)
+                object social,
+                IGameUnitOfWorkFactory factory)
             {
                 _previousMaps = _mapsField.GetValue(null);
                 _previousObjects = _objectsField.GetValue(null);
@@ -1105,6 +1114,8 @@ namespace Rasa.Test.Missions
                 _previousClan = _clanField.GetValue(null);
                 _previousAuction = _auctionField.GetValue(null);
                 _previousSocial = _socialField.GetValue(null);
+                _previousItems = _itemsField.GetValue(null);
+                _previousLoot = _lootField.GetValue(null);
                 _mapsField.SetValue(null, maps);
                 _objectsField.SetValue(null, objects);
                 _creaturesField.SetValue(null, creatures);
@@ -1114,6 +1125,16 @@ namespace Rasa.Test.Missions
                 _clanField.SetValue(null, clan);
                 _auctionField.SetValue(null, auction);
                 _socialField.SetValue(null, social);
+                var items = (ItemManager)Activator.CreateInstance(
+                    typeof(ItemManager),
+                    BindingFlags.Instance | BindingFlags.NonPublic,
+                    binder: null,
+                    args: new object[] { factory },
+                    culture: null)!;
+                items.ItemTemplateItemClass = new Dictionary<uint, EntityClasses>(
+                    ItemManager.Instance.ItemTemplateItemClass);
+                _itemsField.SetValue(null, items);
+                _lootField.SetValue(null, new LootDispenserManager(factory, missionManager: missions));
             }
 
             public void Dispose()
@@ -1127,6 +1148,8 @@ namespace Rasa.Test.Missions
                 _clanField.SetValue(null, _previousClan);
                 _auctionField.SetValue(null, _previousAuction);
                 _socialField.SetValue(null, _previousSocial);
+                _itemsField.SetValue(null, _previousItems);
+                _lootField.SetValue(null, _previousLoot);
             }
         }
     }
