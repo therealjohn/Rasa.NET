@@ -155,12 +155,10 @@ namespace Rasa.Test.Missions
         public void RifleAndLightningUseTheSameStandingTargetsThroughTheFinalHandoff()
         {
             using var harness = BootcampRuntimeTestHarness.Create();
-            var actors = PrepareActors(harness);
-            var deSimone = harness.AddNpc(
-                BootcampRuntimeTestHarness.CorporalDeSimoneCreatureId,
-                BootcampRuntimeTestHarness.CorporalDeSimonePackageId,
-                CratePosition);
-            CreatureManager.Instance.CreateCreatureOnClient(harness.Client, deSimone);
+            var actors = PrepareActors(harness, useWorldSpawns: true);
+            var deSimone = BootcampRuntimeTestHarness.FindNpcByPackage(
+                harness.BootcampMap, BootcampRuntimeTestHarness.CorporalDeSimonePackageId);
+            Assert.IsNotNull(deSimone);
             Accept(harness, actors.McAllister);
             CompleteObjective(harness, actors.Delessio, 4);
             LootCrate(harness);
@@ -209,6 +207,10 @@ namespace Rasa.Test.Missions
             Assert.IsTrue(harness.Manager.TryRewardNpcMission(
                 harness.Client, deSimone.EntityId, 1992, null, null));
             Assert.AreEqual(MissionState.Completed, harness.Client.Player.Missions[1992].State);
+            new NpcManager(harness.Context, harness.Manager).AssignNPCMission(harness.Client,
+                new AssignNPCMissionPacket { NpcEntityId = deSimone.EntityId, MissionId = 1994 });
+            Assert.AreEqual(MissionState.Active, harness.Client.Player.Missions[1994].State);
+            Assert.IsTrue(harness.Drain().OfType<MissionGainedPacket>().Any(packet => packet.MissionId == 1994));
         }
 
         [TestMethod]
@@ -303,21 +305,23 @@ namespace Rasa.Test.Missions
         }
 
         private static (Creature McAllister, Creature Delessio, Creature Hartmann) PrepareActors(
-            BootcampRuntimeTestHarness.Harness harness)
+            BootcampRuntimeTestHarness.Harness harness, bool useWorldSpawns = false)
         {
             harness.MovePlayerTo(CratePosition);
             CellManager.Instance.UpdateVisibility(harness.Client);
-            var mcAllister = harness.AddNpc(
-                BootcampRuntimeTestHarness.MajorMcAllisterCreatureId,
-                position: CratePosition);
-            var delessio = harness.AddNpc(
-                BootcampRuntimeTestHarness.CaptainDelessioCreatureId,
-                BootcampRuntimeTestHarness.CaptainDelessioPackageId,
-                CratePosition);
-            var hartmann = harness.AddNpc(
-                BootcampRuntimeTestHarness.CorporalHartmannCreatureId,
-                BootcampRuntimeTestHarness.CorporalHartmannPackageId,
-                CratePosition);
+            if (useWorldSpawns)
+                harness.SpawnWorldNpcs();
+            var mcAllister = useWorldSpawns
+                ? BootcampRuntimeTestHarness.FindCreature(harness.BootcampMap, BootcampRuntimeTestHarness.MajorMcAllisterCreatureId)
+                : harness.AddNpc(BootcampRuntimeTestHarness.MajorMcAllisterCreatureId, position: CratePosition);
+            var delessio = useWorldSpawns
+                ? BootcampRuntimeTestHarness.FindCreature(harness.BootcampMap, BootcampRuntimeTestHarness.CaptainDelessioCreatureId)
+                : harness.AddNpc(BootcampRuntimeTestHarness.CaptainDelessioCreatureId,
+                    BootcampRuntimeTestHarness.CaptainDelessioPackageId, CratePosition);
+            var hartmann = useWorldSpawns
+                ? BootcampRuntimeTestHarness.FindCreature(harness.BootcampMap, BootcampRuntimeTestHarness.CorporalHartmannCreatureId)
+                : harness.AddNpc(BootcampRuntimeTestHarness.CorporalHartmannCreatureId,
+                    BootcampRuntimeTestHarness.CorporalHartmannPackageId, CratePosition);
             foreach (var npc in new[] { mcAllister, delessio, hartmann })
                 CreatureManager.Instance.CreateCreatureOnClient(harness.Client, npc);
             harness.SeedMission(harness.Client.Player.Id,
@@ -327,6 +331,8 @@ namespace Rasa.Test.Missions
 
         private static void Accept(BootcampRuntimeTestHarness.Harness harness, Creature npc)
         {
+            harness.MovePlayerTo(npc);
+            CellManager.Instance.UpdateVisibility(harness.Client);
             new NpcManager(harness.Context, harness.Manager).AssignNPCMission(harness.Client,
                 new AssignNPCMissionPacket { NpcEntityId = npc.EntityId, MissionId = 1992 });
             Assert.AreEqual(MissionState.Active, harness.Client.Player.Missions[1992].State);
@@ -335,6 +341,8 @@ namespace Rasa.Test.Missions
         private static void CompleteObjective(
             BootcampRuntimeTestHarness.Harness harness, Creature npc, uint objectiveId)
         {
+            harness.MovePlayerTo(npc);
+            CellManager.Instance.UpdateVisibility(harness.Client);
             new NpcManager(harness.Context, harness.Manager).CompleteNPCObjective(harness.Client,
                 new CompleteNPCObjectivePacket
                 {

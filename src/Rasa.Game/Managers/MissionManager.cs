@@ -1084,6 +1084,9 @@ namespace Rasa.Managers
                             definition,
                             log)));
 
+                TryPublish(() => _scenarioService.OnMissionAccepted(client, missionId),
+                    $"mission {missionId} acceptance world state");
+
                 // ClassifyNpcConversation's "dispensable" list is recomputed here, so the giver's
                 // available-mission icon would otherwise keep showing what it showed when this
                 // NPC first became visible (CreatePhysicalEntityOnClient's one-time snapshot) -

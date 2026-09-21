@@ -24,6 +24,7 @@ namespace Rasa.Test.Missions
     using Rasa.Data;
     using Rasa.Game;
     using Rasa.Managers;
+    using Rasa.Navigation;
     using Rasa.Packets.Protocol;
     using Rasa.Repositories.UnitOfWork;
     using Rasa.Repositories.World;
@@ -822,6 +823,64 @@ namespace Rasa.Test.Missions
                 Client.Player.Position = position;
             }
 
+            internal void SpawnWorldNpcs()
+            {
+                var root = new DirectoryInfo(AppContext.BaseDirectory);
+                while (root != null && !File.Exists(Path.Combine(root.FullName, "Rasa.NET.sln")))
+                    root = root.Parent;
+                if (root == null)
+                    throw new DirectoryNotFoundException("Repository root not found.");
+
+                var template = Maps.MapChannelArray[BootcampMapContextId];
+                template.NavMesh = new NavMeshQuery(NavMeshFile.Read(
+                    NavMeshFile.PathFor(Path.Combine(root.FullName, "navmesh"), "adv_bootcamp")));
+                BootcampMap.NavMesh = template.NavMesh;
+
+                foreach (var entry in WorldContext.Set<CreatureEntry>()
+                             .Where(entry => entry.Id >= MajorMcAllisterCreatureId &&
+                                             entry.Id <= CorporalDeSimoneCreatureId))
+                {
+                    var classId = (EntityClasses)entry.ClassId;
+                    if (!EntityClassManager.Instance.LoadedEntityClasses.ContainsKey(classId))
+                        EntityClassManager.Instance.LoadedEntityClasses.Add(classId, new EntityClass(
+                            entry.ClassId, "bootcamp_npc", 0, 0,
+                            new List<AugmentationType> { AugmentationType.Creature, AugmentationType.NPC }, true));
+                    CreatureManager.Instance.LoadedCreatures[entry.Id] = new Creature(entry)
+                    {
+                        Npc = new Npc
+                        {
+                            NpcPackageId = WorldContext.Set<NpcPackageEntry>()
+                                .Where(package => package.Id == entry.Id)
+                                .Select(package => package.PackageId)
+                                .SingleOrDefault(),
+                            NpcMissionIds = Manager.LoadedMissions.Values
+                                .Where(mission => mission.MissionGiver == entry.Id ||
+                                                  mission.MissionReciver == entry.Id)
+                                .Select(mission => mission.MissionId).ToList()
+                        },
+                        AppearanceData = WorldContext.Set<CreatureAppearanceEntry>()
+                            .Where(appearance => appearance.Id == entry.Id)
+                            .ToDictionary(appearance => (EquipmentData)appearance.SlotId,
+                                appearance => new AppearanceData
+                                {
+                                    SlotId = (EquipmentData)appearance.SlotId,
+                                    Class = appearance.ClassId,
+                                    Color = new Color(appearance.Color),
+                                    Hue2 = new Color(2139062144)
+                                })
+                    };
+                }
+
+                var spawns = SpawnPoolManager.Instance;
+                if (spawns.LoadedSpawnPools.Count == 0)
+                    spawns.SpawnPoolInit();
+                spawns.CloneTemplateMap(template, BootcampMap);
+                BootcampMap.SpawnPools.RemoveAll(pool =>
+                    pool.DbId < MajorMcAllisterCreatureId || pool.DbId > CorporalDeSimoneCreatureId);
+                Manager.RebuildScenarioRuntime(Client.Player.Id, BootcampMap);
+                spawns.SpawnPoolWorker(BootcampMap, 0);
+            }
+
             internal void MovePlayerTo(IHasPosition target)
             {
                 if (target != null)
@@ -1030,7 +1089,7 @@ namespace Rasa.Test.Missions
                 MissionContent = new MissionContentRepository(context);
                 NpcPackages = new NpcPackageRepository(context);
                 RandomNames = null;
-                Spawnpools = null;
+                Spawnpools = new SpawnpoolRepository(context);
                 Teleporters = new TeleporterRepository(context);
             }
 
@@ -1084,6 +1143,8 @@ namespace Rasa.Test.Missions
                 .GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
             private readonly FieldInfo _lootField = typeof(LootDispenserManager)
                 .GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+            private readonly FieldInfo _spawnsField = typeof(SpawnPoolManager)
+                .GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
             private readonly object _previousMaps;
             private readonly object _previousObjects;
             private readonly object _previousCreatures;
@@ -1095,6 +1156,7 @@ namespace Rasa.Test.Missions
             private readonly object _previousSocial;
             private readonly object _previousItems;
             private readonly object _previousLoot;
+            private readonly object _previousSpawns;
 
             internal ManagerInstances(
                 MapChannelManager maps,
@@ -1119,6 +1181,7 @@ namespace Rasa.Test.Missions
                 _previousSocial = _socialField.GetValue(null);
                 _previousItems = _itemsField.GetValue(null);
                 _previousLoot = _lootField.GetValue(null);
+                _previousSpawns = _spawnsField.GetValue(null);
                 _mapsField.SetValue(null, maps);
                 _objectsField.SetValue(null, objects);
                 _creaturesField.SetValue(null, creatures);
@@ -1138,6 +1201,7 @@ namespace Rasa.Test.Missions
                     ItemManager.Instance.ItemTemplateItemClass);
                 _itemsField.SetValue(null, items);
                 _lootField.SetValue(null, new LootDispenserManager(factory, missionManager: missions));
+                _spawnsField.SetValue(null, new SpawnPoolManager(factory));
             }
 
             public void Dispose()
@@ -1153,6 +1217,7 @@ namespace Rasa.Test.Missions
                 _socialField.SetValue(null, _previousSocial);
                 _itemsField.SetValue(null, _previousItems);
                 _lootField.SetValue(null, _previousLoot);
+                _spawnsField.SetValue(null, _previousSpawns);
             }
         }
     }

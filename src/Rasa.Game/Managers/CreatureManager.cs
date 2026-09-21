@@ -367,7 +367,7 @@ namespace Rasa.Managers
                 new AttributeInfoPacket(creature.Attributes),
                 new TargetCategoryPacket(creature.Faction),
                 new UpdateAttributesPacket(creature.Attributes, 0),
-                new IsRunningPacket(false)
+                new IsRunningPacket(creature.IsRunning)
             };
 
             client.CallMethod(SysEntity.ClientMethodId, new CreatePhysicalEntityPacket(creature.EntityId, creature.EntityClass, entityData));

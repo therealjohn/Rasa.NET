@@ -21,6 +21,7 @@ namespace Rasa.Managers
         bool TryExecute(Client client, uint missionId, uint scenarioId);
         bool TryExecuteFailureTransition(Client client, uint missionId, uint scenarioId);
         bool TryActivateSpawnGroup(Client client, uint missionId, uint spawnGroupId);
+        void OnMissionAccepted(Client client, uint missionId);
         bool Tick(Client client);
         void Rebuild(uint characterId, MapChannel mapChannel);
         void Release(uint characterId, MapChannel mapChannel);
@@ -140,6 +141,9 @@ namespace Rasa.Managers
                     client.PendingTransfer != null)
                     return false;
 
+                if (client.Player.Missions.ContainsKey(BootcampEquipmentCrateLoot.MissionId))
+                    EnsureBootcampAlisterDestination(client.Player.Id, client.Player.MapChannel);
+
                 foreach (var mission in client.Player.Missions.Values
                              .Where(mission => mission.State == MissionState.Active)
                              .OrderBy(mission => mission.MissionId))
@@ -173,16 +177,21 @@ namespace Rasa.Managers
             if (manager == null)
                 return;
 
+            EnsureBootcampEquipmentCrate(characterId, mapChannel, manager);
             using var unitOfWork = _gameUnitOfWorkFactory().CreateChar();
             var missions = unitOfWork.CharacterMissions.Get(characterId)
                 .Where(mission =>
                     mission.MissionState == (uint)MissionState.Active ||
                     mission.MissionState == (uint)MissionState.Failed ||
-                    (mission.MissionState == (uint)MissionState.Completed &&
+                    ((mission.MissionState == (uint)MissionState.Success ||
+                      mission.MissionState == (uint)MissionState.Completed) &&
                      mission.MissionId == BootcampEquipmentCrateLoot.MissionId &&
                      mapChannel.MapInfo?.MapContextId == 1985))
                 .OrderBy(mission => mission.MissionId)
                 .ToArray();
+            if (missions.Any(mission => mission.MissionId == BootcampEquipmentCrateLoot.MissionId))
+                EnsureBootcampAlisterDestination(characterId, mapChannel);
+
             foreach (var durableMission in missions)
             {
                 if (!manager.TryGetScenarioDefinitions(
@@ -195,7 +204,8 @@ namespace Rasa.Managers
                 foreach (var scenario in scenarios.Values.OrderBy(scenario => scenario.ScenarioId))
                     foreach (var step in scenario.Steps)
                     {
-                        if (durableMission.MissionState == (uint)MissionState.Completed &&
+                        if ((durableMission.MissionState == (uint)MissionState.Success ||
+                             durableMission.MissionState == (uint)MissionState.Completed) &&
                             !IsRewardCrateSpawn(durableMission.MissionId, step))
                             continue;
 
@@ -215,6 +225,13 @@ namespace Rasa.Managers
                             state);
                     }
             }
+        }
+
+        public void OnMissionAccepted(Client client, uint missionId)
+        {
+            if (missionId == BootcampEquipmentCrateLoot.MissionId &&
+                client.Player.MapChannel?.MapInfo?.MapContextId == 1985)
+                Rebuild(client.Player.Id, client.Player.MapChannel);
         }
 
         public void Release(uint characterId, MapChannel mapChannel)
@@ -566,11 +583,59 @@ namespace Rasa.Managers
 
         private const uint BootcampEquipmentCrateEntityClassId = 29877;
         private static readonly MissionLootSource BootcampEquipmentCrateLoot = new(1992, 1, 58);
+        private const uint BootcampAlisterCreatureId = 510203;
+        private static readonly Vector3 BootcampAlisterDestination = new(400, 120, 150);
+        private const double BootcampAlisterOrientation = 2.175;
 
         private static bool IsRewardCrateSpawn(uint missionId, MissionScenarioStepDefinition step) =>
             missionId == BootcampEquipmentCrateLoot.MissionId &&
             step.Kind == MissionScenarioStepKind.SpawnDynamicObject &&
             step.EntityClassId == BootcampEquipmentCrateEntityClassId;
+
+        private void EnsureBootcampEquipmentCrate(
+            uint characterId, MapChannel mapChannel, MissionManager manager)
+        {
+            if (mapChannel.MapInfo?.MapContextId != 1985 ||
+                !mapChannel.IsPrivateInstance || mapChannel.OwnerCharacterId != characterId ||
+                !manager.TryGetScenarioDefinitions(BootcampEquipmentCrateLoot.MissionId, out var scenarios))
+                return;
+
+            var step = scenarios.Values.SelectMany(scenario => scenario.Steps)
+                .SingleOrDefault(step => IsRewardCrateSpawn(BootcampEquipmentCrateLoot.MissionId, step));
+            if (step == null)
+                return;
+
+            EnsureScenarioDynamicObject(
+                mapChannel,
+                BuildDynamicObjectRuntimeKey(characterId, BootcampEquipmentCrateLoot.MissionId,
+                    step.ContentRevision, step.AttemptKey, step.DynamicObjectKey),
+                (EntityClasses)step.EntityClassId.Value,
+                new Vector3((float)step.PosX.Value, (float)step.PosY.Value, (float)step.PosZ.Value),
+                step.Orientation.Value,
+                false,
+                step.DelayMilliseconds,
+                BootcampEquipmentCrateLoot);
+        }
+
+        private static void EnsureBootcampAlisterDestination(uint characterId, MapChannel mapChannel)
+        {
+            if (mapChannel?.MapInfo?.MapContextId != 1985 ||
+                !mapChannel.IsPrivateInstance || mapChannel.OwnerCharacterId != characterId)
+                return;
+
+            foreach (var pool in mapChannel.SpawnPools.Where(pool => pool.DbId == BootcampAlisterCreatureId))
+            {
+                pool.Position = BootcampAlisterDestination;
+                pool.Rotation = (float)BootcampAlisterOrientation;
+            }
+
+            foreach (var alister in mapChannel.MapCellInfo.Cells.Values
+                         .SelectMany(cell => cell.CreatureList).Distinct()
+                         .Where(creature => creature.DbId == BootcampAlisterCreatureId &&
+                                            creature.SpawnPool?.DbId == BootcampAlisterCreatureId))
+                BehaviorManager.Instance.SetActionScriptedMove(
+                    mapChannel, alister, BootcampAlisterDestination, BootcampAlisterOrientation);
+        }
 
         private void PlanDespawnDynamicObject(
             MissionActionContext context,

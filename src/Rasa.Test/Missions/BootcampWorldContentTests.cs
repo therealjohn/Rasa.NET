@@ -609,6 +609,52 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
+        public void BootcampWorldSetupMigrationGroundsDeSimoneAndEnablesAlistersRun()
+        {
+            WithDisposableSqliteWorld((context, _) =>
+            {
+                var migrator = context.GetService<IMigrator>();
+                migrator.Migrate("20260921204500_BootcampObjectiveIndicators");
+                var before = context.SpawnPoolEntries.AsNoTracking().Single(entry => entry.Id == 510206);
+                Assert.AreEqual(114.0, before.PosY);
+                Assert.AreEqual(0U, context.Set<CreatureEntry>().AsNoTracking()
+                    .Single(entry => entry.Id == 510203).RunSpeed);
+
+                migrator.Migrate();
+
+                var after = context.SpawnPoolEntries.AsNoTracking().Single(entry => entry.Id == 510206);
+                Assert.AreEqual(120.059, after.PosY, 0.001);
+                Assert.AreEqual(before.PosX, after.PosX);
+                Assert.AreEqual(before.PosZ, after.PosZ);
+                Assert.AreEqual(before.Rotation, after.Rotation);
+                Assert.AreEqual(before.Creature1Id, after.Creature1Id);
+                Assert.AreEqual(7U, context.Set<CreatureEntry>().AsNoTracking()
+                    .Single(entry => entry.Id == 510203).RunSpeed);
+                Assert.IsFalse(Validate(LoadSnapshot(context), context).BlocksReadiness);
+
+                migrator.Migrate("20260921204500_BootcampObjectiveIndicators");
+
+                Assert.AreEqual(114.0, context.SpawnPoolEntries.AsNoTracking()
+                    .Single(entry => entry.Id == 510206).PosY);
+                Assert.AreEqual(0U, context.Set<CreatureEntry>().AsNoTracking()
+                    .Single(entry => entry.Id == 510203).RunSpeed);
+            });
+        }
+
+        [TestMethod]
+        [DataRow(typeof(SqliteWorldContext), "20260921204500_BootcampObjectiveIndicators", "20260921231500_BootcampWorldSetup")]
+        [DataRow(typeof(MySqlWorldContext), "20260921204510_BootcampObjectiveIndicators", "20260921231510_BootcampWorldSetup")]
+        public void BootcampWorldSetupMigrationHasProviderParity(
+            Type contextType, string previous, string current)
+        {
+            using var context = CreateContext(contextType, "unused");
+            var sql = NormalizeSql(context.GetService<IMigrator>().GenerateScript(previous, current));
+            StringAssert.Contains(sql, "update spawnpool set pos_y = 120.059 where id = 510206 and map_context_id = 1985");
+            StringAssert.Contains(sql, "update creature set run_speed = 7 where id = 510203");
+            Assert.IsFalse(context.Database.HasPendingModelChanges());
+        }
+
+        [TestMethod]
         public void BootcampMissionContentSeedInsertThrowsWhenGenericRowsDoNotMatchEntityColumns()
         {
             var builder = new MigrationBuilder("Microsoft.EntityFrameworkCore.Sqlite");

@@ -459,6 +459,14 @@ namespace Rasa.Managers
                     0,
                     dynamicObject.WindupTime,
                     dynamicObject.ActivateMission));
+
+            if (enabled && dynamicObject.MissionLootSource != null &&
+                CellManager.TryGetCellCoordinates(dynamicObject.Position, out var cellX, out var cellZ))
+            {
+                var cells = CellManager.Instance.CreateCellMatrix(mapChannel, cellX, cellZ);
+                foreach (var client in CellManager.Instance.GetClientsInCells(mapChannel, cells))
+                    PublishRewardLoot(client, dynamicObject);
+            }
         }
 
         // 1 object to n client's
@@ -511,7 +519,16 @@ namespace Rasa.Managers
             }
 
             client.CallMethod(SysEntity.ClientMethodId, new CreatePhysicalEntityPacket(dynamicObject.EntityId, dynamicObject.EntityClassId, entityData));
-            if (dynamicObject.MissionLootSource != null &&
+            PublishRewardLoot(client, dynamicObject);
+        }
+
+        private static void PublishRewardLoot(Client client, DynamicObject dynamicObject)
+        {
+            var source = dynamicObject.MissionLootSource;
+            if (source != null &&
+                client.Player?.Missions.TryGetValue(source.MissionId, out var mission) == true &&
+                mission.Objectives.TryGetValue(source.ObjectiveId, out var objective) &&
+                objective.State is MissionObjectiveState.Incomplete or MissionObjectiveState.Completed &&
                 MapInstanceScope.Contains(client.Player?.MapChannel, dynamicObject))
             {
                 var lootManager = LootDispenserManager.Instance;

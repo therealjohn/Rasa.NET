@@ -301,6 +301,13 @@ creature looting. The Use acknowledgement precedes the menu; it never transfers
 items. Do not disable Usable or substitute a different entity class to change
 click targeting.
 
+The crate is present at `(398, 122, 173)` when the private Bootcamp map is
+created, before mission acceptance. Its interaction is disabled until Delessio's
+gear briefing activates the loot objective. Activation reuses the same physical
+entity; it does not replace or duplicate the crate. Dormant crates have no loot
+dispenser. A crate already visible when the objective activates receives its
+loot attachment without requiring the player to leave the area or reconnect.
+
 The dispenser is introduced after the crate enters the client's visible cells.
 Opening introduces the real item entities before the menu packet. Selecting a
 row claims only that row; Loot All claims the remaining contents. Proximity
@@ -332,6 +339,41 @@ confirm all six rows are visible without inventory changes; close and reopen;
 take one row and reconnect; collect the remainder with Loot All; confirm the
 crate stays in place and cannot grant duplicates. Repeat creature looting to
 check that its existing interaction is unchanged.
+
+## Bootcamp NPC staging and the DeSimone handoff
+
+After the committed acceptance of Gearing Up for Battle (`1992`), Major
+McAllister runs along the map's navigation mesh to `(400, 120, 150)`, stops at
+orientation `2.175`, and remains there. Rejected acceptance does not move him.
+The accepted mission is the durable record of this departure: reconnecting
+during or after the run restores him at the destination, not at his original
+post. His movement and spawn position affect only the owning character's
+private map.
+
+Corporal DeSimone is a static NPC, creature `510206`, conversation package
+`2562`. His corrected spawn is `(391.5, 120.059, 164.8)`. The existing horizontal
+position is retained; the height is measured from the checked-in Bootcamp
+navigation mesh. The previous height, `114`, placed him about six units beneath
+the walkable floor, outside the normal three-unit spawn-snapping tolerance.
+This is a terrain-validated reconstruction, not a verified retail coordinate.
+
+Finishing Hartmann's training makes Gearing Up ready to turn in at DeSimone.
+The mission briefing remains until that turn-in; training completion is not an
+automatic reward claim. DeSimone then offers Capture the Flag (`1994`) through
+the existing NPC conversation.
+
+Apply the `BootcampWorldSetup` **World** migration when deploying. It corrects
+DeSimone's height and gives McAllister a nonzero run speed while retaining his
+zero wander speed. It does not reset characters or change the mission chain.
+
+```powershell
+dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~BootcampMapSetupTests|FullyQualifiedName~BootcampWorldSetupMigration"
+```
+
+In the native client, verify the locked crate before accepting Gearing Up,
+watch McAllister run and stop at the supplied pose, and reconnect to confirm
+that he stays there. Finish rifle and Lightning training, find DeSimone above
+ground, turn in Gearing Up, and accept Capture the Flag without relogging.
 
 ## Gearing Up conversation and practice targets
 
