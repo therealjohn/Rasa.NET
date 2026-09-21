@@ -1203,6 +1203,10 @@ namespace Rasa.Migrations.MySqlWorld
                         .HasColumnType("tinyint(3) unsigned")
                         .HasColumnName("kind");
 
+                    b.Property<uint?>("NpcPackageId")
+                        .HasColumnType("int(11) unsigned")
+                        .HasColumnName("npc_package_id");
+
                     b.Property<byte?>("ObjectiveState")
                         .HasColumnType("tinyint(3) unsigned")
                         .HasColumnName("objective_state");

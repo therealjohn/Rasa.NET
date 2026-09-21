@@ -44,10 +44,10 @@ namespace Rasa.Managers
         private const uint BootcampAliaWaypointId = 57;
         private const uint BootcampAliaHospitalId = 103;
         private const byte BootcampAbilitySlot = 0;
-        private const double BootcampStartCoordX = 357.90054d;
-        private const double BootcampStartCoordY = 120.32544d;
-        private const double BootcampStartCoordZ = 156.5188d;
-        private const double BootcampStartRotation = 0d;
+        private const double BootcampStartCoordX = 389.8046875d;
+        private const double BootcampStartCoordY = 136.78515625d;
+        private const double BootcampStartCoordZ = -80.6640625d;
+        private const double BootcampStartRotation = 3.11637806892395d;
         private const uint BootcampArrivalMapContextId = 1220;
         private const double BootcampArrivalCoordX = 884.11d;
         private const double BootcampArrivalCoordY = 305.8d;
@@ -839,6 +839,8 @@ namespace Rasa.Managers
                                 unitOfWork,
                                 character.Id,
                                 BootcampInitiationMissionId);
+                            client.PendingMissionAnnouncements.Add(BootcampInitiationMissionId);
+                            Logger.WriteLog(LogType.Debug, $"[MissionDiag] character {character.Id}: Pending->Bootcamp transition fired; queued mission {BootcampInitiationMissionId} for announcement.");
                         }
 
                         startingExperience =

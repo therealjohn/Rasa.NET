@@ -65,6 +65,10 @@ namespace Rasa.Services.Preloader
         internal const uint PracticeDummyCreatureId = 510211;
         internal const uint LightningDummyCreatureId = 510212;
         internal const uint CommanderRogersCreatureId = 100;
+        // client npcgreetinglanguage text ids for the Eloh hologram's ForceConverse lines - no
+        // NPC entity involved, so no creature/package/spawn entries for it.
+        private const uint ElohBridgeGreetingId = 1635;
+        private const uint ElohTerraceGreetingId = 1636;
         private const byte MissionCompletedState = 4;
         private const byte MissionFailedState = 2;
         private const byte ObjectiveInactiveState = 4;
@@ -196,7 +200,7 @@ namespace Rasa.Services.Preloader
         internal static IEnumerable<object[]> NpcSpawnpools()
         {
             yield return SpawnPool(MajorMcAllisterCreatureId, 387.2, 125.57, 53.3, 0.0, BootcampMapContextId, MajorMcAllisterCreatureId, "McAllister");
-            yield return SpawnPool(CaptainDelessioCreatureId, 398.9, 114.0, 173.3, 0.0, BootcampMapContextId, CaptainDelessioCreatureId, "Delessio");
+            yield return SpawnPool(CaptainDelessioCreatureId, 401.0, 122.0, 170.0, 1.674436, BootcampMapContextId, CaptainDelessioCreatureId, "Delessio");
             yield return SpawnPool(CorporalHartmannCreatureId, 385.7, 119.4, 166.7, 0.0, BootcampMapContextId, CorporalHartmannCreatureId, "Hartmann");
             yield return SpawnPool(CorporalDeSimoneCreatureId, 391.5, 114.0, 164.8, 0.0, BootcampMapContextId, CorporalDeSimoneCreatureId, "DeSimone");
         }
@@ -223,16 +227,22 @@ namespace Rasa.Services.Preloader
             yield return Objective(1990, 1, 21148, 21149, 1, "Approach the Eloh Hologram");
             yield return Objective(1990, 2, 21150, 21151, 2, "Approach the Eloh Hologram", initialState: ObjectiveInactiveState);
 
-            yield return Objective(1992, 10, 21165, 21166, 1, "McAllister handoff acceptance", initialState: ObjectiveCompletedState);
-            yield return Objective(1992, 4, 21482, 21483, 2, "Speak to Captain Delessio");
-            yield return Objective(1992, 1, 21174, 21175, 3, "Get your gear from the nearby crate", initialState: ObjectiveInactiveState);
-            yield return Objective(1992, 2, 21176, 21177, 4, "Equip the gear", initialState: ObjectiveInactiveState);
-            yield return Objective(1992, 5, 21485, 21486, 5, "Speak to Captain Delessio", initialState: ObjectiveInactiveState);
-            yield return Objective(1992, 6, 21489, 21490, 6, "Speak to Corporal Hartmann by the Firing Range", initialState: ObjectiveInactiveState);
-            yield return Objective(1992, 3, 21178, 21179, 7, "Shoot the Practice Dummy", initialState: ObjectiveInactiveState);
-            yield return Objective(1992, 9, 21663, 21664, 8, "Speak to Corporal Hartmann", initialState: ObjectiveInactiveState);
-            yield return Objective(1992, 8, 21666, 21667, 9, "Use Lightning on the Target Dummy", initialState: ObjectiveInactiveState);
-            yield return Objective(1992, 7, 21492, 21493, 10, "Speak to Corporal Hartmann", initialState: ObjectiveInactiveState);
+            // Mission 1992 has no objective 10 in the client's own compiled missionobjective
+            // table (only 1-9 exist for this mission id) - inventing one to represent "already
+            // accepted from McAllister" is not renderable; the client looks up objective text by
+            // the (missionId, objectiveId) key baked into its own data, not by server-sent text
+            // ids, so a key with no client-side entry always produces ID_ERR_MISSING_TRANSLATION
+            // regardless of what text ids are sent. Objective 4 (Delessio greeting) is the
+            // mission's real first objective and is active from acceptance.
+            yield return Objective(1992, 4, 21482, 21483, 1, "Speak to Captain Delessio");
+            yield return Objective(1992, 1, 21174, 21175, 2, "Get your gear from the nearby crate", initialState: ObjectiveInactiveState);
+            yield return Objective(1992, 2, 21176, 21177, 3, "Equip the gear", initialState: ObjectiveInactiveState);
+            yield return Objective(1992, 5, 21485, 21486, 4, "Speak to Captain Delessio", initialState: ObjectiveInactiveState);
+            yield return Objective(1992, 6, 21489, 21490, 5, "Speak to Corporal Hartmann by the Firing Range", initialState: ObjectiveInactiveState);
+            yield return Objective(1992, 3, 21178, 21179, 6, "Shoot the Practice Dummy", initialState: ObjectiveInactiveState);
+            yield return Objective(1992, 9, 21663, 21664, 7, "Speak to Corporal Hartmann", initialState: ObjectiveInactiveState);
+            yield return Objective(1992, 8, 21666, 21667, 8, "Use Lightning on the Target Dummy", initialState: ObjectiveInactiveState);
+            yield return Objective(1992, 7, 21492, 21493, 9, "Speak to Corporal Hartmann", initialState: ObjectiveInactiveState);
 
             yield return Objective(1994, 4, 21670, 21671, 1, "Speak to Corporal DeSimone");
             yield return Objective(1994, 2, 21336, 21337, 2, "Find a way out of the cave", initialState: ObjectiveInactiveState);
@@ -291,12 +301,12 @@ namespace Rasa.Services.Preloader
             yield return AreaTrigger(1990, 2, 1, 431, "Approach marker 431");
 
             yield return ConversationTrigger(1992, 4, 1, 1, 2560, 1, "Delessio instructions");
-            yield return ProgressTrigger(1992, 1, 1, 1, ProgressInteractionUsed, 7862, "Use equipment crate");
-            yield return ProgressTrigger(1992, 2, 1, 1, ProgressItemEquipped, 13066, "Equip Astra boots", sourceSpawnResolved: true);
-            yield return ProgressTrigger(1992, 2, 2, 1, ProgressItemEquipped, 13096, "Equip Recruit gloves", sourceSpawnResolved: true);
-            yield return ProgressTrigger(1992, 2, 3, 1, ProgressItemEquipped, 13156, "Equip Recruit legs", sourceSpawnResolved: true);
-            yield return ProgressTrigger(1992, 2, 4, 1, ProgressItemEquipped, 13186, "Equip Recruit vest", sourceSpawnResolved: true);
-            yield return ProgressTrigger(1992, 2, 5, 1, ProgressItemEquipped, 13713, "Equip Shinobi rifle", sourceSpawnResolved: true);
+            yield return ProgressTrigger(1992, 1, 1, 1, ProgressInteractionUsed, 29877, "Use equipment crate");
+            yield return ProgressTrigger(1992, 2, 1, 1, ProgressItemEquipped, 13066, "Equip Motor Assist Armor Boots", sourceSpawnResolved: true);
+            yield return ProgressTrigger(1992, 2, 2, 1, ProgressItemEquipped, 13096, "Equip Motor Assist Armor Gloves", sourceSpawnResolved: true);
+            yield return ProgressTrigger(1992, 2, 3, 1, ProgressItemEquipped, 13156, "Equip Motor Assist Armor Legs", sourceSpawnResolved: true);
+            yield return ProgressTrigger(1992, 2, 4, 1, ProgressItemEquipped, 13186, "Equip Motor Assist Armor Vest", sourceSpawnResolved: true);
+            yield return ProgressTrigger(1992, 2, 5, 1, ProgressItemEquipped, 13713, "Equip Rifle", sourceSpawnResolved: true);
             yield return ConversationTrigger(1992, 5, 1, 1, 2560, 1, "Return to Delessio");
             yield return ConversationTrigger(1992, 6, 1, 1, 2563, 1, "Report to Hartmann");
             yield return ProgressTrigger(1992, 3, 1, 1, ProgressCreatureKilled, PracticeDummyCreatureId, "Destroy the practice dummy");
@@ -326,6 +336,9 @@ namespace Rasa.Services.Preloader
             yield return CompleteAction(1990, 1, 1, 1, 1, "Complete bridge approach");
             yield return RevealAction(1990, 1, 1, 2, 2, "Reveal terrace approach");
             yield return ActivateAction(1990, 1, 1, 3, 2, "Activate terrace approach");
+            yield return AmbientConversationAction(1990, 1, 1, 4, ElohBridgeGreetingId, "Eloh speaks at the bridge");
+            yield return AmbientConversationAction(1990, 2, 1, 1, ElohTerraceGreetingId, "Eloh speaks at the terrace");
+            yield return RewardAction(1990, 2, 1, 2, 1, "Reference mission reward");
 
             yield return CompleteAction(1992, 4, 1, 1, 4, "Complete Delessio greeting");
             yield return StartScenarioAction(1992, 4, 1, 2, 1, "Start equipment crate scene");
@@ -407,6 +420,12 @@ namespace Rasa.Services.Preloader
 
         internal static IEnumerable<object[]> MissionRewards()
         {
+            // Initiation had no reward definition row at all, which is why turning it in to
+            // McAllister never finished: TryGrantNpcMission/TryRewardNpcMission require one
+            // unconditionally (independent of any GrantReward mission_action), so with none
+            // present the reward request always rejected and the mission stayed stuck in
+            // MissionState.Success forever, never clearing from the log.
+            yield return new object[] { 1990U, Revision, 1U, MissionContentRequirement.Required, 100U, 0U, 0U, (byte)0, "1990 completion reward" };
             yield return new object[] { 1992U, Revision, 1U, MissionContentRequirement.Required, 1250U, 200U, 0U, (byte)0, "1992 completion reward" };
             yield return new object[] { 1992U, Revision, 58U, MissionContentRequirement.Required, 0U, 0U, 0U, (byte)0, "1992 equipment crate loadout" };
             yield return new object[] { 1994U, Revision, 1U, MissionContentRequirement.Required, 5000U, 0U, 0U, (byte)0, "1994 completion reward" };
@@ -415,19 +434,28 @@ namespace Rasa.Services.Preloader
 
         internal static IEnumerable<object[]> MissionRewardItems()
         {
-            yield return RewardItem(1992, 58, 1, MissionRewardItemKind.Fixed, 13066, 1);
-            yield return RewardItem(1992, 58, 2, MissionRewardItemKind.Fixed, 13096, 1);
-            yield return RewardItem(1992, 58, 3, MissionRewardItemKind.Fixed, 13156, 1);
-            yield return RewardItem(1992, 58, 4, MissionRewardItemKind.Fixed, 13186, 1);
-            yield return RewardItem(1992, 58, 5, MissionRewardItemKind.Fixed, 13713, 1);
+            // Item template ids resolved by joining this project's own itemtemplate_itemclass
+            // (whose itemClassId is an EntityClasses value, per the remarks on
+            // ItemTemplateRequirementEntry) against the client's own
+            // physicalentityclassnamelanguage name table and itemtemplate_requirement (also
+            // keyed by that same EntityClasses id space). All five are confirmed level-1
+            // (req_type=ReqXpLevel, req_value=1) - correct for a bootcamp reward - and correctly
+            // typed (Motor Assist Armor Boots/Gloves/Legs/Vest, Rifle). See
+            // docs/mission-authoring.md for the general technique and why the manufacturer
+            // prefix (Teleract/Hailstorm/Shinobi/...) can't be verified or rendered here.
+            yield return RewardItem(1992, 58, 1, MissionRewardItemKind.Fixed, 13066, 1); // Motor Assist Armor Boots (class 15542)
+            yield return RewardItem(1992, 58, 2, MissionRewardItemKind.Fixed, 13096, 1); // Motor Assist Armor Gloves (class 15572)
+            yield return RewardItem(1992, 58, 3, MissionRewardItemKind.Fixed, 13156, 1); // Motor Assist Armor Legs (class 15632)
+            yield return RewardItem(1992, 58, 4, MissionRewardItemKind.Fixed, 13186, 1); // Motor Assist Armor Vest (class 15662)
+            yield return RewardItem(1992, 58, 5, MissionRewardItemKind.Fixed, 13713, 1); // Rifle (class 27220)
         }
 
         internal static IEnumerable<object[]> MissionIndicators()
         {
-            yield return Indicator(1990, 1, 430, 387.22, 118.75, -28.3, 10.0, "Eloh approach 1");
-            yield return Indicator(1990, 2, 431, 387.83, 112.75, 6.71, 10.0, "Eloh approach 2");
+            yield return Indicator(1990, 1, 430, 389.08984375, 132.98828125, -28.390625, 10.0, "Eloh approach 1");
+            yield return Indicator(1990, 2, 431, 388.80078125, 132.98828125, 6.3046875, 10.0, "Eloh approach 2");
 
-            yield return Indicator(1992, 1, 433, 397.3, 114.0, 173.7, 6.0, "Equipment crate");
+            yield return Indicator(1992, 1, 433, 398.0, 122.0, 173.0, 6.0, "Equipment crate");
             yield return Indicator(1992, 6, 434, 384.7, 119.4, 186.8, 10.0, "Firing range");
 
             yield return Indicator(1994, 2, 439, 279.05, 120.5, 66.07, 10.0, "Cave-in location");
@@ -444,8 +472,8 @@ namespace Rasa.Services.Preloader
 
         internal static IEnumerable<object[]> MissionAreas()
         {
-            yield return Area(1990, 430, 387.22, 118.75, -28.3, 10.0, "1990 obj1 area");
-            yield return Area(1990, 431, 387.83, 112.75, 6.71, 10.0, "1990 obj2 area");
+            yield return Area(1990, 430, 389.08984375, 132.98828125, -28.390625, 10.0, "1990 obj1 area");
+            yield return Area(1990, 431, 388.80078125, 132.98828125, 6.3046875, 10.0, "1990 obj2 area");
 
             yield return Area(1994, 439, 279.05, 120.5, 66.07, 10.0, "1994 cave-in");
             yield return Area(1994, 437, 95.1, 109.25, 150.8, 20.0, "1994 base center");
@@ -518,9 +546,35 @@ namespace Rasa.Services.Preloader
 
         internal static IEnumerable<object[]> MissionScenarioSteps()
         {
-            yield return SpawnDynamicObjectStep(1992, 1, 1, "bootcamp-equipment-crate", 7862, 397.3, 114.0, 173.7, 0.0, true, "Spawn equipment crate");
+            // Entity class 29877 (UsableTreasureDispHumCrateV06, augmentation TREASUREDISPENSER -
+            // "drops loot into inventory when used") is the correct crate, confirmed visually via
+            // TRRM (github.com/Dahrkael/TRRM): its mesh id 49899 is generated.client.stringtable's
+            // 'prop_human_crate_usable_v01.geo'. The "V01" in the model filename and the "V01"..
+            // "V06" suffixes on the entity class names are unrelated numbering schemes - do not
+            // assume they line up. (7861/7863, tried first, were the entity classes literally
+            // named V01/V02 - wrong guess on both counts.) There is also a matching
+            // 'prop_human_crate_usable_v01_opening.anm' opening animation alongside the mesh.
+            //
+            // The 100ms windup (in place of the 10s DefaultScenarioUseWindupMs) matches the
+            // client's own generated.client.usabledata, which has no entry at all for this whole
+            // crate family - every UsableTreasureDispHumCrateV01-V06 id is
+            // (None, None, None, None, None) - so usable.py's own fallback applies
+            // (useObjectArgId defaults to 1, the same id this project already uses for
+            // FootlockerUseArgId) regardless of the DynamicObjectType this scenario step spawns
+            // it as. See FootlockerRecovery in DynamicObjectManager.cs, which used to be an empty
+            // stub and is why completing the windup bar previously did nothing at all.
+            yield return SpawnDynamicObjectStep(1992, 1, 1, "bootcamp-equipment-crate", 29877, 398.0, 122.0, 173.0, 0.0, true, "Spawn equipment crate", delayMilliseconds: 100);
             yield return GrantRewardPackageStep(1992, 2, 1, 58, "Grant crate loadout");
             yield return DespawnDynamicObjectStep(1992, 2, 2, "bootcamp-equipment-crate", "Remove used equipment crate");
+            // Without these, the Motor Assist Armor and the rifle just granted are equipment the
+            // character has no proficiency for yet - Novice (level 1) is the minimum training
+            // itemtemplate_requirement_skill gates on, and nothing before this point in bootcamp
+            // grants either skill.
+            // ability_id has a CK_mission_scenario_step_numeric_bounds floor of 1 even when no
+            // ability_slot is set (so nothing is placed on the hotbar) - there is no real active
+            // ability behind either of these, only the passive proficiency level itself.
+            yield return GrantSkillAbilityStep(1992, 2, 3, 1U, 1U, 1, null, "Grant Firearms training (Novice)");
+            yield return GrantSkillAbilityStep(1992, 2, 4, 19U, 1U, 1, null, "Grant Motor Assist Armor training (Novice)");
             yield return SpawnGroupStep(1992, 3, 1, 1, "Spawn practice dummy");
             yield return GrantSkillAbilityStep(1992, 4, 1, 49U, 194U, 1, 0, "Grant Recruit Lightning");
             yield return PlayTutorialStep(1992, 4, 2, 10000015U, null, "Prompt the player to use Lightning");
@@ -593,22 +647,24 @@ namespace Rasa.Services.Preloader
                 "https://raw.githubusercontent.com/Blizz127/tabula-rasa-server/2f0cbbdfe4bb8440286261b205f78d75fca85d0c/docs/evidence/bootcamp-d11-positions.json",
                 @"C:\Users\johmil\Projects\trpython\data\generated\client\language\english\missionobjectiveindicatorlanguage.pyo_dis", 0.8,
                 "position_key=area.1990.1 and area.1990.2; measured then snapped to adv_bootcamp navmesh");
+            yield return Evidence(1990, 3, MissionEvidenceOwnerKind.Reward, 1, MissionEvidenceSourceKind.Reconstruction,
+                null, "no client source: rewards are server-authoritative, never part of the client's compiled tables", 0.3,
+                "placeholder low tutorial-tier experience, no items, pending a real retail reference");
 
             yield return Evidence(1992, 1, MissionEvidenceOwnerKind.Mission, 1992, MissionEvidenceSourceKind.Client, null,
                 @"C:\Users\johmil\Projects\trpython\data\generated\client\objectiveconversation.pyo_dis", 1.0,
                 "objectiveconversation binds packages 2560 and 2563 for 1992 conversations");
-            yield return Evidence(1992, 2, MissionEvidenceOwnerKind.Objective, 10, MissionEvidenceSourceKind.Reconstruction,
-                null,
-                @"C:\Users\johmil\Projects\trpython\data\generated\client\missionconversation.pyo_dis", 0.8,
-                "client objectiveconversation has no McAllister row for 1992, so objective 10 reconstructs the McAllister handoff from missionconversation 1992/1-4 and missiontextlanguage 21165/21166 without renumbering client objectives");
             yield return Evidence(1992, 3, MissionEvidenceOwnerKind.Reward, 58, MissionEvidenceSourceKind.Reconstruction,
-                "https://raw.githubusercontent.com/Blizz127/tabula-rasa-server/2f0cbbdfe4bb8440286261b205f78d75fca85d0c/docs/evidence/bootcamp-d11-reconstruction-manifest.json",
-                @"C:\Users\johmil\Projects\trpython\data\generated\client\language\english\modulenamelanguage.pyo_dis", 0.55,
-                "crate item templates 13066/13096/13156/13186/13713 are compatible level-1 analogues; maker variants unresolved");
+                null,
+                @"C:\Users\johmil\Projects\trpython\data\generated\client\language\english\physicalentityclassnamelanguage.pyo_dis", 0.8,
+                "crate item templates 13066/13096/13156/13186/13713 verified by joining itemtemplate_itemclass.itemClassId (an EntityClasses value) against the client's physicalentityclassnamelanguage and itemtemplate_requirement (same id space): correctly typed (Motor Assist Armor Boots/Gloves/Legs/Vest, Rifle) and correctly level-gated (req_type=ReqXpLevel, req_value=1, matching a level-1 bootcamp recruit). The manufacturer prefix (Teleract/Hailstorm/Shinobi/...) cannot be verified or rendered - ItemInfoPacket sends classModuleIds/lootModuleIds as permanently empty lists (unimplemented, marked ToDo in source) - so no branded name is achievable here regardless of which same-tier item template is chosen");
             yield return Evidence(1992, 4, MissionEvidenceOwnerKind.Scenario, 1, MissionEvidenceSourceKind.Reconstruction,
                 "https://raw.githubusercontent.com/Blizz127/tabula-rasa-server/2f0cbbdfe4bb8440286261b205f78d75fca85d0c/docs/evidence/bootcamp-d11-positions.json",
                 @"C:\Users\johmil\Projects\trpython\data\generated\client\missionobjective.pyo_dis", 0.75,
-                "position_key=object.supply_crate, object.practice_dummy, npc.hartmann; measured and navmesh-snapped");
+                "position_key=object.practice_dummy, npc.hartmann; still an unverified reconstruction guess");
+            yield return Evidence(1992, 5, MissionEvidenceOwnerKind.Objective, 4, MissionEvidenceSourceKind.Server,
+                null, "live-capture: .where GM command, 2026-09-20, tester-confirmed", 0.95,
+                "npc.delessio and object.supply_crate measured live in-game via the .where GM command and confirmed by the tester; not a reconstruction guess");
 
             yield return Evidence(1994, 1, MissionEvidenceOwnerKind.Mission, 1994, MissionEvidenceSourceKind.Client, null,
                 @"C:\Users\johmil\Projects\trpython\data\generated\client\missionobjective.pyo_dis", 1.0,
@@ -757,7 +813,7 @@ namespace Rasa.Services.Preloader
             {
                 missionId, Revision, objectiveId, transitionId, actionId, MissionContentRequirement.Required,
                 MissionActionKind.CompleteObjective, actionId, targetObjectiveId, ObjectiveCompletedState,
-                null, null, null, null, null, null, comment
+                null, null, null, null, null, null, null, comment
             };
 
         private static object[] EnableInteractionStep(
@@ -793,7 +849,7 @@ namespace Rasa.Services.Preloader
             {
                 missionId, Revision, objectiveId, transitionId, actionId, MissionContentRequirement.Required,
                 MissionActionKind.RevealObjective, actionId, targetObjectiveId, null,
-                null, null, null, null, null, null, comment
+                null, null, null, null, null, null, null, comment
             };
 
         private static object[] CompleteObjectiveStep(
@@ -815,7 +871,7 @@ namespace Rasa.Services.Preloader
             {
                 missionId, Revision, objectiveId, transitionId, actionId, MissionContentRequirement.Required,
                 MissionActionKind.ActivateObjective, actionId, targetObjectiveId, ObjectiveIncompleteState,
-                null, null, null, null, null, null, comment
+                null, null, null, null, null, null, null, comment
             };
 
         private static object[] ResetAttemptScenarioStep(
@@ -837,7 +893,7 @@ namespace Rasa.Services.Preloader
             {
                 missionId, Revision, objectiveId, transitionId, actionId, MissionContentRequirement.Required,
                 MissionActionKind.GrantReward, actionId, null, null,
-                rewardId, null, null, null, null, null, comment
+                rewardId, null, null, null, null, null, null, comment
             };
 
         private static object[] StartScenarioAction(uint missionId, uint objectiveId, uint transitionId, uint actionId, uint scenarioId, string comment) =>
@@ -845,7 +901,27 @@ namespace Rasa.Services.Preloader
             {
                 missionId, Revision, objectiveId, transitionId, actionId, MissionContentRequirement.Required,
                 MissionActionKind.StartScenario, actionId, null, null,
-                null, null, scenarioId, null, null, null, comment
+                null, null, scenarioId, null, null, null, null, comment
+            };
+
+        /// <summary>
+        /// greetingId is a client npcgreetinglanguage text id, stored in the npc_package_id
+        /// column - this kind needs no actual NPC package. player_flag_id is set to a fixed
+        /// placeholder only because mission_action's check constraint requires it non-null for
+        /// every kind; ForceConverse (what this kind sends) never reads it back.
+        /// </summary>
+        private static object[] AmbientConversationAction(
+            uint missionId,
+            uint objectiveId,
+            uint transitionId,
+            uint actionId,
+            uint greetingId,
+            string comment) =>
+            new object[]
+            {
+                missionId, Revision, objectiveId, transitionId, actionId, MissionContentRequirement.Required,
+                MissionActionKind.ShowAmbientConversation, actionId, null, null,
+                null, null, null, null, 1U, null, greetingId, comment
             };
 
         private static object[] RewardItem(
@@ -1004,7 +1080,7 @@ namespace Rasa.Services.Preloader
             uint skillId,
             uint abilityId,
             byte skillLevel,
-            byte abilitySlot,
+            byte? abilitySlot,
             string comment) =>
             new object[]
             {

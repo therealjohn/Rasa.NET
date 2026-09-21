@@ -23,6 +23,7 @@ namespace Rasa.Structures.Missions
         public uint? IndicatorId { get; }
         public uint? PlayerFlagId { get; }
         public uint? PlayerFlagValue { get; }
+        public uint? NpcPackageId { get; }
         public string Comment { get; }
 
         public MissionActionDefinition(MissionActionEntry entry)
@@ -43,6 +44,7 @@ namespace Rasa.Structures.Missions
             IndicatorId = entry.IndicatorId;
             PlayerFlagId = entry.PlayerFlagId;
             PlayerFlagValue = entry.PlayerFlagValue;
+            NpcPackageId = entry.NpcPackageId;
             Comment = entry.Comment;
         }
 

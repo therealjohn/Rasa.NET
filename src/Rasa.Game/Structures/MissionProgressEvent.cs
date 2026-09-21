@@ -88,5 +88,15 @@ namespace Rasa.Structures
                 MissionProgressEventKind.DeadlineElapsed,
                 objectiveId,
                 scopeId: missionId);
+
+        public static MissionProgressEvent ObjectiveState(
+            uint missionId,
+            uint objectiveId,
+            byte state) =>
+            new(
+                MissionProgressEventKind.ObjectiveStateReached,
+                objectiveId,
+                scopeId: missionId,
+                detailId: state);
     }
 }

@@ -6,10 +6,7 @@ namespace Rasa.Structures
     {
         internal static void WriteBool(PythonWriter writer, bool value)
         {
-            if (value)
-                writer.WriteTrueStruct();
-            else
-                writer.WriteNoneStruct();
+            writer.WriteBool(value);
         }
     }
 }

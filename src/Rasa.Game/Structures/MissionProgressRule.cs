@@ -147,6 +147,16 @@ namespace Rasa.Structures
                 scopeId: missionId,
                 durationSeconds: durationSeconds);
 
+        internal static MissionProgressRule CompleteOnObjectiveState(
+            uint missionId,
+            uint relatedObjectiveId,
+            byte relatedState) =>
+            CompleteOnScopedSubject(
+                MissionProgressEventKind.ObjectiveStateReached,
+                relatedObjectiveId,
+                scopeId: missionId,
+                detailId: relatedState);
+
         public static MissionProgressRule CompleteWhenAllDistinctSubjectsObserved(
             MissionProgressEventKind kind,
             IReadOnlySet<uint> subjects)

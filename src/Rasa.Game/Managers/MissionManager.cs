@@ -642,6 +642,69 @@ namespace Rasa.Managers
                 client,
                 new MissionStatusInfoPacket(BuildStatusSnapshot(client.Player)),
                 "mission status snapshot");
+
+            AnnouncePendingMissionGrants(client);
+            AttachPendingLoot(client);
+        }
+
+        /// <summary>
+        /// See the comment on Client.PendingLootAttaches: a scenario rebuild queues a reward
+        /// crate's loot dispenser here instead of attaching it immediately, because rebuild runs
+        /// before this client has been placed in its cell. By the time PublishInitialState runs
+        /// (from AssignPlayer, after CellManager.AddToWorld(client) has already introduced every
+        /// dynamic object in the cell), the crate exists on the client and Player.MapChannel is
+        /// finally set, so attaching here is safe.
+        /// </summary>
+        private void AttachPendingLoot(Client client)
+        {
+            if (client.PendingLootAttaches.Count == 0)
+                return;
+
+            foreach (var (obj, items) in client.PendingLootAttaches)
+                LootDispenserManager.Instance.AttachRewardLoot(client, client.Player.MapChannel, obj, items);
+
+            client.PendingLootAttaches.Clear();
+        }
+
+        /// <summary>
+        /// Sends the accept popup for missions granted outside the NPC-accept flow (bootcamp's
+        /// automatic Initiation grant, so far), now that the player exists to call a method on.
+        /// TryAcceptNpcMission sends this itself at grant time; server-side grants have no client
+        /// to notify yet when they run, so CharacterManager queues the mission id on the Client
+        /// and this drains it the first time the player lands in the world.
+        /// </summary>
+        private void AnnouncePendingMissionGrants(Client client)
+        {
+            Logger.WriteLog(LogType.Debug, $"[MissionDiag] AnnouncePendingMissionGrants for character {client.Player?.Id}: {client.PendingMissionAnnouncements.Count} queued.");
+
+            if (client.PendingMissionAnnouncements.Count == 0)
+                return;
+
+            foreach (var missionId in client.PendingMissionAnnouncements)
+            {
+                if (!client.Player.Missions.TryGetValue(missionId, out var log))
+                {
+                    Logger.WriteLog(LogType.Debug, $"[MissionDiag] mission {missionId}: not present in player.Missions after hydration; skipping.");
+                    continue;
+                }
+
+                if (!_loadedMissions.TryGetValue(missionId, out var definition) ||
+                    definition?.IsOperational != true)
+                {
+                    Logger.WriteLog(LogType.Debug, $"[MissionDiag] mission {missionId}: definition missing or not operational; skipping.");
+                    continue;
+                }
+
+                Logger.WriteLog(LogType.Debug, $"[MissionDiag] mission {missionId}: sending MissionGainedPacket to entity {client.Player.EntityId}.");
+                PublishMissionPacket(
+                    client,
+                    new MissionGainedPacket(
+                        missionId,
+                        BuildPublishedMissionInfo(client.Player, definition, log)),
+                    $"mission {missionId} gained notice");
+            }
+
+            client.PendingMissionAnnouncements.Clear();
         }
 
         internal bool TryGetAreaDefinition(
@@ -1019,6 +1082,12 @@ namespace Rasa.Managers
                             client.Player,
                             definition,
                             log)));
+
+                // ClassifyNpcConversation's "dispensable" list is recomputed here, so the giver's
+                // available-mission icon would otherwise keep showing what it showed when this
+                // NPC first became visible (CreatePhysicalEntityOnClient's one-time snapshot) -
+                // nothing previously refreshed it after a mission state actually changed.
+                NpcManager.Instance.UpdateConversationStatus(client, npc);
                 return true;
             }
         }
@@ -1106,6 +1175,7 @@ namespace Rasa.Managers
                         new MissionCompletedPacket(missionId)),
                     $"mission {missionId} completed");
                 progressPlan.Publish(client);
+                NpcManager.Instance.UpdateConversationStatus(client, npc);
                 return true;
             }
         }
@@ -1237,6 +1307,7 @@ namespace Rasa.Managers
                             client.Player.EntityId,
                             new MissionRewardedPacket(missionId)),
                         $"mission {missionId} rewarded");
+                    NpcManager.Instance.UpdateConversationStatus(client, npc);
                     return true;
                 }
                 finally
@@ -1465,6 +1536,26 @@ namespace Rasa.Managers
                 foreach (var scenarioId in actionApplication.StartScenarioIds)
                     if (ShouldStartScenarioAutomatically(missionId, scenarioId))
                         _scenarioService.TryExecute(client, missionId, scenarioId);
+                foreach (var flagChange in actionApplication.PlayerFlagChanges)
+                    client.Player.PlayerFlags[flagChange.FlagId] = flagChange.Value;
+                foreach (var spawnGroupId in actionApplication.ActivateSpawnGroupIds)
+                    _scenarioService.TryActivateSpawnGroup(client, missionId, spawnGroupId);
+                if (actionApplication.ShownIndicatorIds.Count > 0)
+                    PublishMissionStatus(client, missionId, $"mission {missionId} status after indicator reveal");
+                NpcManager.Instance.UpdateConversationStatus(client, npc);
+
+                // See the matching comment in MissionProgressPublicationPlan.Publish: this is the
+                // only way an ObjectiveState-gated transition elsewhere in the mission gets a
+                // chance to fire when this NPC conversation is what actually moved the objective.
+                foreach (var touchedObjectiveId in actionApplication.FinalObjectiveStates.Keys
+                    .Append(objectiveId)
+                    .Distinct())
+                    RecordProgress(
+                        client,
+                        MissionProgressEvent.ObjectiveState(
+                            missionId,
+                            touchedObjectiveId,
+                            durableObjectives[touchedObjectiveId].ObjectiveState));
                 return true;
             }
         }
@@ -2514,7 +2605,12 @@ namespace Rasa.Managers
                         progressClient,
                         progressedMissionId,
                         scenarioId),
-                this);
+                this,
+                (progressClient, progressedMissionId, spawnGroupId) =>
+                    _scenarioService.TryActivateSpawnGroup(
+                        progressClient,
+                        progressedMissionId,
+                        spawnGroupId));
         }
 
         private static IReadOnlyList<MissionProgressEvent> AggregateProgress(
@@ -2628,7 +2724,11 @@ namespace Rasa.Managers
             var revealed = new List<uint>();
             var activated = new List<uint>();
             var startedScenarios = new List<uint>();
+            var ambientConversations = new List<AmbientConversationRequest>();
             var finalStates = new Dictionary<uint, MissionObjectiveState>();
+            var shownIndicators = new List<uint>();
+            var playerFlagChanges = new List<PlayerFlagChange>();
+            var activatedSpawnGroups = new List<uint>();
 
             foreach (var action in transition.Actions)
             {
@@ -2683,10 +2783,49 @@ namespace Rasa.Managers
                             !startedScenarios.Contains(action.ScenarioId.Value))
                             startedScenarios.Add(action.ScenarioId.Value);
                         break;
+
+                    case MissionActionKind.ShowAmbientConversation:
+                        if (!action.NpcPackageId.HasValue)
+                            throw new GameplayRejectionException(
+                                $"Transition {transition.TransitionId} ambient conversation action is missing its greeting id.");
+                        ambientConversations.Add(new AmbientConversationRequest(
+                            action.NpcPackageId.Value));
+                        break;
+
+                    case MissionActionKind.ShowIndicator:
+                        if (!action.IndicatorId.HasValue)
+                            throw new GameplayRejectionException(
+                                $"Transition {transition.TransitionId} show indicator action is missing its indicator id.");
+                        shownIndicators.Add(action.IndicatorId.Value);
+                        break;
+
+                    case MissionActionKind.SetPlayerFlag:
+                        if (!action.PlayerFlagId.HasValue || !action.PlayerFlagValue.HasValue)
+                            throw new GameplayRejectionException(
+                                $"Transition {transition.TransitionId} set player flag action is missing its flag id or value.");
+                        playerFlagChanges.Add(new PlayerFlagChange(
+                            action.PlayerFlagId.Value,
+                            action.PlayerFlagValue.Value));
+                        break;
+
+                    case MissionActionKind.ActivateSpawnGroup:
+                        if (!action.SpawnGroupId.HasValue)
+                            throw new GameplayRejectionException(
+                                $"Transition {transition.TransitionId} activate spawn group action is missing its spawn group id.");
+                        activatedSpawnGroups.Add(action.SpawnGroupId.Value);
+                        break;
                 }
             }
 
-            return new TransitionActionApplication(finalStates, revealed, activated, startedScenarios);
+            return new TransitionActionApplication(
+                finalStates,
+                revealed,
+                activated,
+                startedScenarios,
+                ambientConversations,
+                shownIndicators,
+                playerFlagChanges,
+                activatedSpawnGroups);
         }
 
         private static bool IsPublishedState(MissionState state) =>
@@ -3134,6 +3273,7 @@ namespace Rasa.Managers
                     Array.Empty<uint>(),
                     null,
                     null,
+                    null,
                     null);
 
             private readonly ProgressPublication[] _publications;
@@ -3142,6 +3282,7 @@ namespace Rasa.Managers
             private readonly uint[] _missionStatusMissionIds;
             private readonly Func<Client, uint, uint, bool> _startScenario;
             private readonly Func<Client, uint, uint, bool> _startFailureScenario;
+            private readonly Func<Client, uint, uint, bool> _activateSpawnGroup;
             private readonly MissionManager _manager;
 
             internal bool HasChanges => _publications.Length > 0 || _failurePlans.Length > 0;
@@ -3153,7 +3294,8 @@ namespace Rasa.Managers
                 IEnumerable<uint> missionStatusMissionIds,
                 Func<Client, uint, uint, bool> startScenario,
                 Func<Client, uint, uint, bool> startFailureScenario,
-                MissionManager manager)
+                MissionManager manager,
+                Func<Client, uint, uint, bool> activateSpawnGroup = null)
             {
                 _publications = publications.ToArray();
                 _failurePlans = failurePlans.ToArray();
@@ -3161,6 +3303,7 @@ namespace Rasa.Managers
                 _missionStatusMissionIds = missionStatusMissionIds.ToArray();
                 _startScenario = startScenario;
                 _startFailureScenario = startFailureScenario;
+                _activateSpawnGroup = activateSpawnGroup;
                 _manager = manager;
             }
 
@@ -3205,6 +3348,10 @@ namespace Rasa.Managers
                                         out var successor))
                                     successor.State = state.Value;
                     }
+
+                foreach (var publication in _publications)
+                    foreach (var flagChange in publication.PlayerFlagChanges)
+                        client.Player.PlayerFlags[flagChange.FlagId] = flagChange.Value;
 
                 foreach (var missionId in _completableMissions)
                     if (client.Player.Missions.TryGetValue(
@@ -3274,13 +3421,24 @@ namespace Rasa.Managers
                                     publication.MissionId,
                                     objectiveId)),
                             $"mission {publication.MissionId} objective {objectiveId} activated");
+                    foreach (var request in publication.AmbientConversationRequests)
+                        TryPublish(
+                            () => client.CallMethod(
+                                client.Player.EntityId,
+                                new ForceConversePacket((int)request.GreetingId)),
+                            $"mission {publication.MissionId} objective {publication.ObjectiveId} ambient conversation");
                 }
 
-                foreach (var missionId in _missionStatusMissionIds)
+                var indicatorRefreshMissionIds = new SortedSet<uint>(_missionStatusMissionIds);
+                foreach (var publication in _publications)
+                    if (publication.ShownIndicatorIds.Count > 0)
+                        indicatorRefreshMissionIds.Add(publication.MissionId);
+
+                foreach (var missionId in indicatorRefreshMissionIds)
                     _manager.PublishMissionStatus(
                         client,
                         missionId,
-                        $"mission {missionId} status after deadline start");
+                        $"mission {missionId} status after deadline start or indicator reveal");
 
                 foreach (var missionId in _completableMissions)
                     TryPublish(
@@ -3302,6 +3460,38 @@ namespace Rasa.Managers
                         publication.MissionId,
                         publication.StartScenarioIds,
                         _startScenario);
+
+                foreach (var publication in _publications)
+                    foreach (var spawnGroupId in publication.ActivateSpawnGroupIds)
+                        TryPublish(
+                            () => _activateSpawnGroup?.Invoke(client, publication.MissionId, spawnGroupId),
+                            $"mission {publication.MissionId} activate spawn group {spawnGroupId}");
+
+                // ObjectiveState triggers have no other way to fire: nothing re-evaluates a
+                // transition just because a *different* objective's state changed underneath it.
+                // Recording a synthetic progress event per touched objective, after this plan's
+                // own packets are sent, lets any ObjectiveState-gated transition elsewhere in the
+                // same mission react in a follow-up, independently-committed RecordProgress call.
+                // client.SyncRoot is a plain lock (Monitor), which is re-entrant on the same
+                // thread, so this nested call is safe; a well-formed mission can't loop forever
+                // here since each objective can only leave Incomplete once.
+                foreach (var publication in _publications)
+                {
+                    if (publication.ObjectiveState.HasValue)
+                        _manager.RecordProgress(
+                            client,
+                            MissionProgressEvent.ObjectiveState(
+                                publication.MissionId,
+                                publication.ObjectiveId,
+                                (byte)publication.ObjectiveState.Value));
+                    foreach (var finalState in publication.FinalObjectiveStates)
+                        _manager.RecordProgress(
+                            client,
+                            MissionProgressEvent.ObjectiveState(
+                                publication.MissionId,
+                                finalState.Key,
+                                (byte)finalState.Value));
+                }
             }
 
             private static bool TryGetRuntimeObjective(
@@ -3324,18 +3514,30 @@ namespace Rasa.Managers
                     new Dictionary<uint, MissionObjectiveState>(),
                     Array.Empty<uint>(),
                     Array.Empty<uint>(),
+                    Array.Empty<uint>(),
+                    Array.Empty<AmbientConversationRequest>(),
+                    Array.Empty<uint>(),
+                    Array.Empty<PlayerFlagChange>(),
                     Array.Empty<uint>());
 
             internal IReadOnlyDictionary<uint, MissionObjectiveState> FinalObjectiveStates { get; }
             internal IReadOnlyList<uint> RevealedObjectiveIds { get; }
             internal IReadOnlyList<uint> ActivatedObjectiveIds { get; }
             internal IReadOnlyList<uint> StartScenarioIds { get; }
+            internal IReadOnlyList<AmbientConversationRequest> AmbientConversationRequests { get; }
+            internal IReadOnlyList<uint> ShownIndicatorIds { get; }
+            internal IReadOnlyList<PlayerFlagChange> PlayerFlagChanges { get; }
+            internal IReadOnlyList<uint> ActivateSpawnGroupIds { get; }
 
             internal TransitionActionApplication(
                 IReadOnlyDictionary<uint, MissionObjectiveState> finalObjectiveStates,
                 IEnumerable<uint> revealedObjectiveIds,
                 IEnumerable<uint> activatedObjectiveIds,
-                IEnumerable<uint> startScenarioIds)
+                IEnumerable<uint> startScenarioIds,
+                IEnumerable<AmbientConversationRequest> ambientConversationRequests = null,
+                IEnumerable<uint> shownIndicatorIds = null,
+                IEnumerable<PlayerFlagChange> playerFlagChanges = null,
+                IEnumerable<uint> activateSpawnGroupIds = null)
             {
                 FinalObjectiveStates = new ReadOnlyDictionary<uint, MissionObjectiveState>(
                     new Dictionary<uint, MissionObjectiveState>(
@@ -3346,6 +3548,42 @@ namespace Rasa.Managers
                     (activatedObjectiveIds ?? Array.Empty<uint>()).ToArray());
                 StartScenarioIds = Array.AsReadOnly(
                     (startScenarioIds ?? Array.Empty<uint>()).ToArray());
+                AmbientConversationRequests = Array.AsReadOnly(
+                    (ambientConversationRequests ?? Array.Empty<AmbientConversationRequest>()).ToArray());
+                ShownIndicatorIds = Array.AsReadOnly(
+                    (shownIndicatorIds ?? Array.Empty<uint>()).ToArray());
+                PlayerFlagChanges = Array.AsReadOnly(
+                    (playerFlagChanges ?? Array.Empty<PlayerFlagChange>()).ToArray());
+                ActivateSpawnGroupIds = Array.AsReadOnly(
+                    (activateSpawnGroupIds ?? Array.Empty<uint>()).ToArray());
+            }
+        }
+
+        /// <summary>A player_flag_id/player_flag_value pair applied by a SetPlayerFlag action.</summary>
+        internal readonly struct PlayerFlagChange
+        {
+            internal uint FlagId { get; }
+            internal uint Value { get; }
+
+            internal PlayerFlagChange(uint flagId, uint value)
+            {
+                FlagId = flagId;
+                Value = value;
+            }
+        }
+
+        /// <summary>
+        /// A one-way conversation to force open on the client as a side effect of a transition,
+        /// via ForceConverse - which needs no NPC entity, unlike Completion-type conversations.
+        /// GreetingId is a client npcgreetinglanguage text id.
+        /// </summary>
+        internal readonly struct AmbientConversationRequest
+        {
+            internal uint GreetingId { get; }
+
+            internal AmbientConversationRequest(uint greetingId)
+            {
+                GreetingId = greetingId;
             }
         }
 
@@ -3392,6 +3630,10 @@ namespace Rasa.Managers
             internal IReadOnlyList<uint> RevealedObjectiveIds { get; }
             internal IReadOnlyList<uint> ActivatedObjectiveIds { get; }
             internal IReadOnlyList<uint> StartScenarioIds { get; }
+            internal IReadOnlyList<AmbientConversationRequest> AmbientConversationRequests { get; }
+            internal IReadOnlyList<uint> ShownIndicatorIds { get; }
+            internal IReadOnlyList<PlayerFlagChange> PlayerFlagChanges { get; }
+            internal IReadOnlyList<uint> ActivateSpawnGroupIds { get; }
 
             private ProgressPublication(
                 Mission definition,
@@ -3424,6 +3666,10 @@ namespace Rasa.Managers
                 RevealedObjectiveIds = Array.AsReadOnly(actionApplication.RevealedObjectiveIds.ToArray());
                 ActivatedObjectiveIds = Array.AsReadOnly(actionApplication.ActivatedObjectiveIds.ToArray());
                 StartScenarioIds = Array.AsReadOnly(actionApplication.StartScenarioIds.ToArray());
+                AmbientConversationRequests = Array.AsReadOnly(actionApplication.AmbientConversationRequests.ToArray());
+                ShownIndicatorIds = Array.AsReadOnly(actionApplication.ShownIndicatorIds.ToArray());
+                PlayerFlagChanges = Array.AsReadOnly(actionApplication.PlayerFlagChanges.ToArray());
+                ActivateSpawnGroupIds = Array.AsReadOnly(actionApplication.ActivateSpawnGroupIds.ToArray());
             }
 
             internal static ProgressPublication ForCompleted(

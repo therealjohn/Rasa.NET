@@ -186,6 +186,18 @@ namespace Rasa.Managers
                 return;
             }
 
+            // Nothing gated a second RequestUseObjectPacket for the same object before its first
+            // windup even finished - a double-click (or the client re-sending because a one-shot
+            // object gives no immediate feedback) queued a second, independent PerformRecovery
+            // entry, and each one ran the full completion again. A one-shot object (a mission
+            // reward crate) now clears IsEnabled the moment it completes, before it is despawned,
+            // so the second request is rejected here instead of granting twice.
+            if (!obj.IsEnabled)
+            {
+                Logger.WriteLog(LogType.Debug, $"{client.Player.FamilyName} asked to use {packet.EntityId}, which is not enabled right now.");
+                return;
+            }
+
             // Where the player is standing decides what they can reach. Object ids are handed out
             // in order and are the same for every client, so a client could walk the id space and
             // use every footlocker, station and control point on the map without leaving the spot
@@ -721,7 +733,72 @@ namespace Rasa.Managers
 
         internal void FootlockerRecovery(MapChannel mapChannel, ActionData action)
         {
-            Logger.WriteLog(LogType.Debug, $"ToDo: FootlockerRecovery, ActionId = {action.ActionId} ActionArgId = {action.ActionArgId}");
+            // ActionArgId 1 is not only real, persistent Footlockers (mapChannel.FootLockers,
+            // opened below - still unimplemented, a separate and much larger feature: generating
+            // random loot). It is also the client's own default: generated.client.usabledata has
+            // no entry at all for most scenario-spawned Usable classes (crates included - checked
+            // 7861/7862/7863/7864 and the V03-V06 family, all (None, None, None, None, None)), and
+            // usable.py falls back useObjectArgId to 1 whenever the table has none. So a mission's
+            // scenario-spawned crate - a plain DynamicObject, hardcoded to DynamicObjectType.Logos
+            // by CreateScenarioDynamicObject for windup purposes only - completes its windup here,
+            // not in LogosRecovery, regardless of what the object actually represents. Handle that
+            // case the same way LogosRecovery does (fire InteractionUsed keyed by EntityClassId),
+            // just without LogosRecovery's `is not Logos` filter, since this object is never that
+            // specific subtype.
+            foreach (var obj in mapChannel.DynamicObjects)
+            {
+                if (action.SourceId != obj.EntityId)
+                    continue;
+
+                foreach (var client in obj.TriggeredByPlayers)
+                {
+                    if (client.Player != action.Actor)
+                        continue;
+
+                    obj.TriggeredByPlayers.Remove(client);
+
+                    if (action.IsInrerrupted)
+                        return;
+
+                    if (!IsInUseRange(action.Actor, obj))
+                    {
+                        Logger.WriteLog(LogType.Security,
+                            $"{client.Player.FamilyName} was no longer at object {obj.EntityId} when the use finished; nothing given.");
+                        return;
+                    }
+
+                    // An object with a loot dispenser attached (a reward crate) completes through
+                    // this same generic Use windup, not a loot window: PhysicalEntity's action
+                    // resolution always picks Usable over Lootable on a priority tie (confirmed
+                    // via rcmenuitem.pyo_dis), and disabling Usable to force Lootable to win
+                    // instead makes the object stop responding to the mouse entirely (usable.py's
+                    // IsMouseTargetable() is wired to IsUsable(), with no Lootable equivalent). A
+                    // real client can never send Loot for this kind of object, so ClaimFromObject
+                    // - normally reached from RequestLootAllFromCorpse/RequestLootItemFromCorpse -
+                    // is invoked directly from here instead.
+                    if (obj.LootDispenserEntityId != 0)
+                    {
+                        LootDispenserManager.Instance.ClaimFromObject(client, obj.LootDispenserEntityId);
+                        return;
+                    }
+
+                    CellManager.Instance.CellCallMethod(
+                        obj,
+                        new UsableInfoPacket(
+                            true,
+                            obj.StateId,
+                            0,
+                            obj.WindupTime == 0 ? DefaultScenarioUseWindupMs : obj.WindupTime,
+                            0));
+
+                    (_missionManager ?? MissionManager.Instance).RecordProgress(
+                        client,
+                        MissionProgressEvent.Interaction((uint)obj.EntityClassId));
+                    return;
+                }
+            }
+
+            Logger.WriteLog(LogType.Debug, $"ToDo: FootlockerRecovery (real Footlocker loot generation), ActionId = {action.ActionId} ActionArgId = {action.ActionArgId}");
         }
 
         internal void InitFootlockers()

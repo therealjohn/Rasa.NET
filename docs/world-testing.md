@@ -51,6 +51,10 @@ focused. `BootcampCharacterEntryTests`, `BootcampDepartureTests`, and
 These automated suites validate server-side mission and gameplay behavior only.
 They do not drive the retail client.
 
+For guidance on authoring new mission content itself - conversation delivery,
+text/position sourcing, real-client verification - see the
+[mission authoring guide](mission-authoring.md).
+
 ## Mission protocol boundary
 
 The mission request boundary matches the local 1.16.5.0 client scripts:

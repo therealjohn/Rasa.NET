@@ -1982,9 +1982,20 @@ namespace Rasa.Managers
 
         private void WhereCommand(string[] parts)
         {
-            CommunicatorManager.Instance.SystemMessage(_client, $"PosX = {_client.Movement.Position.X}\nPosY = "
-                + $"{_client.Movement.Position.Y}\nPosZ = {_client.Movement.Position.Z}\nOrientation = {_client.Movement.ViewDirection.X}"
-                + $"\nMapId = {_client.Player.MapContextId}");
+            var position = _client.Movement.Position;
+            var rotation = _client.Movement.ViewDirection.X;
+            var mapId = _client.Player.MapContextId;
+
+            CommunicatorManager.Instance.SystemMessage(_client, $"PosX = {position.X}\nPosY = "
+                + $"{position.Y}\nPosZ = {position.Z}\nOrientation = {rotation}"
+                + $"\nMapId = {mapId}");
+
+            // Logged too, so a live position can be read off the server console/log without the
+            // player needing to relay it or log out (position otherwise only persists to the
+            // character row on logout/map-exit).
+            Logger.WriteLog(LogType.Command,
+                $"[.where] {_client.Player.FamilyName}: map={mapId} pos=({position.X:0.####}, {position.Y:0.####}, {position.Z:0.####}) rot={rotation:0.####}");
+
             return;
         }
 

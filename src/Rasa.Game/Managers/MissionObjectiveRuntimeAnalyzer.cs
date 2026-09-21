@@ -197,6 +197,27 @@ namespace Rasa.Managers
                 return true;
             }
 
+            var objectiveStateTriggers = transition.Triggers
+                .Where(trigger => trigger.Kind == MissionTriggerKind.ObjectiveState)
+                .ToArray();
+            if (objectiveStateTriggers.Length > 0)
+            {
+                if (objectiveStateTriggers.Length != 1 || transition.Triggers.Count != 1 ||
+                    !objectiveStateTriggers[0].RelatedObjectiveId.HasValue ||
+                    objectiveStateTriggers[0].RelatedObjectiveId.Value == 0 ||
+                    !objectiveStateTriggers[0].TryGetRelatedState(out var relatedState))
+                {
+                    diagnostic = $"transition {transition.TransitionId} must use exactly one objective-state trigger with a non-zero related_objective_id and a valid related_state.";
+                    return false;
+                }
+
+                rule = MissionProgressRule.CompleteOnObjectiveState(
+                    transition.MissionId,
+                    objectiveStateTriggers[0].RelatedObjectiveId.Value,
+                    (byte)relatedState);
+                return true;
+            }
+
             var timerTriggers = transition.Triggers
                 .Where(trigger => trigger.Kind == MissionTriggerKind.TimerElapsed)
                 .ToArray();

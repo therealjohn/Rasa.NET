@@ -27,7 +27,18 @@ namespace Rasa.Structures.World
         ShowIndicator = 7,
 
         /// <summary>Uses player_flag_id and player_flag_value.</summary>
-        SetPlayerFlag = 8
+        SetPlayerFlag = 8,
+
+        /// <summary>
+        /// Uses npc_package_id, which for this kind holds a client npcgreetinglanguage text id,
+        /// not an actual NPC package - this proactively forces the conversation window open via
+        /// ForceConverse (Manifestation.Recv_ForceConverse), which needs no NPC entity at all.
+        /// player_flag_id is set but unused; it exists only to satisfy this table's "one row per
+        /// kind, same required-column shape" check constraint. Unlike Completion-type conversation
+        /// triggers, this is not a gate the player reaches by clicking an NPC first - it rides
+        /// along with whatever progress rule already gates this transition.
+        /// </summary>
+        ShowAmbientConversation = 9
     }
 
     /// <summary>
@@ -95,6 +106,9 @@ namespace Rasa.Structures.World
 
         [Column("player_flag_value")]
         public uint? PlayerFlagValue { get; set; }
+
+        [Column("npc_package_id")]
+        public uint? NpcPackageId { get; set; }
 
         [Column("comment", TypeName = "varchar(64)")]
         [Required]

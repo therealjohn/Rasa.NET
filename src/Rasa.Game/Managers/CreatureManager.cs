@@ -374,7 +374,16 @@ namespace Rasa.Managers
 
             // NPC  & Vendor augmentation
             if (creature.Npc != null)
+            {
+                // npc.py's own NPC.__init__ leaves npcPackageId at None until Recv_NPCInfo sets
+                // it - with nothing ever sending this packet, every NPC's client-side package id
+                // stayed None forever, which is invisible until something builds a lookup keyed
+                // on it (BuildObjectiveConversationText's (mission, objective, npcPackageId,
+                // playerFlagId, convoType) tuple), and then surfaces as ID_ERR_MISSING_TRANSLATION
+                // with "None" in the key even though the server-side binding is correct.
+                client.CallMethod(creature.EntityId, new NPCInfoPacket(creature.Npc.NpcPackageId));
                 NpcManager.Instance.UpdateConversationStatus(client, creature);
+            }
 
             // give some weapon to creature's
             GiveWeapon(creature);

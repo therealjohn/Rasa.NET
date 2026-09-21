@@ -17,6 +17,7 @@ namespace Rasa.Managers
             {
                 MissionTriggerKind.Conversation,
                 MissionTriggerKind.ProgressEvent,
+                MissionTriggerKind.ObjectiveState,
                 MissionTriggerKind.AreaEntered,
                 MissionTriggerKind.TimerElapsed
             };
@@ -28,7 +29,11 @@ namespace Rasa.Managers
                 MissionActionKind.ActivateObjective,
                 MissionActionKind.CompleteObjective,
                 MissionActionKind.StartScenario,
-                MissionActionKind.GrantReward
+                MissionActionKind.ActivateSpawnGroup,
+                MissionActionKind.ShowIndicator,
+                MissionActionKind.SetPlayerFlag,
+                MissionActionKind.GrantReward,
+                MissionActionKind.ShowAmbientConversation
             };
 
         private static readonly HashSet<MissionSpawnGroupPolicy> SupportedSpawnPolicies =
@@ -247,6 +252,21 @@ namespace Rasa.Managers
                             transition.TransitionId,
                             trigger.TriggerId));
                     }
+
+                    if (trigger.Kind == MissionTriggerKind.ObjectiveState &&
+                        (!trigger.RelatedObjectiveId.HasValue ||
+                            !definition.Objectives.ContainsKey(trigger.RelatedObjectiveId.Value) ||
+                            !trigger.TryGetRelatedState(out _)))
+                    {
+                        diagnostics.Add(new MissionValidationDiagnostic(
+                            "missing-related-objective",
+                            $"objective-state trigger references missing objective {trigger.RelatedObjectiveId?.ToString() ?? "null"} or an invalid related_state.",
+                            definition.MissionId,
+                            definition.ContentRevision,
+                            transition.ObjectiveId,
+                            transition.TransitionId,
+                            trigger.TriggerId));
+                    }
                 }
 
                 var progressTriggers = transition.Triggers
@@ -344,6 +364,48 @@ namespace Rasa.Managers
                         diagnostics.Add(new MissionValidationDiagnostic(
                             "missing-scenario",
                             $"start scenario action references missing scenario {action.ScenarioId?.ToString() ?? "null"}.",
+                            definition.MissionId,
+                            definition.ContentRevision,
+                            transition.ObjectiveId,
+                            transition.TransitionId,
+                            actionId: action.ActionId));
+                    }
+
+                    if (action.Kind == MissionActionKind.ShowAmbientConversation &&
+                        (!action.NpcPackageId.HasValue || !action.PlayerFlagId.HasValue))
+                    {
+                        diagnostics.Add(new MissionValidationDiagnostic(
+                            "missing-ambient-conversation-binding",
+                            "ambient conversation action is missing its NPC package or player flag.",
+                            definition.MissionId,
+                            definition.ContentRevision,
+                            transition.ObjectiveId,
+                            transition.TransitionId,
+                            actionId: action.ActionId));
+                    }
+
+                    if (action.Kind == MissionActionKind.ShowIndicator &&
+                        (!action.IndicatorId.HasValue ||
+                            !definition.Objectives.Values.Any(objective =>
+                                objective.Indicators.Any(indicator =>
+                                    indicator.IndicatorId == action.IndicatorId.Value))))
+                    {
+                        diagnostics.Add(new MissionValidationDiagnostic(
+                            "missing-indicator",
+                            $"show indicator action references missing mission_indicator {action.IndicatorId?.ToString() ?? "null"}.",
+                            definition.MissionId,
+                            definition.ContentRevision,
+                            transition.ObjectiveId,
+                            transition.TransitionId,
+                            actionId: action.ActionId));
+                    }
+
+                    if (action.Kind == MissionActionKind.SetPlayerFlag &&
+                        (!action.PlayerFlagId.HasValue || !action.PlayerFlagValue.HasValue))
+                    {
+                        diagnostics.Add(new MissionValidationDiagnostic(
+                            "missing-player-flag-binding",
+                            "set player flag action is missing its player_flag_id or player_flag_value.",
                             definition.MissionId,
                             definition.ContentRevision,
                             transition.ObjectiveId,

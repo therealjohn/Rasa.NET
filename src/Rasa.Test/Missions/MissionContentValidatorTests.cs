@@ -29,6 +29,61 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
+        public void ValidatorAcceptsSpawnGroupIndicatorAndPlayerFlagActionsReferencingRealContent()
+        {
+            var fixture = MissionContentFixture.CreateValid();
+            fixture.Actions.AddRange(
+                new MissionActionEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ObjectiveId = 10,
+                    TransitionId = 20,
+                    ActionId = 5,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionActionKind.ActivateSpawnGroup,
+                    Sequence = 5,
+                    SpawnGroupId = 50,
+                    Comment = "Activate the authored spawn group"
+                },
+                new MissionActionEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ObjectiveId = 10,
+                    TransitionId = 20,
+                    ActionId = 6,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionActionKind.ShowIndicator,
+                    Sequence = 6,
+                    IndicatorId = 70,
+                    Comment = "Show the authored indicator"
+                },
+                new MissionActionEntry
+                {
+                    MissionId = 321,
+                    ContentRevision = "deployment_11",
+                    ObjectiveId = 10,
+                    TransitionId = 20,
+                    ActionId = 7,
+                    Requirement = MissionContentRequirement.Required,
+                    Kind = MissionActionKind.SetPlayerFlag,
+                    Sequence = 7,
+                    PlayerFlagId = 7,
+                    PlayerFlagValue = 2,
+                    Comment = "Set a player flag"
+                });
+
+            var snapshot = new MissionContentLoader().Load(fixture.CreateRepository());
+            var report = new MissionContentValidator().Validate(
+                snapshot,
+                fixture.CreateWorldUnitOfWork());
+
+            Assert.AreEqual(0, report.Diagnostics.Count);
+            Assert.IsFalse(report.BlocksReadiness);
+        }
+
+        [TestMethod]
         public void ValidatorAcceptsApprovedScenarioStepVocabularyIncludingAlternativeTargets()
         {
             var fixture = MissionContentFixture.CreateValid();
@@ -389,30 +444,30 @@ namespace Rasa.Test.Missions
                 fixture.Actions[0].Kind = (MissionActionKind)99;
             }, "unsupported-action");
 
-            yield return Case("unsupported spawn action runtime", fixture =>
+            yield return Case("spawn action targets missing spawn group", fixture =>
             {
                 fixture.Actions[0].Kind = MissionActionKind.ActivateSpawnGroup;
                 fixture.Actions[0].TargetObjectiveId = null;
                 fixture.Actions[0].ObjectiveState = null;
-                fixture.Actions[0].SpawnGroupId = 50;
-            }, "unsupported-action");
+                fixture.Actions[0].SpawnGroupId = 999;
+            }, "missing-spawn-group");
 
-            yield return Case("unsupported indicator action runtime", fixture =>
+            yield return Case("indicator action targets missing indicator", fixture =>
             {
                 fixture.Actions[0].Kind = MissionActionKind.ShowIndicator;
                 fixture.Actions[0].TargetObjectiveId = null;
                 fixture.Actions[0].ObjectiveState = null;
-                fixture.Actions[0].IndicatorId = 70;
-            }, "unsupported-action");
+                fixture.Actions[0].IndicatorId = 999;
+            }, "missing-indicator");
 
-            yield return Case("unsupported player flag action runtime", fixture =>
+            yield return Case("player flag action missing value", fixture =>
             {
                 fixture.Actions[0].Kind = MissionActionKind.SetPlayerFlag;
                 fixture.Actions[0].TargetObjectiveId = null;
                 fixture.Actions[0].ObjectiveState = null;
                 fixture.Actions[0].PlayerFlagId = 7;
-                fixture.Actions[0].PlayerFlagValue = 2;
-            }, "unsupported-action");
+                fixture.Actions[0].PlayerFlagValue = null;
+            }, "missing-player-flag-binding");
 
             yield return Case("missing npc package", fixture =>
             {

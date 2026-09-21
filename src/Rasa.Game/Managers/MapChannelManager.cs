@@ -44,8 +44,22 @@ namespace Rasa.Managers
                 {
                     lock (InstanceLock)
                     {
+                        // Nothing supplied a scenarioService here, ever - every test that exercises
+                        // Rebuild/Release/Tick constructs its own fully-wired MapChannelManager, so
+                        // this gap was invisible to all of them. In production _missionScenarioService
+                        // stayed null and every `_missionScenarioService?.` call (Rebuild on building
+                        // a private instance, Release on losing one, Tick every world tick) was a
+                        // silent no-op - scheduled scenario steps never fired and a relog rebuilding a
+                        // private instance never restored any scenario-spawned object, dispenser
+                        // included. MissionManager.Instance already builds and exposes the one real
+                        // MissionScenarioService (ScenarioService); share that one instead of leaving
+                        // this one unset, since PlanSpawnDynamicObject's runtime registry
+                        // (_runtimeByMap) only means anything if Rebuild queries the same instance
+                        // that created it.
                         if (_instance == null)
-                            _instance = new MapChannelManager(Server.GameUnitOfWorkFactory);
+                            _instance = new MapChannelManager(
+                                Server.GameUnitOfWorkFactory,
+                                scenarioService: MissionManager.Instance.ScenarioService);
                     }
                 }
 

@@ -20,6 +20,7 @@ namespace Rasa.Managers
     {
         bool TryExecute(Client client, uint missionId, uint scenarioId);
         bool TryExecuteFailureTransition(Client client, uint missionId, uint scenarioId);
+        bool TryActivateSpawnGroup(Client client, uint missionId, uint spawnGroupId);
         bool Tick(Client client);
         void Rebuild(uint characterId, MapChannel mapChannel);
         void Release(uint characterId, MapChannel mapChannel);
@@ -85,6 +86,46 @@ namespace Rasa.Managers
             }
         }
 
+        /// <summary>
+        /// Activates a spawn group directly from a transition's ActivateSpawnGroup action, bypassing
+        /// the scenario-step machinery entirely (no durable completed-step tracking, no attempt key).
+        /// Unlike a scenario's own SpawnGroup step, this spawn is not restored by Rebuild on relog -
+        /// content that needs that durability should route the spawn through a scenario instead.
+        /// </summary>
+        public bool TryActivateSpawnGroup(Client client, uint missionId, uint spawnGroupId)
+        {
+            if (client?.Player == null)
+                return false;
+
+            lock (client.SyncRoot)
+            {
+                var manager = _missionManager();
+                if (manager == null ||
+                    client.State != ClientState.Ingame ||
+                    client.PendingTransfer != null ||
+                    !manager.TryGetSpawnGroupDefinition(missionId, spawnGroupId, out var spawnGroup))
+                    return false;
+
+                var mapChannel = ResolveMap(
+                    client.Player,
+                    spawnGroup.MapContextId,
+                    client.Player.MapChannel);
+                if (mapChannel == null)
+                    return false;
+
+                EnsureSpawnGroupRuntime(
+                    mapChannel,
+                    spawnGroup,
+                    BuildSpawnGroupRuntimeKey(
+                        client.Player.Id,
+                        missionId,
+                        spawnGroup.ContentRevision,
+                        "transition",
+                        spawnGroupId));
+                return true;
+            }
+        }
+
         public bool Tick(Client client)
         {
             if (client == null)
@@ -132,6 +173,14 @@ namespace Rasa.Managers
             if (manager == null)
                 return;
 
+            // Rebuild has no Client of its own - only the two callers that build a private
+            // instance do - so the one it needs (to re-attach a loot dispenser to a
+            // scenario-spawned crate the owner had not yet looted) is looked up here rather than
+            // threaded through every method between here and there.
+            var client = Server.Clients.Find(candidate => candidate.Player?.Id == characterId);
+            Logger.WriteLog(LogType.Debug,
+                $"[MissionDiag] Rebuild character={characterId} map={mapChannel.MapInfo?.MapContextId} clientFound={client != null}");
+
             using var unitOfWork = _gameUnitOfWorkFactory().CreateChar();
             var missions = unitOfWork.CharacterMissions.Get(characterId)
                 .Where(mission =>
@@ -158,13 +207,16 @@ namespace Rasa.Managers
                         if (!state.CompletedSteps.ContainsKey(key))
                             continue;
 
+                        Logger.WriteLog(LogType.Debug,
+                            $"[MissionDiag] Rebuild mission={durableMission.MissionId} applying completed step {key} kind={step.Kind}");
                         ApplyRebuildStep(
                             characterId,
                             durableMission.MissionId,
                             step,
                             mapChannel,
                             manager,
-                            state);
+                            state,
+                            client);
                     }
             }
         }
@@ -496,7 +548,8 @@ namespace Rasa.Managers
                 (float)step.PosZ.Value);
             var enabled = step.InitialInteractionEnabled ?? true;
             context.Plan.AddRuntimeConvergence(() =>
-                EnsureScenarioDynamicObject(
+            {
+                var dynamicObject = EnsureScenarioDynamicObject(
                     context.MapChannel,
                     BuildDynamicObjectRuntimeKey(
                         context.Client.Player.Id,
@@ -508,8 +561,25 @@ namespace Rasa.Managers
                     position,
                     step.Orientation.Value,
                     enabled,
-                    step.DelayMilliseconds));
+                    step.DelayMilliseconds);
+
+                // Bootcamp's equipment crate is scenario content, not a generic engine feature
+                // yet - nothing else needs a scenario-spawned object to double as a loot
+                // dispenser. If a second one shows up, generalize this (most likely by allowing
+                // reward_id on a SpawnDynamicObject step, which the schema constraint currently
+                // forbids) instead of growing this list.
+                if (dynamicObject != null &&
+                    dynamicObject.LootDispenserEntityId == 0 &&
+                    step.EntityClassId.Value == BootcampEquipmentCrateEntityClassId &&
+                    context.RewardPackages.TryGetValue(
+                        BootcampEquipmentCrateRewardId, out var rewardPackage))
+                    LootDispenserManager.Instance.AttachRewardLoot(
+                        context.Client, context.MapChannel, dynamicObject, rewardPackage.FixedItems);
+            });
         }
+
+        private const uint BootcampEquipmentCrateEntityClassId = 29877;
+        private const uint BootcampEquipmentCrateRewardId = 58;
 
         private void PlanDespawnDynamicObject(
             MissionActionContext context,
@@ -867,7 +937,8 @@ namespace Rasa.Managers
             MissionScenarioStepDefinition step,
             MapChannel mapChannel,
             MissionManager manager,
-            ScenarioState state)
+            ScenarioState state,
+            Client client)
         {
             switch (step.Kind)
             {
@@ -913,22 +984,54 @@ namespace Rasa.Managers
                         !step.PosZ.HasValue ||
                         !step.Orientation.HasValue)
                         return;
-                    EnsureScenarioDynamicObject(
-                        mapChannel,
-                        BuildDynamicObjectRuntimeKey(
-                            characterId,
-                            missionId,
-                            step.ContentRevision,
-                            step.AttemptKey,
-                            step.DynamicObjectKey),
-                        (EntityClasses)step.EntityClassId.Value,
-                        new Vector3(
-                            (float)step.PosX.Value,
-                            (float)step.PosY.Value,
-                            (float)step.PosZ.Value),
-                        step.Orientation.Value,
-                        step.InitialInteractionEnabled ?? true,
-                        step.DelayMilliseconds);
+                    {
+                        var dynamicObject = EnsureScenarioDynamicObject(
+                            mapChannel,
+                            BuildDynamicObjectRuntimeKey(
+                                characterId,
+                                missionId,
+                                step.ContentRevision,
+                                step.AttemptKey,
+                                step.DynamicObjectKey),
+                            (EntityClasses)step.EntityClassId.Value,
+                            new Vector3(
+                                (float)step.PosX.Value,
+                                (float)step.PosY.Value,
+                                (float)step.PosZ.Value),
+                            step.Orientation.Value,
+                            step.InitialInteractionEnabled ?? true,
+                            step.DelayMilliseconds);
+
+                        Logger.WriteLog(LogType.Debug,
+                            $"[MissionDiag] Rebuild SpawnDynamicObject key={step.DynamicObjectKey} entityClass={step.EntityClassId} " +
+                            $"objCreated={dynamicObject != null} lootAlready={dynamicObject?.LootDispenserEntityId} " +
+                            $"classMatches={step.EntityClassId.Value == BootcampEquipmentCrateEntityClassId} " +
+                            $"hasRewardPackage={manager.GetRewardPackages(missionId).ContainsKey(BootcampEquipmentCrateRewardId)}");
+
+                        // A relog tears the owner's private instance down and rebuilds it from
+                        // durable "completed steps" alone (MapChannelManager.ReleaseOwnedPrivateInstances
+                        // / GetOrCreatePrivateInstance) - a crate the owner had not yet looted
+                        // needs this same attachment redone here, or it comes back with no
+                        // dispenser (SpawnDynamicObject's own completed-step record does not know
+                        // whether the loot was ever taken - only DespawnDynamicObject completing
+                        // means that).
+                        //
+                        // Queued rather than attached here directly: this whole rebuild runs from
+                        // inside CharacterManager.ResolveReconnectMapChannel, before the client has
+                        // been placed in the cell (CellManager.AddToWorld(client) - which is what
+                        // actually introduces the crate to them - happens much later, in
+                        // MapChannelManager's post-load flow). Sending AttachInfo/CanLootItems for
+                        // an entity the client has never heard of left it with no loot option at
+                        // all. client.PendingLootAttaches is drained in
+                        // MissionManager.PublishInitialState, after that introduction has happened.
+                        if (client != null &&
+                            dynamicObject != null &&
+                            dynamicObject.LootDispenserEntityId == 0 &&
+                            step.EntityClassId.Value == BootcampEquipmentCrateEntityClassId &&
+                            manager.GetRewardPackages(missionId).TryGetValue(
+                                BootcampEquipmentCrateRewardId, out var rewardPackage))
+                            client.PendingLootAttaches.Add((dynamicObject, rewardPackage.FixedItems));
+                    }
                     return;
 
                 case MissionScenarioStepKind.DespawnDynamicObject:
@@ -1121,7 +1224,7 @@ namespace Rasa.Managers
             registry.SpawnGroupsByKey.Remove(runtimeKey);
         }
 
-        private void EnsureScenarioDynamicObject(
+        private DynamicObject EnsureScenarioDynamicObject(
             MapChannel mapChannel,
             string runtimeKey,
             EntityClasses entityClassId,
@@ -1131,7 +1234,7 @@ namespace Rasa.Managers
             uint? windupTime)
         {
             if (mapChannel == null || string.IsNullOrWhiteSpace(runtimeKey))
-                return;
+                return null;
 
             var registry = GetRegistry(mapChannel);
             if (!registry.DynamicObjectsByKey.TryGetValue(runtimeKey, out var existing))
@@ -1146,7 +1249,7 @@ namespace Rasa.Managers
                 MapInstanceScope.Contains(mapChannel, existing))
             {
                 _objects().SetScenarioInteractionEnabled(mapChannel, existing, enabled);
-                return;
+                return existing;
             }
 
             var dynamicObject = _objects().CreateScenarioDynamicObject(
@@ -1159,7 +1262,22 @@ namespace Rasa.Managers
                 windupTime);
             mapChannel.DynamicObjects.Add(dynamicObject);
             CellManager.Instance.AddToWorld(mapChannel, dynamicObject);
+
+            // DynamicObjectManager.DynamicObjectWorker sweeps every entry in
+            // mapChannel.DynamicObjects once a tick and re-adds any with IsInWorld still false
+            // once its (default zero) RespawnTime counts down past zero - which, for an object
+            // never given that flag, is true on the very next tick, and every tick after. That
+            // second AddToWorld call re-registers the same entity id and throws (caught and
+            // logged per-tick in Server.MainLoop, so the crash itself was silent and endless: a
+            // scenario prop that survived more than about a second past creation - which
+            // nothing forced before a real Lootable window existed to wait on - jammed the whole
+            // map channel's tick from that point on, every second, indefinitely). Persistent
+            // objects (logos shrines, dropship pads) set this themselves once actually spawned;
+            // a scenario object never went through that path at all.
+            dynamicObject.IsInWorld = true;
+
             registry.DynamicObjectsByKey[runtimeKey] = dynamicObject;
+            return dynamicObject;
         }
 
         private void RemoveScenarioDynamicObject(MapChannel mapChannel, string runtimeKey)

@@ -398,6 +398,7 @@ namespace Rasa.Migrations.MySqlWorld
                     indicator_id = table.Column<uint>(type: "int(11) unsigned", nullable: true),
                     player_flag_id = table.Column<uint>(type: "int(11) unsigned", nullable: true),
                     player_flag_value = table.Column<uint>(type: "int(11) unsigned", nullable: true),
+                    npc_package_id = table.Column<uint>(type: "int(11) unsigned", nullable: true),
                     comment = table.Column<string>(type: "varchar(64)", nullable: false)
                         .Annotation("MySql:CharSet", "utf8mb4")
                 },

@@ -96,9 +96,9 @@ namespace Rasa.Test.Gameplay
             Assert.IsNotNull(durableStart);
             Assert.AreEqual(CharacterStartingExperienceState.Bootcamp, durableStart.State);
             Assert.AreEqual(BootcampMapContextId, durableCharacter.MapContextId);
-            Assert.AreEqual(357.90054d, durableCharacter.CoordX, 0.0001d);
-            Assert.AreEqual(120.32544d, durableCharacter.CoordY, 0.0001d);
-            Assert.AreEqual(156.5188d, durableCharacter.CoordZ, 0.0001d);
+            Assert.AreEqual(389.8046875d, durableCharacter.CoordX, 0.0001d);
+            Assert.AreEqual(136.78515625d, durableCharacter.CoordY, 0.0001d);
+            Assert.AreEqual(-80.6640625d, durableCharacter.CoordZ, 0.0001d);
             Assert.IsNotNull(durableMission);
             Assert.AreEqual((uint)MissionState.Active, durableMission.MissionState);
             Assert.IsFalse(durableMission.Completeable);

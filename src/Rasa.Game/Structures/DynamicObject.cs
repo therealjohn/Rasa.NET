@@ -41,5 +41,11 @@ namespace Rasa.Structures
         public bool IsEnabled = true;
         public uint WindupTime { get; internal set; }
         public uint ActivateMission { get; internal set; }
+
+        /// <summary>
+        /// The LootDispenser attached to this object, or 0. Mirrors Creature.CorpseLootEntityId -
+        /// same mechanism, just attached to a scripted prop instead of a kill.
+        /// </summary>
+        public ulong LootDispenserEntityId { get; set; }
     }
 }

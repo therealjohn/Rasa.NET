@@ -13,6 +13,7 @@ namespace Rasa.Data
         ItemEquipped,
         AbilityHit,
         ScenarioEvent,
-        DeadlineElapsed
+        DeadlineElapsed,
+        ObjectiveStateReached
     }
 }

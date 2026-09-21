@@ -357,6 +357,7 @@ namespace Rasa.Migrations.SqliteWorld
                     indicator_id = table.Column<uint>(type: "int(11)", nullable: true),
                     player_flag_id = table.Column<uint>(type: "int(11)", nullable: true),
                     player_flag_value = table.Column<uint>(type: "int(11)", nullable: true),
+                    npc_package_id = table.Column<uint>(type: "int(11)", nullable: true),
                     comment = table.Column<string>(type: "varchar(64)", nullable: false)
                 },
                 constraints: table =>

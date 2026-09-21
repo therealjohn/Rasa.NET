@@ -1149,6 +1149,10 @@ namespace Rasa.Migrations.SqliteWorld
                         .HasColumnType("tinyint(3)")
                         .HasColumnName("kind");
 
+                    b.Property<uint?>("NpcPackageId")
+                        .HasColumnType("int(11)")
+                        .HasColumnName("npc_package_id");
+
                     b.Property<byte?>("ObjectiveState")
                         .HasColumnType("tinyint(3)")
                         .HasColumnName("objective_state");

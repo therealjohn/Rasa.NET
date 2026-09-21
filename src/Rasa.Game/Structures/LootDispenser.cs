@@ -31,6 +31,13 @@ namespace Rasa.Structures
         internal Manifestation Player { get; set; }
         internal MapChannel Map { get; set; }
         internal Creature Corpse { get; set; }
+
+        /// <summary>
+        /// Set instead of <see cref="Corpse"/> when this dispenser is attached to a scripted
+        /// prop (a mission reward crate) rather than something a player killed. Exactly one of
+        /// the two is set.
+        /// </summary>
+        internal DynamicObject AttachedObject { get; set; }
         internal uint CharacterId { get; set; }
         internal uint AccountId { get; set; }
         internal Rasa.Repositories.UnitOfWork.IGameUnitOfWorkFactory UnitOfWorkFactory { get; set; }
