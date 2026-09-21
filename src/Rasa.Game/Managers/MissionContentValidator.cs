@@ -776,6 +776,7 @@ namespace Rasa.Managers
                         case MissionProgressEventKind.ItemAcquired:
                         case MissionProgressEventKind.ItemConsumed:
                         case MissionProgressEventKind.InteractionUsed:
+                        case MissionProgressEventKind.ObjectHit:
                             if (!references.EntityClassIds.Contains(subjectId))
                             {
                                 diagnostics.Add(new MissionValidationDiagnostic(

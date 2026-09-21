@@ -333,6 +333,61 @@ take one row and reconnect; collect the remainder with Loot All; confirm the
 crate stays in place and cannot grant duplicates. Repeat creature looting to
 check that its existing interaction is unchanged.
 
+## Gearing Up conversation and practice targets
+
+Committed mission changes refresh the conversation status of visible NPCs.
+Completing the crate/equipment step must make Delessio available immediately;
+his handoff must make Hartmann available without reconnecting. NPCs outside the
+player's visible cells or in another instance are not part of that refresh.
+
+The firing range uses three permanent Practice Dummy objects, entity class
+`29365` (`arch_hum_practice_target_v01.geo`), at these exact positions:
+
+| X | Y | Z |
+| --- | --- | --- |
+| 386 | 120 | 184.7 |
+| 380 | 120 | 186 |
+| 375 | 120 | 186 |
+
+They exist when the map is created, before accepting mission `1992`. Rifle and
+Recruit Lightning rank 1 training use the same objects. Hits leave them upright;
+they do not die, grant loot, or get replaced when an objective is accepted.
+The client receives usable-object damage information and target category
+`OBJECT`, not creature/NPC metadata. The former `TestTargetDummy` class `26548`
+is not used for these targets.
+
+The `ObjectHit` progress event (`event_kind = 13`) distinguishes object hits
+from creature kills and ability hits on creatures. Its `subject_id` is the
+object's entity class and `counter_id` is the action ID: weapon attack `1` for
+objective `3`, Recruit Lightning `194` for objective `8`. A rifle hit cannot
+complete the Lightning objective. Weapon ammunition and Lightning eligibility,
+range, costs, interruption and cooldown checks remain on their normal paths.
+Other abilities and higher-rank object arc behavior are not added by this change.
+
+Apply the pending **World** migrations when deploying. `BootcampPracticeTargets`
+replaces the old mission-controlled creature spawns with the shared target
+bindings. `BootcampObjectiveIndicators` disables `show_3d_effect` for the
+Bootcamp chain, preserving navigation coordinates, radii and objective progress.
+The client's `missionlog.py` checks this flag before creating the floating
+`OVERHEAD_MISSION_INDICATOR` effects; NPC conversation status is not suppressed.
+
+The client contract was checked against `trpython`'s English entity-class
+names, `augmentations/inertdestroyable.py`, `augmentations/usable.py`,
+`actions/abilities/damagebase.py`, `actions/targetedaction.py`, and `missionlog.py`.
+The repository's `src\Rasa.NavMesh\data\entity_meshes.csv` confirms the model.
+No client files are modified.
+
+Run the focused regression cases with:
+
+```powershell
+dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~BootcampGearingUpInteractionTests|FullyQualifiedName~BootcampPracticeTargetsMigration|FullyQualifiedName~BootcampObjectiveIndicatorsMigration"
+```
+
+Native-client acceptance still requires a new connection to the updated server:
+check all three target models and positions before accepting the mission, finish
+the rifle/Lightning sequence without relogging, and confirm that objective stars
+are absent while tracker and NPC interactions continue to work.
+
 ## Native-client Bootcamp acceptance checklist
 
 The repository does not contain a native-client automation harness. Use this

@@ -287,7 +287,10 @@ namespace Rasa.Managers
             client.CallMethod(creature.EntityId, new ConversePacket(convoDataDict));
         }
 
-        public void UpdateConversationStatus(Client client, Creature creature)
+        public void UpdateConversationStatus(
+            Client client,
+            Creature creature,
+            MissionManager missionManager = null)
         {
             if (creature == null)
                 return;
@@ -304,7 +307,7 @@ namespace Rasa.Managers
             var vendor = creature.Npc.Vendor;
             var statusSet = false;
 
-            var missionState = Missions.ClassifyNpcConversation(
+            var missionState = (missionManager ?? Missions).ClassifyNpcConversation(
                 client.Player,
                 creature);
             if (missionState.TryGetStatus(out var missionStatus, out var missionIds))

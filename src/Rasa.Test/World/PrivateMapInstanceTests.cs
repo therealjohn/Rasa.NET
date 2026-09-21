@@ -136,7 +136,9 @@ namespace Rasa.Test.World
             Assert.AreEqual(publicMap.ControlPoints.Count, owned.ControlPoints.Count);
             Assert.AreEqual(publicMap.FootLockers.Count, owned.FootLockers.Count);
             Assert.AreEqual(publicMap.Teleporters.Count, owned.Teleporters.Count);
-            Assert.AreEqual(publicMap.DynamicObjects.Count, owned.DynamicObjects.Count);
+            Assert.AreEqual(publicMap.DynamicObjects.Count,
+                owned.DynamicObjects.Count(obj => obj.DynamicObjectType != DynamicObjectType.PracticeDummy));
+            Assert.AreEqual(3, owned.DynamicObjects.Count(obj => obj.DynamicObjectType == DynamicObjectType.PracticeDummy));
             Assert.AreEqual(publicMap.Kraftwerks.Count, owned.Kraftwerks.Count);
             Assert.AreEqual(
                 publicMap.MapCellInfo.Cells.Values.Sum(cell => cell.MapTriggers.Count),
@@ -167,6 +169,7 @@ namespace Rasa.Test.World
             Assert.AreEqual(3000L, publicPool.UpdateTimer);
             Assert.AreEqual(Factions.AFS, publicControlPoint.Faction);
             Assert.AreEqual("public-waypoint", publicTeleporter.Comment);
+            maps.ReleaseOwnedPrivateInstances(7);
         }
 
         [TestMethod]

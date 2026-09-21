@@ -14,6 +14,7 @@ namespace Rasa.Data
         AbilityHit,
         ScenarioEvent,
         DeadlineElapsed,
-        ObjectiveStateReached
+        ObjectiveStateReached,
+        ObjectHit
     }
 }

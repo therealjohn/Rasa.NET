@@ -646,6 +646,27 @@ namespace Rasa.Managers
             AnnouncePendingMissionGrants(client);
         }
 
+        internal void RefreshNpcConversationStatuses(Client client)
+        {
+            var player = client?.Player;
+            var map = player?.MapChannel;
+            if (map == null || client.State != ClientState.Ingame ||
+                !CellManager.Instance.IsInWorld(client))
+                return;
+
+            var npcs = CellManager.CellsIn(map, player.Cells)
+                .SelectMany(cell => cell.CreatureList)
+                .Where(creature => creature.Npc != null)
+                .Distinct()
+                .ToArray();
+            foreach (var npc in npcs)
+                if (MapInstanceScope.TryGetCreature(map, npc.EntityId, out var current) &&
+                    ReferenceEquals(current, npc))
+                    TryPublish(
+                        () => NpcManager.Instance.UpdateConversationStatus(client, npc, this),
+                        $"NPC {npc.EntityId} conversation status after mission progress");
+        }
+
         /// <summary>
         /// Sends the accept popup for missions granted outside the NPC-accept flow (bootcamp's
         /// automatic Initiation grant, so far), now that the player exists to call a method on.
@@ -1067,7 +1088,7 @@ namespace Rasa.Managers
                 // available-mission icon would otherwise keep showing what it showed when this
                 // NPC first became visible (CreatePhysicalEntityOnClient's one-time snapshot) -
                 // nothing previously refreshed it after a mission state actually changed.
-                NpcManager.Instance.UpdateConversationStatus(client, npc);
+                RefreshNpcConversationStatuses(client);
                 return true;
             }
         }
@@ -1155,7 +1176,7 @@ namespace Rasa.Managers
                         new MissionCompletedPacket(missionId)),
                     $"mission {missionId} completed");
                 progressPlan.Publish(client);
-                NpcManager.Instance.UpdateConversationStatus(client, npc);
+                RefreshNpcConversationStatuses(client);
                 return true;
             }
         }
@@ -1287,7 +1308,7 @@ namespace Rasa.Managers
                             client.Player.EntityId,
                             new MissionRewardedPacket(missionId)),
                         $"mission {missionId} rewarded");
-                    NpcManager.Instance.UpdateConversationStatus(client, npc);
+                    RefreshNpcConversationStatuses(client);
                     return true;
                 }
                 finally
@@ -1522,7 +1543,7 @@ namespace Rasa.Managers
                     _scenarioService.TryActivateSpawnGroup(client, missionId, spawnGroupId);
                 if (actionApplication.ShownIndicatorIds.Count > 0)
                     PublishMissionStatus(client, missionId, $"mission {missionId} status after indicator reveal");
-                NpcManager.Instance.UpdateConversationStatus(client, npc);
+                RefreshNpcConversationStatuses(client);
 
                 // See the matching comment in MissionProgressPublicationPlan.Publish: this is the
                 // only way an ObjectiveState-gated transition elsewhere in the mission gets a
@@ -3472,6 +3493,9 @@ namespace Rasa.Managers
                                 finalState.Key,
                                 (byte)finalState.Value));
                 }
+
+                if (HasChanges)
+                    _manager.RefreshNpcConversationStatuses(client);
             }
 
             private static bool TryGetRuntimeObjective(

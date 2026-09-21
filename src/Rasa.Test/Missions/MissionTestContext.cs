@@ -713,7 +713,11 @@ namespace Rasa.Test.Missions
             _addedTemplates.Add(templateId);
         }
 
-        internal Creature AddNpc(uint dbId, MapChannel map = null, uint? npcPackageId = null)
+        internal Creature AddNpc(
+            uint dbId,
+            MapChannel map = null,
+            uint? npcPackageId = null,
+            Vector3? position = null)
         {
             map ??= Map;
             var npc = new Creature
@@ -722,7 +726,7 @@ namespace Rasa.Test.Missions
                 Npc = new Npc { NpcPackageId = npcPackageId ?? dbId },
                 MapContextId = map.MapInfo.MapContextId,
                 RuntimeMapChannel = map,
-                Position = Vector3.Zero,
+                Position = position ?? Vector3.Zero,
                 EntityClass = EntityClasses.HumanBaseMale
             };
             _npcs.Add(npc);
@@ -931,9 +935,11 @@ namespace Rasa.Test.Missions
         {
             foreach (var npc in _npcs)
             {
-                EntityManager.Instance.UnregisterEntity(npc.EntityId);
-                EntityManager.Instance.UnregisterCreature(npc.EntityId);
-                EntityManager.Instance.FreeEntity(npc.EntityId);
+                if (EntityManager.Instance.Creatures.TryGetValue(npc.EntityId, out var current) &&
+                    ReferenceEquals(current, npc))
+                    EntityManager.Instance.ReleaseEntity(npc.EntityId, EntityType.Creature);
+                else if (!EntityManager.Instance.RegisteredEntities.ContainsKey(npc.EntityId))
+                    EntityManager.Instance.FreeEntity(npc.EntityId);
             }
             foreach (var id in EntityManager.Instance.Items.Keys.Except(_originalItems).ToArray())
                 EntityManager.Instance.ReleaseEntity(id, EntityType.Item);

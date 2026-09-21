@@ -124,6 +124,7 @@ namespace Rasa.Managers
             InitTeleporters();
             LogosManager.Instance.LogosInit();
             KraftwerksManager.Instance.KraftwerksInit();
+            PracticeTargetManager.Initialize(Maps.FindByContextId(1985));
         }
 
         internal void CloneTemplateMap(MapChannel template, MapChannel mapChannel)
@@ -162,6 +163,8 @@ namespace Rasa.Managers
                          .Distinct()
                          .ToArray())
                 CellManager.Instance.AddToWorld(mapChannel, CloneMapLink(link, mapChannel));
+
+            PracticeTargetManager.Initialize(mapChannel);
         }
 
         internal void ForceState(DynamicObject obj, UseObjectState state, int delta)
@@ -499,6 +502,13 @@ namespace Rasa.Managers
             // at the cost of a packet per object per client.
             if (dynamicObject.Lock != null)
                 entityData.Add(new LockInfoPacket(dynamicObject.Lock));
+
+            if (dynamicObject.DynamicObjectType == DynamicObjectType.PracticeDummy)
+            {
+                entityData.Add(new TargetCategoryPacket(TargetCategory.Object));
+                entityData.Add(new DamageInfoPacket(
+                    true, false, PracticeTargetManager.HitPoints, PracticeTargetManager.HitPoints));
+            }
 
             client.CallMethod(SysEntity.ClientMethodId, new CreatePhysicalEntityPacket(dynamicObject.EntityId, dynamicObject.EntityClassId, entityData));
             if (dynamicObject.MissionLootSource != null &&

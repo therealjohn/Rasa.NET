@@ -152,7 +152,8 @@ namespace Rasa.Test.Missions
                     typeof(ObjectiveRevealedPacket),
                     typeof(ObjectiveActivatedPacket)
                 },
-                packets.Select(packet => packet.GetType()).ToArray());
+                packets.Where(packet => packet is not NPCConversationStatusPacket)
+                    .Select(packet => packet.GetType()).ToArray());
         }
 
         [TestMethod]
@@ -232,7 +233,8 @@ namespace Rasa.Test.Missions
                 context.ReadProgress(321).Missions[321].Objectives[9].State);
             CollectionAssert.AreEqual(
                 new[] { typeof(ObjectiveCompletedPacket) },
-                context.Drain().Select(packet => packet.GetType()).ToArray());
+                context.Drain().Where(packet => packet is not NPCConversationStatusPacket)
+                    .Select(packet => packet.GetType()).ToArray());
         }
 
         [TestMethod]
@@ -268,7 +270,9 @@ namespace Rasa.Test.Missions
                     typeof(ObjectiveCompletedPacket),
                     typeof(ObjectiveActivatedPacket)
                 },
-                MissionTestContext.Drain(staleClient).Select(packet => packet.GetType()).ToArray());
+                MissionTestContext.Drain(staleClient)
+                    .Where(packet => packet is not NPCConversationStatusPacket)
+                    .Select(packet => packet.GetType()).ToArray());
         }
 
         [TestMethod]
@@ -306,7 +310,9 @@ namespace Rasa.Test.Missions
                     typeof(ObjectiveCompletedPacket),
                     typeof(MissionCompleteablePacket)
                 },
-                MissionTestContext.Drain(staleClient).Select(packet => packet.GetType()).ToArray());
+                MissionTestContext.Drain(staleClient)
+                    .Where(packet => packet is not NPCConversationStatusPacket)
+                    .Select(packet => packet.GetType()).ToArray());
         }
 
         [TestMethod]

@@ -11,6 +11,7 @@ namespace Rasa.Structures
         public uint ActionArgId { get; set; }
         public uint Args { get; set; }
         public ulong TargetId { get; set; }
+        internal DynamicObject TargetObject { get; set; }
 
         /// <summary>Where a ground-targeted ability was aimed, when it had no target entity.</summary>
         public Vector3? TargetLocation { get; set; }

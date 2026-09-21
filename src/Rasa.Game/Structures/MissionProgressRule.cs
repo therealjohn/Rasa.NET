@@ -127,6 +127,9 @@ namespace Rasa.Structures
                 actionId,
                 detailId: targetCreatureId);
 
+        internal static MissionProgressRule CompleteOnObjectHit(uint entityClassId, uint actionId) =>
+            CompleteOnScopedSubject(MissionProgressEventKind.ObjectHit, entityClassId, detailId: actionId);
+
         internal static MissionProgressRule CompleteOnScenarioEvent(
             uint missionId,
             uint scenarioId,

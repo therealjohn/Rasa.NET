@@ -57,6 +57,7 @@ namespace Rasa.Managers
         private sealed class LightningLanding
         {
             internal Creature Primary;
+            internal DynamicObject PracticeTarget;
             internal Vector3 PrimaryPosition;
             internal float ArcRadius;
             internal int ArcDamage;
@@ -304,24 +305,28 @@ namespace Rasa.Managers
             // The target, when the ability wants one. Area-around-source and cone abilities have
             // none; self abilities have none or the performer.
             Actor target = null;
+            DynamicObject practiceTarget = null;
 
             if (!SelfCentred(info) && packet.Target.HasEntity && packet.Target.EntityId != player.EntityId)
             {
                 target = ResolveTarget(mapChannel, packet.Target.EntityId);
-
                 if (target == null)
+                    practiceTarget = ResolvePracticeTarget(mapChannel, player, info, packet.Target.EntityId);
+
+                if (target == null && practiceTarget == null)
                 {
                     Fail(client, actionId, level, PlayerMessage.PmActionFailedNoTarget);
                     return;
                 }
 
-                if (target.State == CharacterState.Dead)
+                if (target?.State == CharacterState.Dead)
                 {
                     Fail(client, actionId, level, PlayerMessage.PmActionFailedTargetDead);
                     return;
                 }
 
-                if (info.MaxRange > 0 && Vector3.Distance(player.Position, target.Position) > info.MaxRange + RangeSlack)
+                var distance = Vector3.Distance(player.Position, practiceTarget?.Position ?? target.Position);
+                if (!float.IsFinite(distance) || info.MaxRange > 0 && distance > info.MaxRange + RangeSlack)
                 {
                     Fail(client, actionId, level, PlayerMessage.PmTargetOutOfRange);
                     return;
@@ -330,7 +335,8 @@ namespace Rasa.Managers
 
             var wantsHostile = IsDirectDamage(action, info) || HostileEffectModules.Contains(action.Module);
 
-            if (wantsHostile && target == null && !SelfCentred(info) && packet.Target.Kind != ActionTargetKind.Location)
+            if (wantsHostile && target == null && practiceTarget == null &&
+                !SelfCentred(info) && packet.Target.Kind != ActionTargetKind.Location)
             {
                 Fail(client, actionId, level, PlayerMessage.PmActionFailedNoTarget);
                 return;
@@ -373,14 +379,16 @@ namespace Rasa.Managers
                 }
 
             // Accepted. Everyone else sees the windup; the performer's client already started its own.
-            SendToOthers(mapChannel, player, new PerformWindupPacket(PerformType.ThreeArgs, actionId, level, target?.EntityId ?? 0));
+            var targetId = practiceTarget?.EntityId ?? target?.EntityId ?? 0;
+            SendToOthers(mapChannel, player, new PerformWindupPacket(PerformType.ThreeArgs, actionId, level, targetId));
 
             // One ability at a time: a new request replaces a pending one, as the client's own
             // action queue does.
             mapChannel.PerformRecovery.RemoveAll(a => a.Actor == player && a.ActionId == actionId);
 
-            mapChannel.PerformRecovery.Add(new ActionData(player, actionId, level, target?.EntityId ?? 0, info.WindupMs)
+            mapChannel.PerformRecovery.Add(new ActionData(player, actionId, level, targetId, info.WindupMs)
             {
+                TargetObject = practiceTarget,
                 TargetLocation = packet.Target.Kind == ActionTargetKind.Location ? packet.Target.Location : null,
                 ItemId = packet.ItemId
             });
@@ -446,6 +454,16 @@ namespace Rasa.Managers
 
             // Entity ids are global, cells are per map: a target on another map is not here.
             return IsOnMap(mapChannel, target) ? target : null;
+        }
+
+        private static DynamicObject ResolvePracticeTarget(
+            MapChannel map, Manifestation player, ActionLevelInfo info, ulong entityId)
+        {
+            if (info.ActionId != ActionId.AaRecruitLightning || info.Level != 1 ||
+                !PracticeTargetManager.TryGetTarget(map, entityId, out var target) ||
+                !PracticeTargetManager.CanHit(map, player, target))
+                return null;
+            return target;
         }
 
         private static bool IsOnMap(MapChannel mapChannel, Actor actor)
@@ -651,11 +669,15 @@ namespace Rasa.Managers
             if (action.TargetId != 0)
             {
                 var target = ResolveTarget(mapChannel, action.TargetId);
+                var practiceTarget = action.TargetObject == null ? null :
+                    ResolvePracticeTarget(mapChannel, player, info, action.TargetId);
 
-                if (target == null)
+                if (action.TargetObject != null && !ReferenceEquals(practiceTarget, action.TargetObject))
+                    return PlayerMessage.PmActionFailedNoTarget;
+                if (target == null && practiceTarget == null)
                     return PlayerMessage.PmActionFailedNoTarget;
 
-                if (IsDirectDamage(actionInfo, info) &&
+                if (target != null && IsDirectDamage(actionInfo, info) &&
                     !IsValidPrimaryTarget(mapChannel, player, target))
                     return target.State == CharacterState.Dead ||
                            target.State == CharacterState.Dying ||
@@ -664,7 +686,7 @@ namespace Rasa.Managers
                         ? PlayerMessage.PmActionFailedTargetDead
                         : PlayerMessage.PmActionFailedActorFriendly;
 
-                var distance = Vector3.Distance(player.Position, target.Position);
+                var distance = Vector3.Distance(player.Position, practiceTarget?.Position ?? target.Position);
                 if (!float.IsFinite(distance) ||
                     info.MaxRange > 0 && distance > info.MaxRange + RangeSlack)
                     return PlayerMessage.PmTargetOutOfRange;
@@ -736,6 +758,33 @@ namespace Rasa.Managers
             var scaleType = info.Get(AbilityProperty.DamageScaleType);
             var min = info.Get(AbilityProperty.DamageAmountMin);
             var max = Math.Max(min, info.Get(AbilityProperty.DamageAmountMax, min));
+
+            if (action.TargetObject != null)
+            {
+                if (lightningLanding?.PracticeTarget == null ||
+                    !PracticeTargetManager.CanHit(mapChannel, player, lightningLanding.PracticeTarget))
+                    return;
+                var practiceTarget = lightningLanding.PracticeTarget;
+                var amount = GameEffectManager.ApplyDamageDealt(
+                    player, Scale(player.Level, _random.Next(min, max + 1), scaleType));
+                var result = new AbilityRecoveryPacket(
+                    action.ActionId, action.ActionArgId, AbilityRecoveryPacket.HitDataKind.Damage)
+                {
+                    ArcData = true
+                };
+                result.Hits.Add(new AbilityHit
+                {
+                    EntityId = practiceTarget.EntityId,
+                    Amount = amount,
+                    DamageType = damageType
+                });
+                ManifestationManager.Instance.EnterCombat(client);
+                CellManager.Instance.CellCallMethod(mapChannel, player, result);
+                if (amount > 0)
+                    PracticeTargetManager.RecordHit(
+                        mapChannel, player, practiceTarget, action.ActionId, _missionManager);
+                return;
+            }
 
             var targets = new List<Creature>();
             var primary = action.TargetId != 0
@@ -846,6 +895,19 @@ namespace Rasa.Managers
             out LightningLanding landing)
         {
             landing = null;
+            if (action.TargetObject != null)
+            {
+                var practiceTarget = ResolvePracticeTarget(mapChannel, player, info, action.TargetId);
+                if (practiceTarget == null || !ReferenceEquals(practiceTarget, action.TargetObject))
+                    return false;
+                landing = new LightningLanding
+                {
+                    PracticeTarget = practiceTarget,
+                    PrimaryPosition = practiceTarget.Position,
+                    ArcTargets = Array.Empty<Creature>()
+                };
+                return true;
+            }
             var primary = action.TargetId != 0
                 ? ResolveTarget(mapChannel, action.TargetId) as Creature
                 : null;

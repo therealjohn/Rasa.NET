@@ -232,7 +232,7 @@ namespace Rasa.Test.Missions
         private static void PrepareBootcampScenarioClasses()
         {
             var classes = EntityClassManager.Instance.LoadedEntityClasses;
-            foreach (var entityClassId in new uint[] { 24911, 24990, 7862, 29877 })
+            foreach (var entityClassId in new uint[] { 24911, 24990, 7862, 29877, 29365 })
                 if (!classes.ContainsKey((EntityClasses)entityClassId))
                     classes.Add((EntityClasses)entityClassId, new EntityClass(
                         entityClassId,
@@ -298,8 +298,11 @@ namespace Rasa.Test.Missions
             EquipmentData equipmentSlot)
         {
             context.AddRewardTemplate(templateId, classId);
-            EntityClassManager.Instance.LoadedEntityClasses[(EntityClasses)classId]
-                .EquipableClassInfo = new EquipableClassInfo(equipmentSlot);
+            var entityClass = EntityClassManager.Instance.LoadedEntityClasses[(EntityClasses)classId];
+            entityClass.EquipableClassInfo = new EquipableClassInfo(equipmentSlot);
+            if (equipmentSlot != EquipmentData.Weapon)
+                entityClass.ArmorClassInfo = new ArmorClassInfo(new ArmorClassEntry());
+            entityClass.ItemTemplates[templateId].InventoryCategory = InventoryCategory.Equipment;
         }
 
         private static void ConfigureRuntimePlayer(Client client)
@@ -517,7 +520,7 @@ namespace Rasa.Test.Missions
             private readonly Func<DateTime> _getUtcNow;
             private readonly Action<DateTime> _setUtcNow;
             private ManagerInstances _singletons;
-            private readonly List<(uint CreatureId, uint? PackageId)> _npcs = new();
+            private readonly List<(uint CreatureId, uint? PackageId, Vector3 Position)> _npcs = new();
 
             internal Harness(
                 MissionTestContext context,
@@ -615,10 +618,10 @@ namespace Rasa.Test.Missions
                     reload.CharacterMissionProgress.Get(Client.Player.Id));
             }
 
-            internal Creature AddNpc(uint dbId, uint? npcPackageId = null)
+            internal Creature AddNpc(uint dbId, uint? npcPackageId = null, Vector3? position = null)
             {
-                _npcs.Add((dbId, npcPackageId));
-                var npc = Context.AddNpc(dbId, BootcampMap, npcPackageId);
+                _npcs.Add((dbId, npcPackageId, position ?? Vector3.Zero));
+                var npc = Context.AddNpc(dbId, BootcampMap, npcPackageId, position);
                 npc.AppearanceData ??= new Dictionary<EquipmentData, AppearanceData>();
                 if (npc.Attributes.Count == 0)
                 {
@@ -644,7 +647,7 @@ namespace Rasa.Test.Missions
                 var rebuilt = Maps.GetOrCreatePrivateInstance(BootcampMapContextId, characterId);
                 BootcampMap = rebuilt;
                 foreach (var npc in _npcs)
-                    AddNpcToCurrentMap(npc.CreatureId, npc.PackageId);
+                    AddNpcToCurrentMap(npc.CreatureId, npc.PackageId, npc.Position);
                 AttachClientToMap(Client, BootcampMap);
             }
 
@@ -766,7 +769,7 @@ namespace Rasa.Test.Missions
                 Maps = maps;
                 BootcampMap = Maps.GetOrCreatePrivateInstance(BootcampMapContextId, characterId);
                 foreach (var npc in _npcs)
-                    AddNpcToCurrentMap(npc.CreatureId, npc.PackageId);
+                    AddNpcToCurrentMap(npc.CreatureId, npc.PackageId, npc.Position);
 
                 var freshClient = Context.CreateCompetingClient(Manager);
                 typeof(Client).GetProperty(nameof(Client.AccountEntry))!
@@ -859,9 +862,9 @@ namespace Rasa.Test.Missions
                 AdvanceRecovery(deltaMilliseconds ?? dynamicObject.WindupTime);
             }
 
-            private void AddNpcToCurrentMap(uint dbId, uint? npcPackageId)
+            private void AddNpcToCurrentMap(uint dbId, uint? npcPackageId, Vector3 position)
             {
-                var npc = Context.AddNpc(dbId, BootcampMap, npcPackageId);
+                var npc = Context.AddNpc(dbId, BootcampMap, npcPackageId, position);
                 npc.AppearanceData ??= new Dictionary<EquipmentData, AppearanceData>();
                 if (npc.Attributes.Count == 0)
                 {

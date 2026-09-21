@@ -155,6 +155,20 @@ namespace Rasa.Managers
                 return true;
             }
 
+            if (kind == MissionProgressEventKind.ObjectHit)
+            {
+                if (!hasCounterId || trigger.CounterId.Value == 0 ||
+                    hasInitialValue || hasTargetValue || hasSourceSpawnResolved)
+                {
+                    diagnostic = "object hit progress rules require subject_id as entity_class_id and counter_id as action_id, without counter ranges or source_spawn_resolved.";
+                    return false;
+                }
+
+                rule = MissionProgressRule.CompleteOnObjectHit(
+                    trigger.SubjectId.Value, trigger.CounterId.Value);
+                return true;
+            }
+
             if (hasCounterId || hasInitialValue || hasTargetValue)
             {
                 if (!hasCounterId || !hasInitialValue || !hasTargetValue || hasSourceSpawnResolved)

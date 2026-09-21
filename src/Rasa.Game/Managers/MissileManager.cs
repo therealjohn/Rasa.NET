@@ -329,23 +329,35 @@ namespace Rasa.Managers
                             missile.TargetEntityId = action.TargetId;
                         }
                         break;
+                    case EntityType.Object:
+                        if (!PracticeTargetManager.TryGetTarget(mapChannel, action.TargetId, out var practiceTarget) ||
+                            !PracticeTargetManager.CanHit(mapChannel, action.Actor, practiceTarget))
+                        {
+                            Logger.WriteLog(LogType.Debug, $"MissileLaunch: invalid practice target {action.TargetId}.");
+                            return;
+                        }
+                        missile.TargetObject = practiceTarget;
+                        missile.TargetEntityId = action.TargetId;
+                        break;
                     default:
                         Logger.WriteLog(LogType.Error, $"Can't shoot that object");
                         return;
                 };
 
-                if (targetActor == null || targetActor.State == CharacterState.Dead)
+                if (missile.TargetObject == null &&
+                    (targetActor == null || targetActor.State == CharacterState.Dead))
                     return; // actor is dead, cannot be shot at
 
-                if (!IsOnMap(mapChannel, targetActor))
+                if (missile.TargetObject == null && !IsOnMap(mapChannel, targetActor))
                 {
                     Logger.WriteLog(LogType.Debug, $"MissileLaunch: {action.Actor.EntityId} aimed at {action.TargetId}, which is on map {targetActor.MapContextId}, not {mapChannel.MapInfo.MapContextId}");
                     return;
                 }
 
-                var distance = Vector3.Distance(targetActor.Position, action.Actor.Position);
+                var distance = Vector3.Distance(
+                    missile.TargetObject?.Position ?? targetActor.Position, action.Actor.Position);
 
-                if (distance > MaxTargetDistance)
+                if (!float.IsFinite(distance) || distance > MaxTargetDistance)
                 {
                     Logger.WriteLog(LogType.Debug, $"MissileLaunch: {action.Actor.EntityId} aimed at {action.TargetId} from {distance:F0} units away");
                     return;
@@ -389,7 +401,12 @@ namespace Rasa.Managers
 
             // Checked again here: the missile was queued a tick ago, and the target can have
             // left the map (or the world) since.
-            if (missile.TargetEntityId != 0 && !IsOnMap(mapChannel, missile.TargetActor))
+            if (missile.TargetObject != null)
+            {
+                if (!PracticeTargetManager.CanHit(mapChannel, missile.Source, missile.TargetObject))
+                    targetType = 0;
+            }
+            else if (missile.TargetEntityId != 0 && !IsOnMap(mapChannel, missile.TargetActor))
                 targetType = 0;
 
             switch (targetType)
@@ -402,6 +419,9 @@ namespace Rasa.Managers
                     break;
                 case EntityType.Character:
                     DoDamageToPlayer(mapChannel, missile);
+                    break;
+                case EntityType.Object when missile.TargetObject != null:
+                    EnterCombat(missile.Source);
                     break;
                 default:
                     Logger.WriteLog(LogType.Error, $"WeaponAttackRecovery: Unsuported targetType {targetType}.");
@@ -430,6 +450,9 @@ namespace Rasa.Managers
                     CellManager.Instance.CellCallMethod(mapChannel, missile.Source, new WeaponAttackRecovery(missile));
                     break;
             }
+
+            if (targetType == EntityType.Object && missile.TargetObject != null && missile.DamageA > 0)
+                PracticeTargetManager.RecordHit(mapChannel, missile.Source, missile.TargetObject, missile.ActionId);
         }
     }
 }

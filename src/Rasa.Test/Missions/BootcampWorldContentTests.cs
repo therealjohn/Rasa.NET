@@ -519,6 +519,96 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
+        public void BootcampPracticeTargetsMigrationReplacesCreatureSpawnsAndKeepsTheTrainingStagesDistinct()
+        {
+            WithDisposableSqliteWorld((context, _) =>
+            {
+                var migrator = context.GetService<IMigrator>();
+                migrator.Migrate("20260921183000_BootcampCrateLoot");
+                migrator.Migrate();
+                var triggers = context.MissionTriggerEntries.AsNoTracking()
+                    .Where(trigger => trigger.MissionId == 1992 &&
+                        (trigger.ObjectiveId == 3 || trigger.ObjectiveId == 8)).ToArray();
+                Assert.IsTrue(triggers.All(trigger => trigger.EventKind == 13 && trigger.SubjectId == 29365));
+                Assert.AreEqual(1U, triggers.Single(trigger => trigger.ObjectiveId == 3).CounterId);
+                Assert.AreEqual(194U, triggers.Single(trigger => trigger.ObjectiveId == 8).CounterId);
+                var steps = context.MissionScenarioStepEntries.AsNoTracking().Where(step =>
+                    step.MissionId == 1992 &&
+                    ((step.ScenarioId == 3 && step.StepId == 1) || (step.ScenarioId == 4 && step.StepId == 3)))
+                    .ToArray();
+                Assert.AreEqual(2, steps.Length);
+                Assert.IsTrue(steps.All(step => step.Kind == MissionScenarioStepKind.EnableInteraction &&
+                    step.EntityClassId == 29365 && step.SpawnGroupId == null));
+                Assert.IsFalse(Validate(LoadSnapshot(context), context).BlocksReadiness);
+
+                migrator.Migrate("20260921183000_BootcampCrateLoot");
+                triggers = context.MissionTriggerEntries.AsNoTracking()
+                    .Where(trigger => trigger.MissionId == 1992 &&
+                        (trigger.ObjectiveId == 3 || trigger.ObjectiveId == 8)).ToArray();
+                Assert.AreEqual((byte)2, triggers.Single(trigger => trigger.ObjectiveId == 3).EventKind);
+                Assert.AreEqual((byte)9, triggers.Single(trigger => trigger.ObjectiveId == 8).EventKind);
+                migrator.Migrate();
+                Assert.IsFalse(Validate(LoadSnapshot(context), context).BlocksReadiness);
+            });
+        }
+
+        [TestMethod]
+        [DataRow(typeof(SqliteWorldContext), "20260921183000_BootcampCrateLoot", "20260921203000_BootcampPracticeTargets")]
+        [DataRow(typeof(MySqlWorldContext), "20260921183010_BootcampCrateLoot", "20260921203010_BootcampPracticeTargets")]
+        public void BootcampPracticeTargetsMigrationHasProviderParity(
+            Type contextType, string previous, string current)
+        {
+            using var context = CreateContext(contextType, "unused");
+            var sql = NormalizeSql(context.GetService<IMigrator>().GenerateScript(previous, current));
+            StringAssert.Contains(sql, "event_kind = 13, subject_id = 29365");
+            StringAssert.Contains(sql, "counter_id = case objective_id when 3 then 1 else 194 end");
+            StringAssert.Contains(sql, "kind = 3, spawn_group_id = null");
+            Assert.IsFalse(context.Database.HasPendingModelChanges());
+        }
+
+        [TestMethod]
+        public void BootcampObjectiveIndicatorsMigrationOnlyDisablesWorldEffects()
+        {
+            WithDisposableSqliteWorld((context, _) =>
+            {
+                var migrator = context.GetService<IMigrator>();
+                migrator.Migrate("20260921203000_BootcampPracticeTargets");
+                var before = context.MissionIndicatorEntries.AsNoTracking()
+                    .Where(entry => AllMissionIds.Contains(entry.MissionId)).ToArray();
+                Assert.IsTrue(before.Length > 0 && before.All(entry => entry.Show3DEffect));
+
+                migrator.Migrate();
+
+                var after = context.MissionIndicatorEntries.AsNoTracking()
+                    .Where(entry => AllMissionIds.Contains(entry.MissionId)).ToArray();
+                Assert.IsFalse(after.Any(entry => entry.Show3DEffect));
+                CollectionAssert.AreEquivalent(
+                    before.Select(entry => (entry.MissionId, entry.ObjectiveId, entry.IndicatorId,
+                        entry.PosX, entry.PosY, entry.PosZ, entry.Radius)).ToArray(),
+                    after.Select(entry => (entry.MissionId, entry.ObjectiveId, entry.IndicatorId,
+                        entry.PosX, entry.PosY, entry.PosZ, entry.Radius)).ToArray());
+                Assert.IsFalse(Validate(LoadSnapshot(context), context).BlocksReadiness);
+
+                migrator.Migrate("20260921203000_BootcampPracticeTargets");
+                Assert.IsTrue(context.MissionIndicatorEntries.AsNoTracking()
+                    .Where(entry => AllMissionIds.Contains(entry.MissionId)).All(entry => entry.Show3DEffect));
+            });
+        }
+
+        [TestMethod]
+        [DataRow(typeof(SqliteWorldContext), "20260921203000_BootcampPracticeTargets", "20260921204500_BootcampObjectiveIndicators")]
+        [DataRow(typeof(MySqlWorldContext), "20260921203010_BootcampPracticeTargets", "20260921204510_BootcampObjectiveIndicators")]
+        public void BootcampObjectiveIndicatorsMigrationHasProviderParity(
+            Type contextType, string previous, string current)
+        {
+            using var context = CreateContext(contextType, "unused");
+            var sql = NormalizeSql(context.GetService<IMigrator>().GenerateScript(previous, current));
+            StringAssert.Contains(sql, "update mission_indicator set show_3d_effect = 0");
+            StringAssert.Contains(sql, "mission_id in (1990, 1992, 1994, 1995, 2005)");
+            Assert.IsFalse(context.Database.HasPendingModelChanges());
+        }
+
+        [TestMethod]
         public void BootcampMissionContentSeedInsertThrowsWhenGenericRowsDoNotMatchEntityColumns()
         {
             var builder = new MigrationBuilder("Microsoft.EntityFrameworkCore.Sqlite");

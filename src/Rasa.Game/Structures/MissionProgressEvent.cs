@@ -71,6 +71,9 @@ namespace Rasa.Structures
                 actionId,
                 detailId: targetCreatureId);
 
+        public static MissionProgressEvent ObjectHit(uint entityClassId, uint actionId) =>
+            new(MissionProgressEventKind.ObjectHit, entityClassId, detailId: actionId);
+
         public static MissionProgressEvent Scenario(
             uint missionId,
             uint scenarioId,
