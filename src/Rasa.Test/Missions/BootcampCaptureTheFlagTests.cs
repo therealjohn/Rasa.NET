@@ -265,13 +265,6 @@ namespace Rasa.Test.Missions
                 CaptureTheFlagMissionId,
                 selectionIndex: null,
                 rating: null));
-            Assert.IsTrue(harness.Manager.TryRewardNpcMission(
-                harness.Client,
-                youngblood.EntityId,
-                CaptureTheFlagMissionId,
-                selectionIndex: null,
-                rating: null));
-
             var after = harness.Context.ReadRewardTotals();
             Assert.AreEqual(before.Experience + YoungbloodRewardExperience, after.Experience);
             Assert.AreEqual(before.Credits, after.Credits);

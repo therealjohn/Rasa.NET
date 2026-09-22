@@ -258,8 +258,6 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(ConversationStatus.MissionComplete, status);
             Assert.IsTrue(harness.Manager.TryCompleteNpcMission(
                 harness.Client, deSimone.EntityId, 1992, null, null));
-            Assert.IsTrue(harness.Manager.TryRewardNpcMission(
-                harness.Client, deSimone.EntityId, 1992, null, null));
             Assert.AreEqual(MissionState.Completed, harness.Client.Player.Missions[1992].State);
             new NpcManager(harness.Context, harness.Manager).AssignNPCMission(harness.Client,
                 new AssignNPCMissionPacket { NpcEntityId = deSimone.EntityId, MissionId = 1994 });

@@ -1115,79 +1115,19 @@ namespace Rasa.Managers
 
             lock (client.SyncRoot)
             {
-                if (!IsActivePlayer(client))
-                    return Reject($"Rejected mission {missionId} completion: character is not active in the world.");
-                if (!TryGetOperationalMission(missionId, out var definition))
-                    return Reject($"Rejected mission {missionId} completion: definition is not operational.");
-                if (selectionIndex.HasValue || rating.HasValue)
-                    return Reject($"Rejected mission {missionId} completion: reward selection belongs to the reward request.");
-                if (!TryGetNpcOnPlayerMap(client.Player, npcEntityId, out var npc) ||
-                    npc.Npc == null ||
-                    npc.DbId != definition.MissionReciver)
-                    return Reject($"Rejected mission {missionId} completion: NPC is not its authoritative receiver.");
-                if (!client.Player.Missions.TryGetValue(missionId, out var runtimeMission) ||
-                    runtimeMission.State != MissionState.Active ||
-                    !runtimeMission.Completeable)
-                    return Reject($"Rejected mission {missionId} completion: runtime mission is not completable.");
-
-                var progressPlan = MissionProgressPublicationPlan.Empty;
-                try
-                {
-                    using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
-                    unitOfWork.ExecuteTransaction(() =>
-                    {
-                        var durableMission =
-                            unitOfWork.CharacterMissions.GetByCharacterAndMission(
-                                client.Player.Id, missionId);
-                        if (durableMission?.MissionState != (uint)MissionState.Active ||
-                            !durableMission.Completeable)
-                            throw new GameplayRejectionException(
-                                "Durable mission is not completable.");
-                        if (!TryGetNpcOnPlayerMap(client.Player, npcEntityId, out var currentNpc) ||
-                            !ReferenceEquals(currentNpc, npc) ||
-                            currentNpc.DbId != definition.MissionReciver)
-                            throw new GameplayRejectionException(
-                                "Mission receiver changed before completion persistence.");
-
-                        durableMission.MissionState = (uint)MissionState.Success;
-                        durableMission.Completeable = false;
-                        _deadlineService.SynchronizeMission(
-                            unitOfWork,
-                            client.Player.Id,
-                            definition,
-                            durableMission,
-                            unitOfWork.CharacterMissionProgress.GetTracked(
-                                client.Player.Id,
-                                missionId));
-                        progressPlan = PlanProgress(
-                            client,
-                            new[] { MissionProgressEvent.Mission(missionId) },
-                            unitOfWork);
-                    });
-                }
-                catch (Exception error) when (GameplayRejectionException.IsExpected(error))
-                {
-                    Logger.WriteLog(
-                        LogType.Error,
-                        $"Unable to mark mission {missionId} successful for character {client.Player.Id}: {error}");
-                    return false;
-                }
-
-                runtimeMission.State = MissionState.Success;
-                runtimeMission.Completeable = false;
-                TryPublish(
-                    () => client.CallMethod(
-                        client.Player.EntityId,
-                        new MissionCompleteablePacket(missionId, false)),
-                    $"mission {missionId} no longer completable");
-                TryPublish(
-                    () => client.CallMethod(
-                        client.Player.EntityId,
-                        new MissionCompletedPacket(missionId)),
-                    $"mission {missionId} completed");
-                progressPlan.Publish(client);
-                RefreshNpcConversationStatuses(client);
-                return true;
+                // Older turn-ins persisted Success before claiming rewards.
+                var alreadySuccessful = client.Player != null &&
+                    client.Player.Missions.TryGetValue(missionId, out var mission) &&
+                    mission.State == MissionState.Success;
+                return TryGrantNpcMission(
+                    client,
+                    npcEntityId,
+                    missionId,
+                    selectionIndex,
+                    rating,
+                    alreadySuccessful ? MissionState.Success : MissionState.Active,
+                    requireCompletable: !alreadySuccessful,
+                    publishCompleted: !alreadySuccessful);
             }
         }
 
@@ -1196,21 +1136,12 @@ namespace Rasa.Managers
             ulong npcEntityId,
             uint missionId,
             int selectionIndex)
-        {
-            if (!TryCompleteNpcMission(
-                    client,
-                    npcEntityId,
-                    missionId,
-                    null,
-                    null))
-                return false;
-            return TryRewardNpcMission(
+            => TryCompleteNpcMission(
                 client,
                 npcEntityId,
                 missionId,
                 selectionIndex,
                 null);
-        }
 
         private bool TryGrantNpcMission(
             Client client,
@@ -1278,9 +1209,13 @@ namespace Rasa.Managers
                                 selectionIndex,
                                 _beforeRewardItemPublication);
                             grant.PlanAndSave(client, character, unitOfWork, _manifestationManager);
+                            var progressEvents = grant.CreateItemAcquisitionEvents();
+                            if (publishCompleted)
+                                progressEvents = new[] { MissionProgressEvent.Mission(missionId) }
+                                    .Concat(progressEvents).ToArray();
                             progressPlan = PlanProgress(
                                 client,
-                                grant.CreateItemAcquisitionEvents(),
+                                progressEvents,
                                 unitOfWork);
                             mission.MissionState = (uint)MissionState.Completed;
                             mission.Completeable = false;
@@ -1309,10 +1244,19 @@ namespace Rasa.Managers
                             false,
                             runtimeMission.Objectives);
                     grant.ConvergeRuntime(client);
+                    if (publishCompleted)
+                    {
+                        PublishMissionPacket(
+                            client,
+                            new MissionCompleteablePacket(missionId, false),
+                            $"mission {missionId} no longer completable");
+                        PublishMissionPacket(
+                            client,
+                            new MissionCompletedPacket(missionId),
+                            $"mission {missionId} completed");
+                    }
                     progressPlan.Publish(client);
                     grant.Publish(client, _manifestationManager);
-                    if (publishCompleted)
-                        client.CallMethod(client.Player.EntityId, new MissionCompletedPacket(missionId));
                     TryPublish(
                         () => client.CallMethod(
                             client.Player.EntityId,
@@ -3077,7 +3021,7 @@ namespace Rasa.Managers
                     mission.MissionReciver == creature.DbId &&
                     TryGetRewardInfo(mission.MissionId, out var reward))
                 {
-                    rewardable.Add(new RewardableMissions((int)mission.MissionId, reward));
+                    completeable.Add(mission.MissionId, reward);
                 }
             }
 

@@ -12,6 +12,7 @@ namespace Rasa.Test.Missions
     using Rasa.Memory;
     using Rasa.Packets;
     using Rasa.Packets.MapChannel.Client;
+    using Rasa.Packets.MapChannel.Server;
     using Rasa.Packets.Mission.Server;
     using Rasa.Structures;
 
@@ -169,6 +170,133 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(GameOpcode.DispenseRadioMission, offer.Opcode);
             Assert.AreEqual(444, (int)offer.Opcode);
             CollectionAssert.AreEqual(expected, MissionTestContext.Encode(offer));
+        }
+
+        [TestMethod]
+        [DataRow(false, false)]
+        [DataRow(true, false)]
+        [DataRow(false, true)]
+        [DataRow(true, true)]
+        public void CompleteMissionRequestClaimsRewardsWithoutAnotherAcceptStep(
+            bool selectableReward,
+            bool resumeSuccess)
+        {
+            const uint missionId = 429;
+            using var context = MissionTestContext.WithObjectiveMission(missionId, selectableReward);
+            var giver = context.AddNpc(77);
+            var firstObjectiveNpc = context.AddNpc(500, npcPackageId: 700);
+            var secondObjectiveNpc = context.AddNpc(501, npcPackageId: 701);
+            var receiver = context.AddNpc(88);
+            var before = context.ReadRewardTotals();
+            var npcSingleton = typeof(NpcManager).GetField(
+                "_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
+            var previousNpcManager = npcSingleton.GetValue(null);
+            npcSingleton.SetValue(null, new NpcManager(context, context.Manager));
+            try
+            {
+                var handler = new ClientPacketHandler();
+                handler.RegisterClient(context.Client);
+                var router = new PacketRouter<ClientPacketHandler, GameOpcode>();
+                if (resumeSuccess)
+                {
+                    context.SeedMission(context.Client.Player.Id, missionId, (uint)MissionState.Success, false);
+                    context.ReloadPlayerMissions();
+                    router.RoutePacket(handler, new AssignNPCMissionPacket
+                    {
+                        NpcEntityId = giver.EntityId,
+                        MissionId = missionId
+                    });
+                    Assert.AreEqual(MissionState.Success, context.Client.Player.Missions[missionId].State);
+                    Assert.AreEqual(before, context.ReadRewardTotals(),
+                        "Accept Mission must never claim rewards for an existing mission.");
+                }
+                else
+                {
+                    router.RoutePacket(handler, new RequestNPCConversePacket { EntityId = giver.EntityId });
+                    Assert.IsTrue(context.Drain().OfType<ConversePacket>().Single()
+                        .ConvoDataDict.ContainsKey(ConversationType.MissionDispense));
+                    router.RoutePacket(handler, new AssignNPCMissionPacket
+                    {
+                        NpcEntityId = giver.EntityId,
+                        MissionId = missionId
+                    });
+                    Assert.AreEqual(MissionState.Active, context.Client.Player.Missions[missionId].State);
+                    foreach (var (npc, objectiveId, flagId) in new[]
+                    {
+                        (firstObjectiveNpc, 5U, 11U),
+                        (secondObjectiveNpc, 9U, 12U)
+                    })
+                        router.RoutePacket(handler, new CompleteNPCObjectivePacket
+                        {
+                            EntityId = npc.EntityId,
+                            MissionId = missionId,
+                            ObjectiveId = objectiveId,
+                            PlayerFlagId = flagId
+                        });
+                    Assert.IsTrue(context.Client.Player.Missions[missionId].Completeable);
+                    Assert.AreEqual(before, context.ReadRewardTotals());
+                }
+                context.Drain();
+                router.RoutePacket(handler, new RequestNPCConversePacket { EntityId = receiver.EntityId });
+                var conversation = context.Drain().OfType<ConversePacket>().Single();
+                Assert.IsTrue(conversation.ConvoDataDict.ContainsKey(ConversationType.MissionComplete),
+                    "An unrewarded mission must offer Complete Mission, including after reconnect.");
+                Assert.IsFalse(conversation.ConvoDataDict.ContainsKey(ConversationType.MissionDispense));
+                Assert.IsFalse(conversation.ConvoDataDict.ContainsKey(ConversationType.MissionReward));
+
+                var request = Decode<CompleteNPCMissionPacket>(WritePayload(writer =>
+                {
+                    writer.WriteTuple(4);
+                    writer.WriteULong(receiver.EntityId);
+                    writer.WriteUInt(missionId);
+                    if (selectableReward)
+                        writer.WriteInt(0);
+                    else
+                        writer.WriteNoneStruct();
+                    writer.WriteNoneStruct();
+                }));
+                Assert.AreEqual(selectableReward ? 0 : (int?)null, request.SelectionIdx);
+
+                router.RoutePacket(handler, request);
+
+                Assert.AreEqual(MissionState.Completed, context.Client.Player.Missions[missionId].State,
+                    "Complete Mission must claim rewards, not leave a second turn-in step.");
+                Assert.IsFalse(context.Client.Player.Missions[missionId].Completeable);
+                Assert.AreEqual((uint)MissionState.Completed, context.ReadMission(missionId).MissionState);
+                Assert.IsFalse(context.ReadMission(missionId).Completeable);
+                var after = context.ReadRewardTotals();
+                Assert.AreEqual(before.Experience + context.Reward.Experience, after.Experience);
+                Assert.AreEqual(before.ItemCount + (selectableReward ? 2 : 0), after.ItemCount);
+                var completionPackets = context.Drain();
+                Assert.AreEqual(1, completionPackets.OfType<MissionRewardedPacket>().Count());
+                Assert.AreEqual(resumeSuccess ? 0 : 1, completionPackets.OfType<MissionCompletedPacket>().Count());
+                Assert.AreEqual(0, completionPackets.OfType<MissionGainedPacket>().Count());
+                var statuses = completionPackets.OfType<NPCConversationStatusPacket>().ToArray();
+                Assert.AreEqual(4, statuses.Length);
+                Assert.IsTrue(statuses.All(status => status.ConvoStatusId == ConversationStatus.None));
+
+                router.RoutePacket(handler, new RequestNPCConversePacket { EntityId = receiver.EntityId });
+                Assert.AreEqual(0, context.Drain().OfType<ConversePacket>().Single().ConvoDataDict.Count);
+                context.ReloadPlayerMissions();
+                router.RoutePacket(handler, request);
+                router.RoutePacket(handler, new AssignNPCMissionPacket
+                {
+                    NpcEntityId = giver.EntityId,
+                    MissionId = missionId
+                });
+                router.RoutePacket(handler, new RewardNPCMissionPacket
+                {
+                    EntityId = receiver.EntityId,
+                    MissionId = missionId,
+                    SelectionIdx = request.SelectionIdx
+                });
+                Assert.AreEqual(after, context.ReadRewardTotals());
+                Assert.AreEqual(0, context.Drain().Count);
+            }
+            finally
+            {
+                npcSingleton.SetValue(null, previousNpcManager);
+            }
         }
 
         [TestMethod]

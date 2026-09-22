@@ -447,12 +447,6 @@ namespace Rasa.Test.Missions
                 BootcampRuntimeTestHarness.MissionGearingUp,
                 selectionIndex: null,
                 rating: null));
-            Assert.IsTrue(harness.Manager.TryRewardNpcMission(
-                harness.Client,
-                actors.DeSimone.EntityId,
-                BootcampRuntimeTestHarness.MissionGearingUp,
-                selectionIndex: null,
-                rating: null));
         }
 
         private static Creature CompleteCaptureTheFlag(
@@ -496,12 +490,6 @@ namespace Rasa.Test.Missions
                 3,
                 1));
             Assert.IsTrue(harness.Manager.TryCompleteNpcMission(
-                harness.Client,
-                youngblood.EntityId,
-                MissionCaptureTheFlag,
-                selectionIndex: null,
-                rating: null));
-            Assert.IsTrue(harness.Manager.TryRewardNpcMission(
                 harness.Client,
                 youngblood.EntityId,
                 MissionCaptureTheFlag,
@@ -579,7 +567,7 @@ namespace Rasa.Test.Missions
         private static void AssertMissionChainThroughFinale(BootcampRuntimeTestHarness.Harness harness)
         {
             Assert.AreEqual(
-                MissionState.Success,
+                MissionState.Completed,
                 harness.Client.Player.Missions[BootcampRuntimeTestHarness.MissionInitiation].State);
             Assert.AreEqual(
                 MissionState.Completed,
@@ -596,7 +584,7 @@ namespace Rasa.Test.Missions
         private static void AssertMissionChainThroughRetryDeparture(BootcampRuntimeTestHarness.Harness harness)
         {
             Assert.AreEqual(
-                MissionState.Success,
+                MissionState.Completed,
                 harness.Client.Player.Missions[BootcampRuntimeTestHarness.MissionInitiation].State);
             Assert.AreEqual(
                 MissionState.Completed,

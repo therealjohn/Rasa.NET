@@ -28,8 +28,9 @@ Deployment 11 starting experience:
 - counter progress: `UpdateObjectiveCounterPacket` before completion packets
 - objective progression: `ObjectiveCompletedPacket -> ObjectiveRevealedPacket -> ObjectiveActivatedPacket`
 - deadline expiry failure: `ObjectiveFailedPacket -> MissionFailedPacket`
-- mission success turn-in: `MissionCompleteablePacket(false) -> MissionCompletedPacket`
-- reward publication: reward deltas before `MissionRewardedPacket`
+- mission turn-in: one `CompleteNPCMission` request commits completion and rewards,
+  then publishes `MissionCompleteablePacket(false) -> MissionCompletedPacket`,
+  reward deltas, and `MissionRewardedPacket`
 - tutorials: `DisplayPlayerTutorialNotificationPacket -> PlayTutorialAudioPacket`
 - first Eloh announcement: `ForceConversePacket` greeting `1634`, which starts the client's native Lightning highlight
 - NPC interaction: `ConversePacket` on `RequestNPCConverse`
@@ -40,6 +41,12 @@ Run the focused suite with:
 ```powershell
 dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~BootcampProtocolTests|FullyQualifiedName~MissionProtocolTests|FullyQualifiedName~MissionProgressTests|FullyQualifiedName~MissionRewardTests|FullyQualifiedName~BootcampDepartureTests"
 ```
+
+`CompleteMissionRequestClaimsRewardsWithoutAnotherAcceptStep` routes acceptance,
+objective completion, NPC conversation, and the decoded completion request.
+It covers fixed and selectable rewards, recovery of older unrewarded `Success`
+rows, and retries after reconnect. `Accept Mission` only starts a mission;
+`Complete Mission` claims its rewards without a second acceptance step.
 
 ## Coverage inventory
 

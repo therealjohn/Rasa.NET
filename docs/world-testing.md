@@ -687,18 +687,20 @@ mission-completable packet. Each phase uses mission/objective definition order.
 
 The gameplay action commits and publishes first. Waypoint progress follows
 `WaypointGained`, Logos progress follows `LogosStoneAdded`, creature progress
-follows the authoritative killer's XP and loot processing, and completion
-progress follows reward and completion packets. A later expected mission
+follows the authoritative killer's XP and loot processing. A later expected mission
 progress persistence failure is logged with its event kind and subject, emits no
 mission delta, and does not roll back the successful waypoint, Logos, kill
-reward, or mission reward. No login catch-up is synthesized. Programming errors
+reward. Mission turn-in is different: completion-dependent progress and reward
+item acquisition progress commit in the same transaction as the rewards and
+terminal mission state. A failure rolls back the entire turn-in so it can be
+retried. No login catch-up is synthesized. Programming errors
 remain visible with their original identity and stack.
 
 The implemented state mapping is:
 
 - Active attempt: `MissionState.Active` with `Completeable = false`.
 - Completable attempt: `MissionState.Active` with `Completeable = true`.
-- Pending reward attempt: `MissionState.Success` with `Completeable = false`.
+- Legacy pending reward attempt: `MissionState.Success` with `Completeable = false`.
 - Completed attempt: `MissionState.Completed` with `Completeable = false`.
 - Failed attempt: `MissionState.Failed`.
 - Abandoned attempt: the active durable row is removed and `MissionDiscarded`
@@ -723,17 +725,23 @@ Packets are emitted after commit in
 
 Turn-in infrastructure reloads the character and mission inside one serializable
 character transaction. Inventory, XP, supported currencies and completion state
-commit together. Runtime state and packets are published only afterward.
+commit together on `CompleteNPCMission`. `AssignNPCMission` only starts a new
+mission; it never claims rewards. Normal turn-in moves directly from completable
+`Active` to `Completed`, without persisting an intermediate `Success` state.
+Runtime state and packets are published only afterward.
 Sequential, reconnect and competing-client retries grant at most once. Staged
 item entity IDs are released if planning or publication fails. SQLite fixtures
 exercise objective persistence and competing reward transactions; offline
 database checks cover MySQL model and migration SQL consistency. `selectionIdx`
 must be `None` for rewards without selectable items and an in-range zero-based
-integer when choices exist; non-null ratings are rejected. A durable `Success`
-row can resume through `RewardNPCMission`.
+integer when choices exist; non-null ratings are rejected. An older durable
+`Success` row is advertised as `MissionComplete` and can resume through
+`CompleteNPCMission`. `RewardNPCMission` remains supported for legacy reward
+requests against `Success` rows.
 
-NPC conversations now derive dispense, objective-complete, mission-complete,
-and mission-reward entries from the character's current lifecycle state.
+NPC conversations derive dispense, objective-complete, and mission-complete
+entries from the character's current lifecycle state. A rewarded mission is not
+offered again by its giver or receiver.
 Vending, auction, and clan behavior remains the fallback when no mission state
 applies. The recovered opening Wilderness metadata identifies missions
 `1449` (Wilderness Targets of Opportunity), `1407` (Too Close For Comfort) and

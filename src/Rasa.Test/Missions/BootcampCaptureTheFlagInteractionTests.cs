@@ -243,7 +243,6 @@ namespace Rasa.Test.Missions
             CellManager.Instance.UpdateVisibility(harness.Client);
             Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(harness.Client, youngblood.EntityId, 1994, 3, 1));
             Assert.IsTrue(harness.Manager.TryCompleteNpcMission(harness.Client, youngblood.EntityId, 1994, null, null));
-            Assert.IsTrue(harness.Manager.TryRewardNpcMission(harness.Client, youngblood.EntityId, 1994, null, null));
             harness.Manager.TickScenarios(harness.Client);
             Assert.IsTrue(Actors(harness).Where(actor => ForeanNames.Contains(actor.NameId))
                 .All(actor => actor.SpawnPool.FollowOwnerCharacterId == 0));

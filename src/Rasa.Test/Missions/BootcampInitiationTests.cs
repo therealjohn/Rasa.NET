@@ -229,7 +229,7 @@ namespace Rasa.Test.Missions
                 selectionIndex: null,
                 rating: null));
             Assert.AreEqual(
-                MissionState.Success,
+                MissionState.Completed,
                 harness.Client.Player.Missions[BootcampRuntimeTestHarness.MissionInitiation].State);
 
             Assert.IsTrue(harness.Manager.TryAcceptNpcMission(

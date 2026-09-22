@@ -341,12 +341,6 @@ namespace Rasa.Test.Missions
                 BootcampRuntimeTestHarness.MissionGearingUp,
                 selectionIndex: null,
                 rating: null));
-            Assert.IsTrue(harness.Manager.TryRewardNpcMission(
-                harness.Client,
-                currentDeSimone.EntityId,
-                BootcampRuntimeTestHarness.MissionGearingUp,
-                selectionIndex: null,
-                rating: null));
             var afterReward = harness.Context.ReadRewardTotals();
             Assert.AreEqual(beforeReward.Experience + 1250U, afterReward.Experience);
             Assert.AreEqual(beforeReward.Credits + 200, afterReward.Credits);

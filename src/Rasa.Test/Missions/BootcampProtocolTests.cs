@@ -306,10 +306,12 @@ namespace Rasa.Test.Missions
                 selectionIndex: null,
                 rating: null));
             var capturePackets = harness.Drain();
-            AssertPacketTypes(
+            AssertRelativeOrder(
                 capturePackets,
                 typeof(MissionCompleteablePacket),
                 typeof(MissionCompletedPacket),
+                typeof(ExperienceChangedPacket),
+                typeof(MissionRewardedPacket),
                 typeof(NPCConversationStatusPacket),
                 typeof(NPCConversationStatusPacket),
                 typeof(NPCConversationStatusPacket),
@@ -318,17 +320,6 @@ namespace Rasa.Test.Missions
                 .OfType<MissionCompleteablePacket>()
                 .Single()
                 .IsCompleteable);
-
-            Assert.IsTrue(harness.Manager.TryRewardNpcMission(
-                harness.Client,
-                youngblood.EntityId,
-                MissionCaptureTheFlag,
-                selectionIndex: null,
-                rating: null));
-            AssertRelativeOrder(
-                harness.Drain(),
-                typeof(ExperienceChangedPacket),
-                typeof(MissionRewardedPacket));
 
             Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
                 harness.Client,

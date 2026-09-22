@@ -633,9 +633,6 @@ namespace Rasa.Test.Missions
             var before = context.ReadRewardTotals();
 
             Assert.IsTrue(context.Manager.TryCompleteNpcMission(
-                context.Client, context.Receiver.EntityId, 429, null, null));
-            context.Drain();
-            Assert.IsTrue(context.Manager.TryRewardNpcMission(
                 context.Client, context.Receiver.EntityId, 429, 0, null));
 
             Assert.AreEqual(MissionState.Completed, context.Client.Player.Missions[429].State);
@@ -649,7 +646,7 @@ namespace Rasa.Test.Missions
                 context.Client.Player.Credits[CurencyType.Prestige]);
             Assert.AreEqual(after.ItemCount, RuntimeItemCount(context.Client));
 
-            Assert.IsFalse(context.Manager.TryRewardNpcMission(
+            Assert.IsFalse(context.Manager.TryCompleteNpcMission(
                 context.Client, context.Receiver.EntityId, 429, 0, null));
             Assert.AreEqual(after, context.ReadRewardTotals());
         }
@@ -979,6 +976,10 @@ namespace Rasa.Test.Missions
                 {
                     [429] = source,
                     [430] = target
+                },
+                new Dictionary<uint, MissionRewardDefinition>
+                {
+                    [429] = new(0, null, null, null)
                 });
             context.SeedMission(1, 429, (uint)MissionState.Active, true);
             context.SeedMission(1, 430, (uint)MissionState.Active, false);
@@ -1005,7 +1006,7 @@ namespace Rasa.Test.Missions
             context.BeforeSave = null;
             Assert.IsTrue(context.Manager.TryCompleteNpcMission(
                 context.Client, receiver.EntityId, 429, null, null));
-            Assert.AreEqual((uint)MissionState.Success,
+            Assert.AreEqual((uint)MissionState.Completed,
                 context.ReadMission(429).MissionState);
             Assert.AreEqual(MissionObjectiveState.Completed,
                 context.Client.Player.Missions[430].Objectives[1].State);
@@ -1103,13 +1104,11 @@ namespace Rasa.Test.Missions
             var expected = kind == "overflow"
                 ? (Exception)new OverflowException("Injected provider overflow.")
                 : new NotSupportedException("Injected provider capability failure.");
-            Assert.IsTrue(context.Manager.TryCompleteNpcMission(
-                context.Client, context.Receiver.EntityId, 429, null, null));
             context.AfterSave = _ => throw expected;
             Exception actual = null;
             try
             {
-                context.Manager.TryRewardNpcMission(
+                context.Manager.TryCompleteNpcMission(
                     context.Client, context.Receiver.EntityId, 429, 0, null);
             }
             catch (Exception error)
@@ -1132,14 +1131,13 @@ namespace Rasa.Test.Missions
             context.Client.Player.Credits[CurencyType.Credits] = int.MaxValue;
             var before = context.ReadRewardTotals();
 
-            Assert.IsTrue(context.Manager.TryCompleteNpcMission(
-                context.Client, context.Receiver.EntityId, 429, null, null));
-            Assert.IsFalse(context.Manager.TryRewardNpcMission(
+            Assert.IsFalse(context.Manager.TryCompleteNpcMission(
                 context.Client, context.Receiver.EntityId, 429, 0, null));
 
             Assert.AreEqual(before, context.ReadRewardTotals());
-            Assert.AreEqual(MissionState.Success,
+            Assert.AreEqual(MissionState.Active,
                 context.Client.Player.Missions[429].State);
+            Assert.IsTrue(context.Client.Player.Missions[429].Completeable);
         }
 
         private static void AssertItemHook(MissionProgressEventKind kind, bool consume)

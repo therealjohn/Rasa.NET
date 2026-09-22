@@ -465,8 +465,6 @@ namespace Rasa.Test.Missions
             context.BeforeSave = null;
             Assert.IsTrue(context.Manager.TryCompleteNpcMission(
                 context.Client, receiver.EntityId, 429, null, null));
-            Assert.IsTrue(context.Manager.TryRewardNpcMission(
-                context.Client, receiver.EntityId, 429, null, null));
 
             var after = context.ReadRewardTotals();
             Assert.AreEqual(before.Experience + 100, after.Experience);
@@ -486,8 +484,6 @@ namespace Rasa.Test.Missions
             var receiver = context.AddNpc(88);
 
             Assert.IsTrue(context.Manager.TryCompleteNpcMission(
-                context.Client, receiver.EntityId, 429, null, null));
-            Assert.IsTrue(context.Manager.TryRewardNpcMission(
                 context.Client, receiver.EntityId, 429, null, null));
 
             var packets = context.Drain();

@@ -553,7 +553,7 @@ namespace Rasa.Test.Missions
                 npcManager.RequestNpcConverse(context.Client,
                     new RequestNPCConversePacket { EntityId = receiver.EntityId });
                 Assert.IsTrue(context.Drain().OfType<ConversePacket>().Single()
-                    .ConvoDataDict.ContainsKey(ConversationType.MissionReward));
+                    .ConvoDataDict.ContainsKey(ConversationType.MissionComplete));
             }
             finally
             {
