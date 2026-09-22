@@ -144,6 +144,8 @@ namespace Rasa.Managers
 
             creature.State = CharacterState.Dead;
             CellManager.Instance.CellCallMethod(mapChannel, creature, new StateChangePacket(stateIds));
+            if (creature.SpawnPool?.FollowOwnerCharacterId > 0)
+                PublishEscortStatus(mapChannel, creature, false);
 
             // A debuff does not outlive what it was on: a Ruin still ticking on a corpse would
             // try to damage it every second until it expired.
@@ -162,7 +164,7 @@ namespace Rasa.Managers
             Client client = null;
 
             // get client if it's killed by player
-            foreach (var cell in CellManager.CellsIn(mapChannel, killedBy.Cells))
+            foreach (var cell in CellManager.CellsIn(mapChannel, killedBy?.Cells))
                 foreach (var tempClient in cell.ClientList)
                     if (tempClient.Player == killedBy)
                     {
@@ -212,11 +214,39 @@ namespace Rasa.Managers
                 LootDispenserManager.Instance.Loot(client, creature);
             }
 
-            if (client != null &&
-                CanCreditScenarioProgress(mapChannel, creature, client))
+            var progressClient = client ?? FindEscortOwner(mapChannel, killedBy as Creature);
+            if (progressClient != null &&
+                CanCreditScenarioProgress(mapChannel, creature, progressClient))
                 (_missionManager ?? MissionManager.Instance).RecordProgress(
-                    client,
+                    progressClient,
                     MissionProgressEvent.Creature(creature.DbId));
+        }
+
+        private static Client FindEscortOwner(MapChannel mapChannel, Creature escort)
+        {
+            var pool = escort?.SpawnPool;
+            if (pool?.FollowOwnerCharacterId is not > 0 ||
+                pool.ScenarioOwnerCharacterId != pool.FollowOwnerCharacterId ||
+                mapChannel.IsPrivateInstance && mapChannel.OwnerCharacterId != pool.FollowOwnerCharacterId ||
+                !MapInstanceScope.Contains(mapChannel, escort) ||
+                !EntityManager.Instance.Creatures.TryGetValue(escort.EntityId, out var registered) ||
+                !ReferenceEquals(registered, escort))
+                return null;
+
+            return mapChannel.ClientList.FirstOrDefault(client =>
+                client?.State == ClientState.Ingame && client.PendingTransfer == null &&
+                client.Player?.Id == pool.FollowOwnerCharacterId &&
+                MapInstanceScope.Contains(mapChannel, client.Player) &&
+                CellManager.Instance.IsInWorld(client) &&
+                client.Player.Missions.TryGetValue(pool.ScenarioMissionId, out var mission) &&
+                mission.State == MissionState.Active);
+        }
+
+        internal static void PublishEscortStatus(MapChannel mapChannel, Creature creature, bool isEscort)
+        {
+            foreach (var client in CellManager.Instance.GetClientsInCells(mapChannel, creature.Cells))
+                if (client.Player?.Id == creature.SpawnPool?.FollowOwnerCharacterId)
+                    client.CallMethod(creature.EntityId, new UpdateEscortStatusPacket(isEscort));
         }
 
         private static bool CanCreditScenarioProgress(
@@ -369,6 +399,10 @@ namespace Rasa.Managers
                 new UpdateAttributesPacket(creature.Attributes, 0),
                 new IsRunningPacket(creature.IsRunning)
             };
+            if (creature.State != CharacterState.Dead &&
+                creature.SpawnPool?.FollowOwnerCharacterId is > 0 &&
+                creature.SpawnPool?.FollowOwnerCharacterId == client.Player?.Id)
+                entityData.Add(new UpdateEscortStatusPacket(true));
 
             client.CallMethod(SysEntity.ClientMethodId, new CreatePhysicalEntityPacket(creature.EntityId, creature.EntityClass, entityData));
 
@@ -413,6 +447,8 @@ namespace Rasa.Managers
             creature.Name = entityClass.ClassName;
             EnsureScenarioAttributes(creature);
             SetLocation(creature, position, rotation, spawnPool?.MapContextId ?? creature.MapContextId);
+            creature.Controller.CurrentAction = BehaviorManager.BehaviorActionWander;
+            creature.Controller.ActionWander.State = BehaviorManager.WanderIdle;
             if (spawnPool != null)
                 SpawnPoolManager.Instance.IncreaseAliveCreatureCount(spawnPool);
             return creature;

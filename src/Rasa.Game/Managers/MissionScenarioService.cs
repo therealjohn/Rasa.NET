@@ -143,6 +143,9 @@ namespace Rasa.Managers
 
                 if (client.Player.Missions.ContainsKey(BootcampEquipmentCrateLoot.MissionId))
                     EnsureBootcampAlisterDestination(client.Player.Id, client.Player.MapChannel);
+                if (client.Player.Missions.TryGetValue(1994, out var capture) &&
+                    capture.State == MissionState.Completed)
+                    StopBootcampEscorts(client.Player.MapChannel);
 
                 foreach (var mission in client.Player.Missions.Values
                              .Where(mission => mission.State == MissionState.Active)
@@ -179,13 +182,14 @@ namespace Rasa.Managers
 
             EnsureBootcampEquipmentCrate(characterId, mapChannel, manager);
             using var unitOfWork = _gameUnitOfWorkFactory().CreateChar();
+            EnsureBootcampForeans(characterId, mapChannel, manager, unitOfWork);
             var missions = unitOfWork.CharacterMissions.Get(characterId)
                 .Where(mission =>
                     mission.MissionState == (uint)MissionState.Active ||
                     mission.MissionState == (uint)MissionState.Failed ||
                     ((mission.MissionState == (uint)MissionState.Success ||
                       mission.MissionState == (uint)MissionState.Completed) &&
-                     mission.MissionId == BootcampEquipmentCrateLoot.MissionId &&
+                     (mission.MissionId == BootcampEquipmentCrateLoot.MissionId || mission.MissionId == 1994) &&
                      mapChannel.MapInfo?.MapContextId == 1985))
                 .OrderBy(mission => mission.MissionId)
                 .ToArray();
@@ -206,7 +210,9 @@ namespace Rasa.Managers
                     {
                         if ((durableMission.MissionState == (uint)MissionState.Success ||
                              durableMission.MissionState == (uint)MissionState.Completed) &&
-                            !IsRewardCrateSpawn(durableMission.MissionId, step))
+                            !IsRewardCrateSpawn(durableMission.MissionId, step) &&
+                            !(durableMission.MissionId == 1994 &&
+                              step.Kind == MissionScenarioStepKind.SpawnGroup && step.SpawnGroupId == 3))
                             continue;
 
                         var key = MissionScenarioStepState.CreateCompletedKey(
@@ -229,7 +235,7 @@ namespace Rasa.Managers
 
         public void OnMissionAccepted(Client client, uint missionId)
         {
-            if (missionId == BootcampEquipmentCrateLoot.MissionId &&
+            if ((missionId == BootcampEquipmentCrateLoot.MissionId || missionId == 1994) &&
                 client.Player.MapChannel?.MapInfo?.MapContextId == 1985)
                 Rebuild(client.Player.Id, client.Player.MapChannel);
         }
@@ -635,6 +641,54 @@ namespace Rasa.Managers
                                             creature.SpawnPool?.DbId == BootcampAlisterCreatureId))
                 BehaviorManager.Instance.SetActionScriptedMove(
                     mapChannel, alister, BootcampAlisterDestination, BootcampAlisterOrientation);
+        }
+
+        private void EnsureBootcampForeans(
+            uint characterId, MapChannel mapChannel, MissionManager manager, ICharUnitOfWork unitOfWork)
+        {
+            if (mapChannel.MapInfo?.MapContextId != 1985 || !mapChannel.IsPrivateInstance ||
+                mapChannel.OwnerCharacterId != characterId ||
+                !manager.TryGetSpawnGroupDefinition(1994, 1, out var group) || !group.Enabled)
+                return;
+
+            var mission = unitOfWork.CharacterMissions.GetByCharacterAndMission(characterId, 1994);
+            if (mission?.MissionState == (uint)MissionState.Completed)
+                return;
+
+            var runtimeKey = BuildSpawnGroupRuntimeKey(characterId, 1994, group.ContentRevision, null, 1);
+            var state = ParseState(unitOfWork.CharacterMissionScenario.Get(characterId, 1994));
+            var following = mission?.MissionState is (uint)MissionState.Active or (uint)MissionState.Success;
+            Vector3? restorePosition = null;
+            if (following && !mapChannel.SpawnPools.Any(pool => pool.ScenarioKey == runtimeKey))
+            {
+                var character = unitOfWork.Characters.Find(characterId);
+                if (character?.MapContextId == mapChannel.MapInfo.MapContextId)
+                    restorePosition = character.GetPositionVector();
+            }
+            EnsureSpawnGroupRuntime(mapChannel, group, runtimeKey, state: state, restorePosition: restorePosition);
+            if (following)
+                EnsureSpawnGroupEscortRuntime(mapChannel, runtimeKey, characterId, 0);
+        }
+
+        private static void StopBootcampEscorts(MapChannel mapChannel)
+        {
+            if (mapChannel?.MapInfo?.MapContextId != 1985 || !mapChannel.IsPrivateInstance)
+                return;
+
+            foreach (var pool in mapChannel.SpawnPools.Where(pool =>
+                         pool.ScenarioMissionId == 1994 && pool.ScenarioGroupId == 1 &&
+                         pool.FollowOwnerCharacterId == mapChannel.OwnerCharacterId))
+            {
+                foreach (var creature in mapChannel.MapCellInfo.Cells.Values.SelectMany(cell => cell.CreatureList)
+                             .Where(creature => ReferenceEquals(creature.SpawnPool, pool)).ToArray())
+                {
+                    CreatureManager.PublishEscortStatus(mapChannel, creature, false);
+                    creature.Controller.ActionFollow.FollowTargetId = 0;
+                    BehaviorManager.Instance.SetActionAnchor(creature, creature.Position);
+                }
+                pool.FollowOwnerCharacterId = 0;
+                pool.FollowTargetEntityId = 0;
+            }
         }
 
         private void PlanDespawnDynamicObject(
@@ -1115,7 +1169,8 @@ namespace Rasa.Managers
             MissionSpawnGroupDefinition spawnGroup,
             string runtimeKey,
             string attemptKey = null,
-            ScenarioState state = null)
+            ScenarioState state = null,
+            Vector3? restorePosition = null)
         {
             if (mapChannel == null)
                 return;
@@ -1131,6 +1186,15 @@ namespace Rasa.Managers
                     pools = new List<SpawnPool>();
                     foreach (var spawn in spawnGroup.Spawns)
                     {
+                        var position = spawn.Position;
+                        if (restorePosition.HasValue)
+                        {
+                            position = restorePosition.Value + new Vector3((pools.Count - 1) * 1.5f, 0, -2);
+                            if (mapChannel.NavMesh != null)
+                                position = NavMeshManager.NearestWalkable(mapChannel, position)
+                                    ?? throw new GameplayRejectionException(
+                                        $"Cannot restore escort group {spawnGroup.SpawnGroupId}: no walkable ground near its owner.");
+                        }
                         var pool = new SpawnPool
                         {
                             DbId = spawn.SpawnId,
@@ -1142,7 +1206,7 @@ namespace Rasa.Managers
                             SpawnPolicy = spawnGroup.SpawnPolicy,
                             MapContextId = mapChannel.MapInfo.MapContextId,
                             RuntimeMapChannel = mapChannel,
-                            Position = spawn.Position,
+                            Position = position,
                             Rotation = spawn.Rotation,
                             RespawnTime = spawnGroup.RespawnSeconds.GetValueOrDefault() * 1000L,
                             UpdateTimer = spawnGroup.RespawnSeconds.GetValueOrDefault() * 1000L,
@@ -1222,9 +1286,12 @@ namespace Rasa.Managers
             foreach (var creature in mapChannel.MapCellInfo.Cells.Values
                          .SelectMany(cell => cell.CreatureList)
                          .Distinct()
-                         .Where(creature => pools.Contains(creature.SpawnPool))
+                         .Where(creature => pools.Contains(creature.SpawnPool) && creature.State != CharacterState.Dead)
                          .ToArray())
+            {
                 BehaviorManager.Instance.SetActionFollow(creature, followTargetEntityId);
+                CreatureManager.PublishEscortStatus(mapChannel, creature, true);
+            }
         }
 
         private void RemoveSpawnGroupRuntime(MapChannel mapChannel, string runtimeKey)
@@ -1540,6 +1607,9 @@ namespace Rasa.Managers
             using var unitOfWork = _gameUnitOfWorkFactory().CreateChar();
             unitOfWork.ExecuteTransaction(() =>
             {
+                if (unitOfWork.CharacterMissions.GetByCharacterAndMission(
+                        spawnPool.ScenarioOwnerCharacterId, spawnPool.ScenarioMissionId) == null)
+                    return;
                 var state = ParseState(unitOfWork.CharacterMissionScenario.Get(
                     spawnPool.ScenarioOwnerCharacterId,
                     spawnPool.ScenarioMissionId));
