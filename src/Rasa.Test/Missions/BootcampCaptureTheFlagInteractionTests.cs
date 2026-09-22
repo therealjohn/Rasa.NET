@@ -259,7 +259,6 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
-        [Ignore("Known Bootcamp navmesh gap at (182.8,108.3,83.2). Requires original mesh*.glm assets on the other machine; see docs/world-testing.md.")]
         public void ForeanEscortsCanFollowFromTheCaveExitToTheReclaimedBase()
         {
             using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);

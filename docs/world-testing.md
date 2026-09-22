@@ -516,37 +516,53 @@ The separate completion/reward request behavior is unchanged.
 dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~BootcampCaptureTheFlag|FullyQualifiedName~CaptureTheFlagMigration"
 ```
 
-#### Pending navigation repair on the game-asset machine
+#### Navigation repair from the cave exit to the reclaimed base
 
-The checked-in `navmesh\adv_bootcamp.nav` does not provide a complete route from
-the cave exit `(279.05, 120.5, 66.07)` to Youngblood at
-`(93.2, 109.64925, 137.5)`. Real escort AI follows the partial route and stops
-near `(182.84, 108.35, 83.18)`. Following from the shooting range to the cave
-exit works. The supplied Downloads copy of `adv_bootcamp.nav` has the same
-SHA-256 as the repository copy and does not repair the route.
+The checked-in `navmesh\adv_bootcamp.nav` used to stop short of a complete route
+from the cave exit `(279.05, 120.5, 66.07)` to Youngblood at
+`(93.2, 109.64925, 137.5)`, with escort AI following the partial route and
+stopping near `(182.84, 108.35, 83.18)`. Following from the shooting range to
+the cave exit already worked; only the cave-to-base leg was broken.
 
-`ForeanEscortsCanFollowFromTheCaveExitToTheReclaimedBase` reproduces the remaining
-failure. It is explicitly ignored until this repair is made; the rest of the
-encounter coverage must not be mistaken for a complete walking escort run.
-No teleport, unchecked straight-line route, or guessed terrain connection is
-used as a workaround.
+Rebuilding `adv_bootcamp` from the real client data (`data\maps\adv_bootcamp`
+and `data\mesh*.glm`; map/terrain files alone omit the bridge and cave
+collision meshes) reproduced the same stop point, ruling out a stale checked-in
+file. Probing the built mesh isolated the break to a single seam around
+`(206-207, 105, 96)`, between the walkable shelf/cavern-entrance geometry
+next to the AFS bridge (`arch_hum_bridge_48m_v02`, reachable from the cave
+side) and the bridge deck/terrace geometry reachable from the reclaimed base.
+The two sides sit about 0.9-1.1 m apart in height there - a small ledge in the
+broken-bridge/cavern-entrance collision (`arch_forean_bridge_ceremonial_broken_v01`,
+`arch_forean_eloh_cavern_entrance_v01`) - just over the builder's default
+0.9 m `AgentMaxClimb`, so Recast never linked the two regions. The much larger,
+genuinely vertical cliff face further north (`x` about 182-190, dropping from
+the cave-exit ledge to the river) stays correctly excluded at any reasonable
+climb value; the fix does not touch it, and the repaired route avoids it
+entirely, crossing the AFS bridge instead.
 
-On the machine with the full game installation, diagnose the partial path with:
+Rebuilding just `adv_bootcamp` with `--climb 1.0` (up from the 0.9 m default,
+justified by the measured ledge height, and scoped to this one map's build
+rather than the shared default in `BuildSettings`) closes that seam and
+produces a complete path. `ForeanEscortsCanFollowFromTheCaveExitToTheReclaimedBase`
+covers this route and is no longer ignored.
+
+To reproduce or re-diagnose on a machine with the full game installation:
 
 ```powershell
 dotnet run --project src\Rasa.NavMesh\Rasa.NavMesh.csproj --configuration Release -- --path navmesh\adv_bootcamp.nav 279.05 120.5 66.07 93.2 109.64925 137.5
 ```
 
-The command currently returns a partial path and exit code `1`. The rebuild
-needs both `data\maps\adv_bootcamp` and the original `data\mesh*.glm` archives.
-Map and terrain files alone omit the cave and bridge collision meshes.
-Use `Rasa.NavMesh` to build only `adv_bootcamp` into a temporary output
-directory, inspect the geometry and navigation boundary, and correct the
-actual cause before replacing the checked-in mesh. Do not move area/indicator
-`439`, move the base NPCs to bypass the gap, or globally raise climb limits
-without checking the resulting paths against collision geometry. Remove the
-test's `Ignore` only when the real escort route passes, then verify the complete
-walk, boss fight, and Youngblood handoff in the native client.
+This now returns a complete path and exit code `0`. To rebuild `adv_bootcamp`
+into a temporary output directory instead of trusting the checked-in file:
+
+```powershell
+dotnet run --project src\Rasa.NavMesh\Rasa.NavMesh.csproj --configuration Release -- --client "<Tabula Rasa install>" --out <temp dir> --map adv_bootcamp --climb 1.0
+```
+
+Verify any future rebuild with the same `--path` query before replacing the
+checked-in mesh; do not move area/indicator `439`, move the base NPCs to
+bypass a gap, or raise climb/slope limits without checking the resulting
+paths against the actual collision geometry, as was done here.
 
 The repository does not contain a native-client automation harness. Use this
 manual script when validating Bootcamp in the retail `1.16.5.0` client.
