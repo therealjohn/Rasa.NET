@@ -43,7 +43,10 @@ namespace Rasa.Test.Missions
                 harness.Client,
                 mcAllister.EntityId,
                 BootcampRuntimeTestHarness.MissionInitiation));
-            AssertPacketTypes(harness.Drain(), typeof(MissionGainedPacket));
+            AssertPacketTypes(
+                harness.Drain(),
+                typeof(MissionGainedPacket),
+                typeof(NPCConversationStatusPacket));
 
             harness.Manager.PublishInitialState(harness.Client);
             var snapshot = harness.Drain().OfType<MissionStatusInfoPacket>().Single();
@@ -164,9 +167,7 @@ namespace Rasa.Test.Missions
                 4,
                 1));
             harness.Drain();
-            Assert.IsTrue(harness.Manager.RecordProgress(
-                harness.Client,
-                MissionProgressEvent.Interaction(7862)));
+            BootcampRuntimeTestHarness.LootEquipmentCrate(harness);
             harness.Drain();
             PrepareEquipping(harness);
             Assert.IsTrue(RecordTemplateEquipProgress(harness, 13066));
@@ -186,12 +187,11 @@ namespace Rasa.Test.Missions
                 1));
             harness.Drain();
 
-            var practiceDummy = BootcampRuntimeTestHarness.FindCreature(
-                harness.BootcampMap,
-                BootcampRuntimeTestHarness.PracticeDummyCreatureId);
-            Assert.IsNotNull(practiceDummy);
-            new CreatureManager(null, new ManifestationManager(harness.Context), harness.Manager)
-                .HandleCreatureKill(harness.BootcampMap, practiceDummy, harness.Client.Player);
+            Assert.IsTrue(harness.Manager.RecordProgress(
+                harness.Client,
+                MissionProgressEvent.ObjectHit(
+                    PracticeTargetManager.EntityClassId,
+                    (uint)ActionId.WeaponAttack)));
             AssertRelativeOrder(
                 harness.Drain(),
                 typeof(ObjectiveCompletedPacket),
@@ -309,7 +309,11 @@ namespace Rasa.Test.Missions
             AssertPacketTypes(
                 capturePackets,
                 typeof(MissionCompleteablePacket),
-                typeof(MissionCompletedPacket));
+                typeof(MissionCompletedPacket),
+                typeof(NPCConversationStatusPacket),
+                typeof(NPCConversationStatusPacket),
+                typeof(NPCConversationStatusPacket),
+                typeof(NPCConversationStatusPacket));
             Assert.IsFalse(capturePackets
                 .OfType<MissionCompleteablePacket>()
                 .Single()

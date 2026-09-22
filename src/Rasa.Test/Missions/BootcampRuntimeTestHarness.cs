@@ -138,6 +138,28 @@ namespace Rasa.Test.Missions
                 string.Equals(dynamicObject.ScenarioKey, key, StringComparison.Ordinal) ||
                 dynamicObject.ScenarioKey?.EndsWith($":object:{key}", StringComparison.Ordinal) == true);
 
+        /// <summary>
+        /// Opens and fully loots the Gearing Up equipment crate, the real path by which
+        /// objective 1 completes and its reward package reaches the player's inventory since
+        /// the crate became a loot dispenser (see BootcampCrateLoot migrations) instead of an
+        /// instant scenario grant. Callers must have already completed objective 4 so the
+        /// crate has been spawned.
+        /// </summary>
+        internal static void LootEquipmentCrate(Harness harness)
+        {
+            var crate = FindScenarioObject(harness.BootcampMap, "bootcamp-equipment-crate");
+            Microsoft.VisualStudio.TestTools.UnitTesting.Assert.IsNotNull(crate);
+            harness.MovePlayerTo(crate);
+            CellManager.Instance.UpdateVisibility(harness.Client);
+            var loot = harness.BootcampMap.LootDispensers[crate.LootDispenserEntityId];
+            LootDispenserManager.Instance.RequestCorpseLooting(
+                harness.Client,
+                new Rasa.Packets.LootDispenser.Client.RequestCorpseLootingPacket { EntityId = loot.EntityId });
+            LootDispenserManager.Instance.RequestLootAllFromCorpse(
+                harness.Client,
+                new Rasa.Packets.LootDispenser.Client.RequestLootAllFromCorpsePacket { EntityId = loot.EntityId });
+        }
+
         internal static void AdvanceScenarioCorpseAndRespawn(
             Harness harness,
             Creature creature,

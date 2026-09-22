@@ -399,9 +399,7 @@ namespace Rasa.Test.Missions
                 BootcampRuntimeTestHarness.MissionGearingUp,
                 4,
                 1));
-            Assert.IsTrue(harness.Manager.RecordProgress(
-                harness.Client,
-                MissionProgressEvent.Interaction(7862)));
+            BootcampRuntimeTestHarness.LootEquipmentCrate(harness);
 
             PrepareEquipping(harness);
             Assert.IsTrue(RecordTemplateEquipProgress(harness, 13066));
@@ -419,12 +417,11 @@ namespace Rasa.Test.Missions
                 6,
                 1));
 
-            var practiceDummy = BootcampRuntimeTestHarness.FindCreature(
-                harness.BootcampMap,
-                BootcampRuntimeTestHarness.PracticeDummyCreatureId);
-            Assert.IsNotNull(practiceDummy);
-            new CreatureManager(null, new ManifestationManager(harness.Context), harness.Manager)
-                .HandleCreatureKill(harness.BootcampMap, practiceDummy, harness.Client.Player);
+            Assert.IsTrue(harness.Manager.RecordProgress(
+                harness.Client,
+                MissionProgressEvent.ObjectHit(
+                    PracticeTargetManager.EntityClassId,
+                    (uint)ActionId.WeaponAttack)));
             Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
                 harness.Client,
                 actors.Hartmann.EntityId,
@@ -434,9 +431,9 @@ namespace Rasa.Test.Missions
 
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Client,
-                MissionProgressEvent.AbilityHit(
-                    (uint)ActionId.AaRecruitLightning,
-                    BootcampRuntimeTestHarness.LightningDummyCreatureId)));
+                MissionProgressEvent.ObjectHit(
+                    PracticeTargetManager.EntityClassId,
+                    (uint)ActionId.AaRecruitLightning)));
 
             Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
                 harness.Client,

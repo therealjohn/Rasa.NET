@@ -225,7 +225,6 @@ namespace Rasa.Test.Missions
 
                 AssertObjectiveStates(snapshot, 1990, (1U, MissionObjectiveState.Incomplete), (2U, MissionObjectiveState.Inactive));
                 AssertObjectiveStates(snapshot, 1992,
-                    (10U, MissionObjectiveState.Completed),
                     (4U, MissionObjectiveState.Incomplete),
                     (1U, MissionObjectiveState.Inactive),
                     (2U, MissionObjectiveState.Inactive),
@@ -329,7 +328,7 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
-        public void BootcampMissionContentKeepsClient1992ObjectivesAndAddsReconstructedMcAllisterHandoff()
+        public void BootcampMissionContentKeepsClient1992ObjectivesStartingFromDelessioGreeting()
         {
             WithDisposableSqliteWorld((context, _) =>
             {
@@ -340,21 +339,25 @@ namespace Rasa.Test.Missions
                     .OrderBy(objective => objective.Ordinal)
                     .Select(objective => objective.ObjectiveId)
                     .ToArray();
+                // The client's own compiled missionobjective table has no objective 10 for this
+                // mission (only 1-9 exist); a synthetic "already accepted from McAllister"
+                // objective is unrenderable (ID_ERR_MISSING_TRANSLATION), so objective 4
+                // (Delessio's greeting) is the mission's real, client-matching entry point.
                 CollectionAssert.AreEqual(
-                    new uint[] { 10, 4, 1, 2, 5, 6, 3, 9, 8, 7 },
+                    new uint[] { 4, 1, 2, 5, 6, 3, 9, 8, 7 },
                     orderedObjectiveIds);
 
-                var reconstructedHandoff = context.MissionEvidenceEntries.Single(entry =>
+                var entryPointEvidence = context.MissionEvidenceEntries.Single(entry =>
                     entry.MissionId == 1992 &&
                     entry.ContentRevision == BootcampRevision &&
                     entry.OwnerKind == MissionEvidenceOwnerKind.Objective &&
-                    entry.OwnerId == 10);
+                    entry.OwnerId == 4);
                 Assert.AreEqual(
-                    MissionEvidenceSourceKind.Reconstruction,
-                    reconstructedHandoff.SourceKind);
+                    MissionEvidenceSourceKind.Server,
+                    entryPointEvidence.SourceKind);
                 StringAssert.Contains(
-                    reconstructedHandoff.ReconstructionNote,
-                    "McAllister handoff");
+                    entryPointEvidence.ReconstructionNote,
+                    "npc.delessio");
             });
         }
 

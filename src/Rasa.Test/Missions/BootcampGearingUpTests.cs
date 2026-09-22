@@ -92,23 +92,21 @@ namespace Rasa.Test.Missions
             CollectionAssert.AreEqual(
                 new[]
                 {
-                    (10U, (uint)1, MissionObjectiveState.Completed),
-                    (4U, (uint)2, MissionObjectiveState.Incomplete),
-                    (1U, (uint)3, MissionObjectiveState.Inactive),
-                    (2U, (uint)4, MissionObjectiveState.Inactive),
-                    (5U, (uint)5, MissionObjectiveState.Inactive),
-                    (6U, (uint)6, MissionObjectiveState.Inactive),
-                    (3U, (uint)7, MissionObjectiveState.Inactive),
-                    (9U, (uint)8, MissionObjectiveState.Inactive),
-                    (8U, (uint)9, MissionObjectiveState.Inactive),
-                    (7U, (uint)10, MissionObjectiveState.Inactive)
+                    (4U, (uint)1, MissionObjectiveState.Incomplete),
+                    (1U, (uint)2, MissionObjectiveState.Inactive),
+                    (2U, (uint)3, MissionObjectiveState.Inactive),
+                    (5U, (uint)4, MissionObjectiveState.Inactive),
+                    (6U, (uint)5, MissionObjectiveState.Inactive),
+                    (3U, (uint)6, MissionObjectiveState.Inactive),
+                    (9U, (uint)7, MissionObjectiveState.Inactive),
+                    (8U, (uint)8, MissionObjectiveState.Inactive),
+                    (7U, (uint)9, MissionObjectiveState.Inactive)
                 },
                 gained.MissionInfo.ObjectivesList
                     .Select(objective => (objective.ObjectiveId, objective.Ordinal, objective.State))
                     .ToArray());
             AssertMissionOrder(
                 harness.Client.Player.Missions[BootcampRuntimeTestHarness.MissionGearingUp],
-                (10U, MissionObjectiveState.Completed),
                 (4U, MissionObjectiveState.Incomplete),
                 (1U, MissionObjectiveState.Inactive),
                 (2U, MissionObjectiveState.Inactive),
@@ -145,7 +143,6 @@ namespace Rasa.Test.Missions
             harness.Reconnect();
             AssertMissionOrder(
                 harness.Client.Player.Missions[BootcampRuntimeTestHarness.MissionGearingUp],
-                (10U, MissionObjectiveState.Completed),
                 (4U, MissionObjectiveState.Completed),
                 (1U, MissionObjectiveState.Incomplete),
                 (2U, MissionObjectiveState.Inactive),
@@ -159,15 +156,13 @@ namespace Rasa.Test.Missions
                 harness.BootcampMap,
                 "bootcamp-equipment-crate"));
 
-            Assert.IsTrue(harness.Manager.RecordProgress(
-                harness.Client,
-                MissionProgressEvent.Interaction(7862)));
+            BootcampRuntimeTestHarness.LootEquipmentCrate(harness);
             var afterGrant = harness.Context.ReadRewardTotals();
             AssertItemTemplatesPresent(harness, 13066, 13096, 13156, 13186, 13713);
 
             Assert.IsFalse(harness.Manager.RecordProgress(
                 harness.Client,
-                MissionProgressEvent.Interaction(7862)));
+                MissionProgressEvent.Interaction(29877)));
             var afterDuplicate = harness.Context.ReadRewardTotals();
             Assert.AreEqual(afterGrant.ItemCount, afterDuplicate.ItemCount);
 
@@ -191,7 +186,6 @@ namespace Rasa.Test.Missions
             harness.Reconnect();
             AssertMissionOrder(
                 harness.Client.Player.Missions[BootcampRuntimeTestHarness.MissionGearingUp],
-                (10U, MissionObjectiveState.Completed),
                 (4U, MissionObjectiveState.Completed),
                 (1U, MissionObjectiveState.Completed),
                 (2U, MissionObjectiveState.Completed),
@@ -218,24 +212,23 @@ namespace Rasa.Test.Missions
                 BootcampRuntimeTestHarness.MissionGearingUp,
                 6,
                 1));
-            Assert.IsNotNull(BootcampRuntimeTestHarness.FindCreature(
-                harness.BootcampMap,
-                BootcampRuntimeTestHarness.PracticeDummyCreatureId));
-            Assert.IsNull(BootcampRuntimeTestHarness.FindCreature(
-                harness.BootcampMap,
-                BootcampRuntimeTestHarness.LightningDummyCreatureId));
 
             harness.Reconnect();
-            Assert.IsNotNull(BootcampRuntimeTestHarness.FindCreature(
-                harness.BootcampMap,
-                BootcampRuntimeTestHarness.PracticeDummyCreatureId));
-            Assert.IsNull(BootcampRuntimeTestHarness.FindCreature(
-                harness.BootcampMap,
-                BootcampRuntimeTestHarness.LightningDummyCreatureId));
+            AssertMissionOrder(
+                harness.Client.Player.Missions[BootcampRuntimeTestHarness.MissionGearingUp],
+                (4U, MissionObjectiveState.Completed),
+                (1U, MissionObjectiveState.Completed),
+                (2U, MissionObjectiveState.Completed),
+                (5U, MissionObjectiveState.Completed),
+                (6U, MissionObjectiveState.Completed),
+                (3U, MissionObjectiveState.Incomplete),
+                (9U, MissionObjectiveState.Inactive),
+                (8U, MissionObjectiveState.Inactive),
+                (7U, MissionObjectiveState.Inactive));
         }
 
         [TestMethod]
-        public void GearingUpCombatStagesGrantLightningOnceAndRespawnNonLootableDummies()
+        public void GearingUpCombatStagesGrantLightningOnceAndRequireTheCorrectPracticeTargetAction()
         {
             using var harness = BootcampRuntimeTestHarness.Create();
             var mcAllister = harness.AddNpc(BootcampRuntimeTestHarness.MajorMcAllisterCreatureId);
@@ -260,9 +253,7 @@ namespace Rasa.Test.Missions
                 BootcampRuntimeTestHarness.MissionGearingUp,
                 4,
                 1));
-            Assert.IsTrue(harness.Manager.RecordProgress(
-                harness.Client,
-                MissionProgressEvent.Interaction(7862)));
+            BootcampRuntimeTestHarness.LootEquipmentCrate(harness);
             var inventory = new InventoryManager(harness.Context, harness.Manager);
             PrepareEquipping(harness);
             Assert.IsTrue(RecordTemplateEquipProgress(harness, 13066));
@@ -279,31 +270,15 @@ namespace Rasa.Test.Missions
                 6,
                 1));
 
-            Assert.IsFalse(harness.Manager.RecordProgress(
+            Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Client,
-                MissionProgressEvent.Creature(BootcampRuntimeTestHarness.LightningDummyCreatureId)));
-            var practiceDummy = BootcampRuntimeTestHarness.FindCreature(
-                harness.BootcampMap,
-                BootcampRuntimeTestHarness.PracticeDummyCreatureId);
-            Assert.IsNotNull(practiceDummy);
-
-            new CreatureManager(null, new ManifestationManager(harness.Context), harness.Manager)
-                .HandleCreatureKill(harness.BootcampMap, practiceDummy, harness.Client.Player);
+                MissionProgressEvent.ObjectHit(
+                    PracticeTargetManager.EntityClassId,
+                    (uint)ActionId.WeaponAttack)));
 
             Assert.AreEqual(
                 MissionObjectiveState.Completed,
                 harness.Client.Player.Missions[BootcampRuntimeTestHarness.MissionGearingUp].Objectives[3].State);
-            Assert.AreEqual(0, harness.BootcampMap.LootDispensers.Count);
-            Assert.AreEqual(0, practiceDummy.HarvestAttemptsLeft);
-
-            BootcampRuntimeTestHarness.AdvanceScenarioCorpseAndRespawn(
-                harness,
-                practiceDummy,
-                corpseMilliseconds: 1000,
-                respawnMilliseconds: 1000);
-            Assert.IsNotNull(BootcampRuntimeTestHarness.FindCreature(
-                harness.BootcampMap,
-                BootcampRuntimeTestHarness.PracticeDummyCreatureId));
 
             Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
                 harness.Client,
@@ -311,9 +286,6 @@ namespace Rasa.Test.Missions
                 BootcampRuntimeTestHarness.MissionGearingUp,
                 9,
                 1));
-            Assert.IsNotNull(BootcampRuntimeTestHarness.FindCreature(
-                harness.BootcampMap,
-                BootcampRuntimeTestHarness.LightningDummyCreatureId));
             using (var unit = harness.Context.CreateChar())
             {
                 Assert.AreEqual(
@@ -341,14 +313,14 @@ namespace Rasa.Test.Missions
 
             Assert.IsFalse(harness.Manager.RecordProgress(
                 harness.Client,
-                MissionProgressEvent.AbilityHit(
-                    (uint)ActionId.AaRecruitLightning,
-                    BootcampRuntimeTestHarness.PracticeDummyCreatureId)));
+                MissionProgressEvent.ObjectHit(
+                    PracticeTargetManager.EntityClassId,
+                    (uint)ActionId.WeaponAttack)));
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Client,
-                MissionProgressEvent.AbilityHit(
-                    (uint)ActionId.AaRecruitLightning,
-                    BootcampRuntimeTestHarness.LightningDummyCreatureId)));
+                MissionProgressEvent.ObjectHit(
+                    PracticeTargetManager.EntityClassId,
+                    (uint)ActionId.AaRecruitLightning)));
 
             Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
                 harness.Client,
@@ -417,9 +389,7 @@ namespace Rasa.Test.Missions
                 BootcampRuntimeTestHarness.MissionGearingUp,
                 4,
                 1));
-            Assert.IsTrue(harness.Manager.RecordProgress(
-                harness.Client,
-                MissionProgressEvent.Interaction(7862)));
+            BootcampRuntimeTestHarness.LootEquipmentCrate(harness);
 
             AssertItemTemplatesPresent(harness, 13066, 13096, 13156, 13186, 13713, 28);
 
@@ -481,17 +451,10 @@ namespace Rasa.Test.Missions
                         harness,
                         BootcampRuntimeTestHarness.CaptainDelessioPackageId,
                         ConversationStatus.ObjectivComplete);
-                    Assert.IsNull(BootcampRuntimeTestHarness.FindScenarioObject(
+                    Assert.IsNotNull(BootcampRuntimeTestHarness.FindScenarioObject(
                         harness.BootcampMap,
                         "bootcamp-equipment-crate"));
-                    Assert.IsNull(BootcampRuntimeTestHarness.FindCreature(
-                        harness.BootcampMap,
-                        BootcampRuntimeTestHarness.PracticeDummyCreatureId));
-                    Assert.IsNull(BootcampRuntimeTestHarness.FindCreature(
-                        harness.BootcampMap,
-                        BootcampRuntimeTestHarness.LightningDummyCreatureId));
                 },
-                (10U, MissionObjectiveState.Completed),
                 (4U, MissionObjectiveState.Incomplete),
                 (1U, MissionObjectiveState.Inactive),
                 (2U, MissionObjectiveState.Inactive),
@@ -515,7 +478,6 @@ namespace Rasa.Test.Missions
                         harness.BootcampMap,
                         "bootcamp-equipment-crate"));
                 },
-                (10U, MissionObjectiveState.Completed),
                 (4U, MissionObjectiveState.Completed),
                 (1U, MissionObjectiveState.Incomplete),
                 (2U, MissionObjectiveState.Inactive),
@@ -535,11 +497,10 @@ namespace Rasa.Test.Missions
                 availability: harness =>
                 {
                     AssertNpcUnavailable(harness, BootcampRuntimeTestHarness.CaptainDelessioPackageId);
-                    Assert.IsNull(BootcampRuntimeTestHarness.FindScenarioObject(
+                    Assert.IsNotNull(BootcampRuntimeTestHarness.FindScenarioObject(
                         harness.BootcampMap,
                         "bootcamp-equipment-crate"));
                 },
-                (10U, MissionObjectiveState.Completed),
                 (4U, MissionObjectiveState.Completed),
                 (1U, MissionObjectiveState.Completed),
                 (2U, MissionObjectiveState.Incomplete),
@@ -561,7 +522,6 @@ namespace Rasa.Test.Missions
                         harness,
                         BootcampRuntimeTestHarness.CaptainDelessioPackageId,
                         ConversationStatus.ObjectivComplete),
-                (10U, MissionObjectiveState.Completed),
                 (4U, MissionObjectiveState.Completed),
                 (1U, MissionObjectiveState.Completed),
                 (2U, MissionObjectiveState.Completed),
@@ -583,7 +543,6 @@ namespace Rasa.Test.Missions
                         harness,
                         BootcampRuntimeTestHarness.CorporalHartmannPackageId,
                         ConversationStatus.ObjectivComplete),
-                (10U, MissionObjectiveState.Completed),
                 (4U, MissionObjectiveState.Completed),
                 (1U, MissionObjectiveState.Completed),
                 (2U, MissionObjectiveState.Completed),
@@ -603,14 +562,7 @@ namespace Rasa.Test.Missions
                 availability: harness =>
                 {
                     AssertNpcUnavailable(harness, BootcampRuntimeTestHarness.CorporalHartmannPackageId);
-                    Assert.IsNotNull(BootcampRuntimeTestHarness.FindCreature(
-                        harness.BootcampMap,
-                        BootcampRuntimeTestHarness.PracticeDummyCreatureId));
-                    Assert.IsNull(BootcampRuntimeTestHarness.FindCreature(
-                        harness.BootcampMap,
-                        BootcampRuntimeTestHarness.LightningDummyCreatureId));
                 },
-                (10U, MissionObjectiveState.Completed),
                 (4U, MissionObjectiveState.Completed),
                 (1U, MissionObjectiveState.Completed),
                 (2U, MissionObjectiveState.Completed),
@@ -633,11 +585,7 @@ namespace Rasa.Test.Missions
                         harness,
                         BootcampRuntimeTestHarness.CorporalHartmannPackageId,
                         ConversationStatus.ObjectivComplete);
-                    Assert.IsNull(BootcampRuntimeTestHarness.FindCreature(
-                        harness.BootcampMap,
-                        BootcampRuntimeTestHarness.LightningDummyCreatureId));
                 },
-                (10U, MissionObjectiveState.Completed),
                 (4U, MissionObjectiveState.Completed),
                 (1U, MissionObjectiveState.Completed),
                 (2U, MissionObjectiveState.Completed),
@@ -657,11 +605,7 @@ namespace Rasa.Test.Missions
                 availability: harness =>
                 {
                     AssertNpcUnavailable(harness, BootcampRuntimeTestHarness.CorporalHartmannPackageId);
-                    Assert.IsNotNull(BootcampRuntimeTestHarness.FindCreature(
-                        harness.BootcampMap,
-                        BootcampRuntimeTestHarness.LightningDummyCreatureId));
                 },
-                (10U, MissionObjectiveState.Completed),
                 (4U, MissionObjectiveState.Completed),
                 (1U, MissionObjectiveState.Completed),
                 (2U, MissionObjectiveState.Completed),
@@ -683,7 +627,6 @@ namespace Rasa.Test.Missions
                         harness,
                         BootcampRuntimeTestHarness.CorporalHartmannPackageId,
                         ConversationStatus.ObjectivComplete),
-                (10U, MissionObjectiveState.Completed),
                 (4U, MissionObjectiveState.Completed),
                 (1U, MissionObjectiveState.Completed),
                 (2U, MissionObjectiveState.Completed),
@@ -705,7 +648,6 @@ namespace Rasa.Test.Missions
                         harness,
                         BootcampRuntimeTestHarness.CorporalDeSimonePackageId,
                         ConversationStatus.MissionComplete),
-                (10U, MissionObjectiveState.Completed),
                 (4U, MissionObjectiveState.Completed),
                 (1U, MissionObjectiveState.Completed),
                 (2U, MissionObjectiveState.Completed),
@@ -842,9 +784,7 @@ namespace Rasa.Test.Missions
             if (stage == MissionBoundary.AfterDelessioGreeting)
                 return;
 
-            Assert.IsTrue(harness.Manager.RecordProgress(
-                harness.Client,
-                MissionProgressEvent.Interaction(7862)));
+            BootcampRuntimeTestHarness.LootEquipmentCrate(harness);
             if (stage == MissionBoundary.AfterCrateGrant)
                 return;
 
@@ -871,12 +811,11 @@ namespace Rasa.Test.Missions
             if (stage == MissionBoundary.AfterHartmannGreeting)
                 return;
 
-            var practiceDummy = BootcampRuntimeTestHarness.FindCreature(
-                harness.BootcampMap,
-                BootcampRuntimeTestHarness.PracticeDummyCreatureId);
-            Assert.IsNotNull(practiceDummy);
-            new CreatureManager(null, new ManifestationManager(harness.Context), harness.Manager)
-                .HandleCreatureKill(harness.BootcampMap, practiceDummy, harness.Client.Player);
+            Assert.IsTrue(harness.Manager.RecordProgress(
+                harness.Client,
+                MissionProgressEvent.ObjectHit(
+                    PracticeTargetManager.EntityClassId,
+                    (uint)ActionId.WeaponAttack)));
             if (stage == MissionBoundary.AfterFirearmDummy)
                 return;
 
@@ -891,9 +830,9 @@ namespace Rasa.Test.Missions
 
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Client,
-                MissionProgressEvent.AbilityHit(
-                    (uint)ActionId.AaRecruitLightning,
-                    BootcampRuntimeTestHarness.LightningDummyCreatureId)));
+                MissionProgressEvent.ObjectHit(
+                    PracticeTargetManager.EntityClassId,
+                    (uint)ActionId.AaRecruitLightning)));
             if (stage == MissionBoundary.AfterLightningDummy)
                 return;
 
