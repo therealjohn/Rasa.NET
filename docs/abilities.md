@@ -122,8 +122,9 @@ The following are engine choices, not additional historical facts:
   It stops on death, loss of eligibility/learned rank, departure, character
   replacement or explicit detachment. Repeated detachment is harmless.
 - Current resources, Sprint and cooldown deadlines remain runtime state.
-  Existing stat resets on map load/relog are unchanged; these values are not
-  represented as durably saved by the new tray migration.
+  Login starts adrenaline empty while filling Health and Power; map transfers
+  retain their existing resource-preservation behavior. These values are not
+  represented as durably saved by the tray migration.
 
 `GameEffectManager.DoWork` now receives every map tick's elapsed milliseconds,
 including irregular ticks. Existing timed effects accumulate that elapsed time,
@@ -131,6 +132,12 @@ and all effects due in a tick expire. Toggle upkeep uses its own clock seam so
 time preceding activation is not charged.
 
 ## Learned state and drawer persistence
+
+New characters persist rank 1 in Lightning, Sprint, Firearms, Hand to Hand and
+Motor Assist Armor as part of creation, consuming the five recruit skill points.
+Lightning and Sprint start in zero-based drawer slots 0 and 1. Later logins load
+the saved ranks and slots without reapplying these defaults. Mission training
+reminders also preserve an already learned rank and the player's chosen slots.
 
 [Logos ability revision 33138](https://tabularasa.fandom.com/wiki/Logos_ability?oldid=33138)
 allows lower learned ranks. Validation therefore requires

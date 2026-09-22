@@ -1163,6 +1163,7 @@ namespace Rasa.Managers
 
             client.CallMethod(player.EntityId, new ActorInfoPacket(player));
             MissionManager.Instance.PublishInitialState(client);
+            _characterManager.OfferStartingExperienceMission(client);
 
             // The regions the player is standing in; re-sent by RegionManager.Worker as they move.
             RegionManager.Instance.PlayerEnteredMap(client);

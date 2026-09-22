@@ -62,7 +62,7 @@ namespace Rasa.Test.Gameplay
         private const uint MissionInitiation = 1990;
 
         [TestMethod]
-        public void PendingFirstSelectionWithoutSkipEntersPrivate1985AndActivates1990()
+        public void PendingFirstSelectionWithoutSkipEntersPrivate1985WithoutAcceptingInitiation()
         {
             using var context = new BootcampSelectionTestContext();
             context.SeedAccount(41);
@@ -99,13 +99,51 @@ namespace Rasa.Test.Gameplay
             Assert.AreEqual(389.8046875d, durableCharacter.CoordX, 0.0001d);
             Assert.AreEqual(136.78515625d, durableCharacter.CoordY, 0.0001d);
             Assert.AreEqual(-80.6640625d, durableCharacter.CoordZ, 0.0001d);
-            Assert.IsNotNull(durableMission);
-            Assert.AreEqual((uint)MissionState.Active, durableMission.MissionState);
-            Assert.IsFalse(durableMission.Completeable);
+            Assert.IsNull(durableMission);
+            Assert.IsFalse(client.Player.Missions.ContainsKey(MissionInitiation));
         }
 
         [TestMethod]
-        public void ConcurrentPendingSelectionsActivateBootcampOnceAndReuseOneOwnedRuntime()
+        public void FirstBootcampSelectionFacesTheOppositeDirectionWithoutRotatingAgainOnReconnect()
+        {
+            using var context = new BootcampSelectionTestContext();
+            context.SeedAccount(45);
+            var characterId = context.SeedCharacter(45, 1, "Facing");
+            context.SeedStartingExperience(characterId, CharacterStartingExperienceState.Pending);
+            var client = context.CreateSelectionClient(45);
+            context.Characters.RequestSwitchToCharacterInSlot(
+                client,
+                new Packets.Game.Client.RequestSwitchToCharacterInSlotPacket { SlotNum = 1 });
+
+            using (var verify = context.OpenChar())
+            {
+                var character = new CharacterRepository(verify).Get(characterId);
+                Assert.AreEqual(3.11637806892395d - Math.PI, character.Rotation, 0.000001d);
+            }
+
+            using (var unit = context.CreateChar())
+            {
+                unit.Characters.UpdateCharacterPosition(characterId, 390, 137, -75, 1.25, BootcampMapContextId);
+                unit.Complete();
+            }
+            context.Maps.ReleaseOwnedPrivateInstances(characterId);
+            var reconnect = context.CreateSelectionClient(45);
+            context.Characters.RequestSwitchToCharacterInSlot(
+                reconnect,
+                new Packets.Game.Client.RequestSwitchToCharacterInSlotPacket { SlotNum = 1 });
+            Assert.AreEqual(1.25f, reconnect.Player.Rotation, 0.000001f);
+        }
+
+        [TestMethod]
+        public void FirstBootcampMapLoadedStartsWithEmptyAdrenaline()
+        {
+            using var harness = Missions.BootcampRuntimeTestHarness.CreateFromPendingSelection();
+            Assert.AreEqual(0, harness.Client.Player.Attributes[Attributes.Chi].Current);
+            Assert.IsGreaterThan(0, harness.Client.Player.Attributes[Attributes.Chi].CurrentMax);
+        }
+
+        [TestMethod]
+        public void ConcurrentPendingSelectionsEnterBootcampOnceWithoutAcceptingAndReuseOneOwnedRuntime()
         {
             using var context = new BootcampSelectionTestContext();
             context.SeedAccount(42);
@@ -136,7 +174,7 @@ namespace Rasa.Test.Gameplay
                     entry.CharacterId == characterId &&
                     entry.State == CharacterStartingExperienceState.Bootcamp));
             Assert.AreEqual(
-                1,
+                0,
                 verify.CharacterMissionEntries.Count(entry =>
                     entry.CharacterId == characterId &&
                     entry.MissionId == MissionInitiation));

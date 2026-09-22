@@ -655,6 +655,42 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
+        public void BootcampLightningCueMigrationUsesTheNativeHighlightGreetingAndRollsBack()
+        {
+            WithDisposableSqliteWorld((context, _) =>
+            {
+                var migrator = context.GetService<IMigrator>();
+                migrator.Migrate("20260921231500_BootcampWorldSetup");
+                uint? FirstGreeting() => context.MissionActionEntries.AsNoTracking().Single(entry =>
+                    entry.MissionId == 1990 && entry.ContentRevision == BootcampRevision &&
+                    entry.ObjectiveId == 1 && entry.Kind == MissionActionKind.ShowAmbientConversation).NpcPackageId;
+                Assert.AreEqual(1635U, FirstGreeting());
+
+                migrator.Migrate();
+                Assert.AreEqual(1634U, FirstGreeting());
+                Assert.AreEqual(1636U, context.MissionActionEntries.AsNoTracking().Single(entry =>
+                    entry.MissionId == 1990 && entry.ContentRevision == BootcampRevision &&
+                    entry.ObjectiveId == 2 && entry.Kind == MissionActionKind.ShowAmbientConversation).NpcPackageId);
+                Assert.IsFalse(Validate(LoadSnapshot(context), context).BlocksReadiness);
+
+                migrator.Migrate("20260921231500_BootcampWorldSetup");
+                Assert.AreEqual(1635U, FirstGreeting());
+            });
+        }
+
+        [TestMethod]
+        [DataRow(typeof(SqliteWorldContext), "20260921231500_BootcampWorldSetup", "20260922013000_BootcampLightningCue")]
+        [DataRow(typeof(MySqlWorldContext), "20260921231510_BootcampWorldSetup", "20260922013010_BootcampLightningCue")]
+        public void BootcampLightningCueMigrationHasProviderParity(Type contextType, string previous, string current)
+        {
+            using var context = CreateContext(contextType, "unused");
+            var sql = NormalizeSql(context.GetService<IMigrator>().GenerateScript(previous, current));
+            StringAssert.Contains(sql, "update mission_action set npc_package_id = 1634");
+            StringAssert.Contains(sql, "mission_id = 1990 and content_revision = 'deployment_11' and objective_id = 1");
+            Assert.IsFalse(context.Database.HasPendingModelChanges());
+        }
+
+        [TestMethod]
         public void BootcampMissionContentSeedInsertThrowsWhenGenericRowsDoNotMatchEntityColumns()
         {
             var builder = new MigrationBuilder("Microsoft.EntityFrameworkCore.Sqlite");

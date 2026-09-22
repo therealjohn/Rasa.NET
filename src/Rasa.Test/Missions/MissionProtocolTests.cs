@@ -53,6 +53,13 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(55UL, assignment.NpcEntityId);
             Assert.AreEqual(321U, assignment.MissionId);
 
+            var radio = Decode<AssignRadioMissionPacket>(WritePayload(writer =>
+            {
+                writer.WriteTuple(1);
+                writer.WriteUInt(1990);
+            }));
+            Assert.AreEqual(1990U, radio.MissionId);
+
             var objective = Decode<CompleteNPCObjectivePacket>(WritePayload(writer =>
             {
                 writer.WriteTuple(4);
@@ -101,6 +108,8 @@ namespace Rasa.Test.Missions
             }
 
             AssertWrongTuple<AssignNPCMissionPacket>(1);
+            AssertWrongTuple<AssignRadioMissionPacket>(0);
+            AssertWrongTuple<AssignRadioMissionPacket>(2);
             AssertWrongTuple<CompleteNPCObjectivePacket>(3);
             AssertWrongTuple<CompleteNPCMissionPacket>(3);
             AssertWrongTuple<RewardNPCMissionPacket>(3);
@@ -114,6 +123,7 @@ namespace Rasa.Test.Missions
             {
                 (new AbandonMissionPacket(), GameOpcode.AbandonMission, 392, typeof(AbandonMissionPacket)),
                 (new AssignNPCMissionPacket(), GameOpcode.AssignNPCMission, 407, typeof(AssignNPCMissionPacket)),
+                (new AssignRadioMissionPacket(), GameOpcode.AssignRadioMission, 408, typeof(AssignRadioMissionPacket)),
                 (new CompleteNPCMissionPacket(), GameOpcode.CompleteNPCMission, 430, typeof(CompleteNPCMissionPacket)),
                 (new CompleteNPCObjectivePacket(), GameOpcode.CompleteNPCObjective, 431,
                     typeof(CompleteNPCObjectivePacket)),
@@ -127,6 +137,38 @@ namespace Rasa.Test.Missions
                 Assert.AreEqual(value, (int)opcode);
                 Assert.AreEqual(type, router.GetPacketType(opcode));
             }
+        }
+
+        [TestMethod]
+        public void RadioMissionOfferUsesTheSixFieldConversationContractInsteadOfMissionStatusInfo()
+        {
+            var info = new MissionInfo
+            {
+                MissionConstantData = new MissionConstantData { Level = 1, GroupType = 2 }
+            };
+            info.ItemRequired.Add(3147);
+            var offer = new DispenseRadioMissionPacket(1990, info, true);
+            var expected = WritePayload(writer =>
+            {
+                writer.WriteTuple(3);
+                writer.WriteUInt(1990);
+                writer.WriteTuple(6);
+                writer.WriteUInt(1);
+                writer.WriteTuple(2);
+                writer.WriteTuple(2);
+                writer.WriteList(0);
+                writer.WriteList(0);
+                writer.WriteList(0);
+                writer.WriteNoneStruct();
+                writer.WriteList(1);
+                writer.WriteInt(3147);
+                writer.WriteList(0);
+                writer.WriteUInt(2);
+                writer.WriteTrueStruct();
+            });
+            Assert.AreEqual(GameOpcode.DispenseRadioMission, offer.Opcode);
+            Assert.AreEqual(444, (int)offer.Opcode);
+            CollectionAssert.AreEqual(expected, MissionTestContext.Encode(offer));
         }
 
         [TestMethod]

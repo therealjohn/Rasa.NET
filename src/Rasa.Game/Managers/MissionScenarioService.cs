@@ -805,6 +805,12 @@ namespace Rasa.Managers
                 !step.SkillLevel.HasValue)
                 throw new GameplayRejectionException("Scenario skill grant is incomplete.");
 
+            var learned = context.UnitOfWork.CharacterSkills.GetCharacterSkills(context.Client.Player.Id)
+                .SingleOrDefault(skill => skill.SkillId == step.SkillId.Value);
+            // A training reminder must not overwrite a learned rank or rearranged drawer slots.
+            if (learned != null && learned.SkillLevel >= step.SkillLevel.Value)
+                return;
+
             context.UnitOfWork.CharacterSkills.AddOrUpdate(
                 context.Client.Player.Id,
                 step.SkillId.Value,

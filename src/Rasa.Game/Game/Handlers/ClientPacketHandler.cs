@@ -57,6 +57,13 @@
             NpcManager.Instance.AssignNPCMission(Client, packet);
         }
 
+        [PacketHandler(GameOpcode.AssignRadioMission)]
+        private void AssignRadioMission(AssignRadioMissionPacket packet)
+        {
+            MissionManager.Instance.TryAcceptRadioMission(
+                Client, packet.MissionId, CharacterManager.CanAcceptStartingExperienceMission);
+        }
+
         [PacketHandler(GameOpcode.AutoFireKeepAlive)]
         private void AutoFireKeepAlive(AutoFireKeepAlivePacket packet)
         {

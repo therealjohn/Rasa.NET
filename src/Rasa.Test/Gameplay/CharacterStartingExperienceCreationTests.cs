@@ -95,7 +95,7 @@ namespace Rasa.Test.Gameplay
         }
 
         [TestMethod]
-        public void CreatingCharacterDoesNotGrantNormalStartInventoryItems()
+        public void CreatingCharacterPersistsStarterPistolAndOneThousandRounds()
         {
             using var context = new CharacterCreationContext();
             context.SeedAccount(181);
@@ -103,17 +103,180 @@ namespace Rasa.Test.Gameplay
 
             new CharacterManager(context).RequestCreateCharacterInSlot(
                 client,
-                CreatePacket(slot: 1, familyName: "Fixture", characterName: "NoGear"));
+                CreatePacket(slot: 1, familyName: "Fixture", characterName: "StarterGear"));
 
             using var verify = context.Open();
             var character = new GameAccountRepository(verify).Get(181).GetCharacterBySlot(1);
             Assert.IsNotNull(character);
-            Assert.AreEqual(
-                0,
-                verify.CharacterInventoryEntries.Count(entry =>
-                    entry.CharacterId == character.Id &&
-                    entry.InventoryType == (uint)InventoryType.Personal));
+            var inventory = verify.CharacterInventoryEntries
+                .Where(entry => entry.CharacterId == character.Id)
+                .ToArray();
+            Assert.HasCount(2, inventory);
+            var items = new ItemRepository(verify);
+            var pistol = inventory.Single(entry => items.GetItem(entry.ItemId).ItemTemplateId == 17131);
+            Assert.AreEqual((uint)InventoryType.WeaponDrawerInventory, pistol.InventoryType);
+            Assert.AreEqual(0U, pistol.SlotId);
+            Assert.AreEqual(1U, items.GetItem(pistol.ItemId).StackSize);
+            var ammunition = inventory.Single(entry => items.GetItem(entry.ItemId).ItemTemplateId == 28);
+            Assert.AreEqual((uint)InventoryType.Personal, ammunition.InventoryType);
+            Assert.AreEqual((uint)InventoryOffset.CategoryConsumable, ammunition.SlotId);
+            Assert.AreEqual(1000U, items.GetItem(ammunition.ItemId).StackSize);
             Assert.IsNotNull(new CharacterLockboxRepository(verify).Get(181));
+        }
+
+        [TestMethod]
+        public void CreatingCharacterSpendsFiveRecruitSkillPointsAndPersistsLightningAndSprintSlots()
+        {
+            using var context = new CharacterCreationContext();
+            context.SeedAccount(182);
+            var client = context.CreateClient(182);
+            new CharacterManager(context).RequestCreateCharacterInSlot(
+                client,
+                CreatePacket(slot: 1, familyName: "Fixture", characterName: "StarterSkills"));
+
+            using var verify = context.Open();
+            var character = new GameAccountRepository(verify).Get(182).GetCharacterBySlot(1);
+            Assert.IsNotNull(character);
+            var maps = new MapChannelManager(context);
+            var skills = maps.GetPlayerSkills(character.Id);
+            CollectionAssert.AreEquivalent(
+                new[] { SkillId.Lightning, SkillId.Sprint, SkillId.Firearms, SkillId.HandToHand, SkillId.MotorAssistArmor },
+                skills.Keys.ToArray());
+            Assert.IsTrue(skills.Values.All(skill => skill.SkillLevel == 1));
+            Assert.AreEqual((int)ActionId.AaRecruitLightning, skills[SkillId.Lightning].AbilityId);
+            Assert.AreEqual((int)ActionId.AaRecruitSprint, skills[SkillId.Sprint].AbilityId);
+            foreach (var passive in new[] { SkillId.Firearms, SkillId.HandToHand, SkillId.MotorAssistArmor })
+                Assert.AreEqual(-1, skills[passive].AbilityId);
+
+            var abilities = maps.GetPlayerAbilities(character.Id);
+            Assert.HasCount(2, abilities);
+            Assert.AreEqual((int)ActionId.AaRecruitLightning, abilities[0].AbilityId);
+            Assert.AreEqual(1U, abilities[0].AbilityLevel);
+            Assert.AreEqual((int)ActionId.AaRecruitSprint, abilities[1].AbilityId);
+            Assert.AreEqual(1U, abilities[1].AbilityLevel);
+            Assert.AreEqual((byte)0, character.CurrentAbilitySlot);
+            client.Player = new Manifestation(character, new Dictionary<EquipmentData, AppearanceData>())
+            {
+                Skills = skills,
+                Abilities = abilities
+            };
+            var manifestations = new ManifestationManager(context);
+            Assert.AreEqual(0, manifestations.GetSkillPointsAvailable(client.Player));
+        }
+
+        [TestMethod]
+        public void CreatingCharacterStartsAtLevelOneWithTenInEachAttributeAndNoUnallocatedPoints()
+        {
+            using var context = new CharacterCreationContext();
+            context.SeedAccount(183);
+            var client = context.CreateClient(183);
+            new CharacterManager(context).RequestCreateCharacterInSlot(
+                client,
+                CreatePacket(slot: 1, familyName: "Fixture", characterName: "StarterStats"));
+
+            using var verify = context.Open();
+            var character = new GameAccountRepository(verify).Get(183).GetCharacterBySlot(1);
+            Assert.IsNotNull(character);
+            Assert.AreEqual((byte)1, character.Level);
+            Assert.AreEqual(0U, character.Experience);
+            client.Player = new Manifestation(character, new Dictionary<EquipmentData, AppearanceData>());
+            var manifestations = new ManifestationManager(context);
+            manifestations.UpdateStatsValues(client, true);
+            Assert.AreEqual(10, client.Player.Attributes[Attributes.Body].Current);
+            Assert.AreEqual(10, client.Player.Attributes[Attributes.Mind].Current);
+            Assert.AreEqual(10, client.Player.Attributes[Attributes.Spirit].Current);
+            Assert.AreEqual(0, manifestations.GetAvailableAttributePoints(client.Player));
+        }
+
+        [TestMethod]
+        public void RepeatedSelectionLoadsStoredGearAllocationsAndAbilitySlotsWithoutResettingThem()
+        {
+            using var context = new CharacterCreationContext();
+            context.SeedAccount(184);
+            var client = context.CreateClient(184);
+            new CharacterManager(context).RequestCreateCharacterInSlot(
+                client,
+                CreatePacket(slot: 1, familyName: "Fixture", characterName: "PersistentKit"));
+            uint characterId;
+            using (var change = context.Open())
+            {
+                var character = change.CharacterEntries.Single(entry => entry.AccountId == 184);
+                characterId = character.Id;
+                character.Level = 2;
+                character.Experience = 1000;
+                character.Body = character.Mind = character.Spirit = 1;
+                character.CurrentAbilitySlot = 1;
+                character.MapContextId = 1985;
+                change.CharacterStartingExperienceEntries.Single(entry =>
+                    entry.CharacterId == characterId).State = CharacterStartingExperienceState.Bootcamp;
+                var pistol = change.ItemEntries.Single(entry => entry.ItemTemplateId == 17131);
+                var location = change.CharacterInventoryEntries.Single(entry => entry.ItemId == pistol.ItemId);
+                location.InventoryType = (uint)InventoryType.Personal;
+                location.SlotId = 8;
+                change.ItemEntries.Single(entry => entry.ItemTemplateId == 28).StackSize = 731;
+                change.CharacterAbilityDrawerEntries.Single(entry =>
+                    entry.CharacterId == characterId && entry.AbilitySlot == 0).AbilityId = (int)ActionId.AaRecruitSprint;
+                change.CharacterAbilityDrawerEntries.Single(entry =>
+                    entry.CharacterId == characterId && entry.AbilitySlot == 1).AbilityId = (int)ActionId.AaRecruitLightning;
+                change.SaveChanges();
+            }
+
+            var maps = new MapChannelManager(context, privateInstances: new PrivateMapInstanceService());
+            maps.MapChannelArray.Add(1985, CreatePublicMap(1985));
+            using var scope = new MapChannelManagerScope(maps);
+            for (var login = 0; login < 2; login++)
+            {
+                var reconnect = context.CreateClient(184);
+                new CharacterManager(context).RequestSwitchToCharacterInSlot(
+                    reconnect, new RequestSwitchToCharacterInSlotPacket { SlotNum = 1 });
+                Assert.AreEqual(characterId, reconnect.Player.Id);
+                Assert.AreEqual(1, reconnect.Player.SpentBody);
+                Assert.AreEqual(1, reconnect.Player.SpentMind);
+                Assert.AreEqual(1, reconnect.Player.SpentSpirit);
+                Assert.AreEqual(1, reconnect.Player.CurrentAbilityDrawer);
+                Assert.AreEqual((int)ActionId.AaRecruitSprint, reconnect.Player.Abilities[0].AbilityId);
+                Assert.AreEqual((int)ActionId.AaRecruitLightning, reconnect.Player.Abilities[1].AbilityId);
+                Assert.HasCount(5, reconnect.Player.Skills);
+                maps.ReleaseOwnedPrivateInstances(characterId);
+            }
+
+            using var verify = context.Open();
+            Assert.AreEqual(2, verify.CharacterInventoryEntries.Count());
+            Assert.AreEqual(2, verify.ItemEntries.Count());
+            Assert.AreEqual(731U, verify.ItemEntries.Single(entry => entry.ItemTemplateId == 28).StackSize);
+            Assert.IsFalse(verify.CharacterInventoryEntries.Any(entry =>
+                entry.InventoryType == (uint)InventoryType.WeaponDrawerInventory));
+            Assert.IsTrue(verify.CharacterInventoryEntries.Any(entry =>
+                entry.InventoryType == (uint)InventoryType.Personal && entry.SlotId == 8));
+        }
+
+        [TestMethod]
+        public void MissingStarterItemRejectsCreationWithoutLeavingPartialCharacterOrLoadoutRows()
+        {
+            using var context = new CharacterCreationContext();
+            context.SeedAccount(185);
+            var client = context.CreateClient(185);
+            var classes = ItemManager.Instance.ItemTemplateItemClass;
+            var pistolClass = classes[17131];
+            classes.Remove(17131);
+            try
+            {
+                new CharacterManager(context).RequestCreateCharacterInSlot(
+                    client,
+                    CreatePacket(slot: 1, familyName: "Fixture", characterName: "MissingKit"));
+            }
+            finally
+            {
+                classes[17131] = pistolClass;
+            }
+
+            using var verify = context.Open();
+            Assert.AreEqual(0, verify.CharacterEntries.Count());
+            Assert.AreEqual(0, verify.CharacterStartingExperienceEntries.Count());
+            Assert.AreEqual(0, verify.CharacterSkillsEntries.Count());
+            Assert.AreEqual(0, verify.CharacterAbilityDrawerEntries.Count());
+            Assert.AreEqual(0, verify.CharacterInventoryEntries.Count());
+            Assert.AreEqual(0, verify.ItemEntries.Count());
         }
 
         [TestMethod]
@@ -149,6 +312,10 @@ namespace Rasa.Test.Gameplay
                 verify.CharacterStartingExperienceEntries.Count(entry => entry.CharacterId > 0 &&
                     entry.Character.AccountId == 19 &&
                     entry.Character.Slot == 1));
+            Assert.AreEqual(0, verify.CharacterSkillsEntries.Count());
+            Assert.AreEqual(0, verify.CharacterAbilityDrawerEntries.Count());
+            Assert.AreEqual(0, verify.CharacterInventoryEntries.Count());
+            Assert.AreEqual(0, verify.ItemEntries.Count());
         }
 
         [TestMethod]

@@ -479,7 +479,8 @@ namespace Rasa.Test.Missions
 
         private static void SeedFreshPendingCharacter(MissionTestContext context)
         {
-            context.SeedCharacter(FreshPendingAccountId, FreshPendingSlot, FreshPendingCharacterId);
+            context.SeedCharacter(
+                FreshPendingAccountId, FreshPendingSlot, FreshPendingCharacterId, (byte)Race.Human);
             using var unit = context.CreateChar();
             unit.CharacterStartingExperience.Add(
                 new CharacterStartingExperienceEntry(
@@ -560,6 +561,21 @@ namespace Rasa.Test.Missions
 
             internal IReadOnlyList<PythonPacket> Drain() =>
                 MissionTestContext.Drain(Client);
+
+            internal void ReconnectFromSelection()
+            {
+                var accountId = Client.AccountEntry.Id;
+                var slot = Client.AccountEntry.SelectedSlot;
+                var characterId = Client.Player.Id;
+                DetachClientFromCurrentMap(Client);
+                Maps.ReleaseOwnedPrivateInstances(characterId);
+                Client = CreateSelectionClient(Context, accountId);
+                new CharacterManager(Context, Manager).RequestSwitchToCharacterInSlot(
+                    Client,
+                    new Rasa.Packets.Game.Client.RequestSwitchToCharacterInSlotPacket { SlotNum = slot });
+                ConfigureRuntimePlayer(Client);
+                RouteMapLoaded();
+            }
 
             internal void RouteMapLoaded()
             {

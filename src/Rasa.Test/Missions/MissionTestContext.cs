@@ -403,7 +403,7 @@ namespace Rasa.Test.Missions
             return context;
         }
 
-        internal void SeedCharacter(uint accountId, byte slot, uint characterId)
+        internal void SeedCharacter(uint accountId, byte slot, uint characterId, byte race = 0)
         {
             using var context = Open();
             var account = context.GameAccountEntries.Find(accountId);
@@ -426,6 +426,7 @@ namespace Rasa.Test.Missions
                 GameAccount = account,
                 Slot = slot,
                 Name = $"Character {characterId}",
+                Race = race,
                 Scale = 1,
                 Level = 1,
                 Credit = 100,

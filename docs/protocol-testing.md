@@ -23,6 +23,7 @@ mission suites. They lock down the client-visible sequence used by the
 Deployment 11 starting experience:
 
 - reconnect/login snapshot: `MissionStatusInfoPacket`
+- unaccepted Bootcamp arrival: `MissionStatusInfoPacket -> DispenseRadioMissionPacket`
 - mission accept: `MissionGainedPacket`
 - counter progress: `UpdateObjectiveCounterPacket` before completion packets
 - objective progression: `ObjectiveCompletedPacket -> ObjectiveRevealedPacket -> ObjectiveActivatedPacket`
@@ -30,6 +31,7 @@ Deployment 11 starting experience:
 - mission success turn-in: `MissionCompleteablePacket(false) -> MissionCompletedPacket`
 - reward publication: reward deltas before `MissionRewardedPacket`
 - tutorials: `DisplayPlayerTutorialNotificationPacket -> PlayTutorialAudioPacket`
+- first Eloh announcement: `ForceConversePacket` greeting `1634`, which starts the client's native Lightning highlight
 - NPC interaction: `ConversePacket` on `RequestNPCConverse`
 - map transfer: `PreWonkavatePacket -> WonkavatePacket`
 
@@ -71,7 +73,7 @@ Feature requests use the existing server-method router:
 | --- | --- |
 | Character selection | `RequestFamilyName`, `RequestCreateCharacterInSlot`, `RequestCloneCharacterToSlot` |
 | Abilities and tray | `RequestArmAbility`, `RequestPerformAbility`, `RequestSetAbilitySlot`, `RequestSwapAbilitySlots` |
-| Missions and titles | `AssignNPCMission`, `CompleteNPCMission`, `ChangeTitle` |
+| Missions and titles | `AssignNPCMission`, `AssignRadioMission`, `CompleteNPCMission`, `ChangeTitle` |
 | Maps and travel | `MapLoaded`, `SelectWaypoint` |
 | Loot | `RequestCorpseLooting`, `RequestLootAllFromCorpse` |
 | Chat and contacts | `ChannelChat`, `ClanChat`, `PartyChat`, `RadialChat`, `Whisper`, `AddFriendByName`, `RemoveFriend` |

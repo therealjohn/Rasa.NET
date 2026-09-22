@@ -11,7 +11,9 @@ namespace Rasa.Test.Missions
 {
     using Rasa.Data;
     using Rasa.Game;
+    using Rasa.Game.Handlers;
     using Rasa.Managers;
+    using Rasa.Packets;
     using Rasa.Packets.MapChannel.Client;
     using Rasa.Packets.Mission.Server;
     using Rasa.Repositories.Char.CharacterQualification;
@@ -313,6 +315,15 @@ namespace Rasa.Test.Missions
                 harness.Maps.FindOwnedPrivateInstance(
                     BootcampRuntimeTestHarness.BootcampMapContextId,
                     harness.Client.Player.Id));
+
+            Assert.IsFalse(harness.Client.Player.Missions.ContainsKey(BootcampRuntimeTestHarness.MissionInitiation));
+            Assert.AreEqual(1, harness.Drain().OfType<DispenseRadioMissionPacket>().Count());
+            var handler = new ClientPacketHandler();
+            handler.RegisterClient(harness.Client);
+            new PacketRouter<ClientPacketHandler, GameOpcode>().RoutePacket(
+                handler,
+                new AssignRadioMissionPacket { MissionId = BootcampRuntimeTestHarness.MissionInitiation });
+            Assert.AreEqual(1, harness.Drain().OfType<MissionGainedPacket>().Count());
 
             using var verify = harness.Context.CreateChar();
             Assert.AreEqual(

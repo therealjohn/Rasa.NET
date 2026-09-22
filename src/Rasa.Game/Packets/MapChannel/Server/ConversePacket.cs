@@ -48,21 +48,7 @@ namespace Rasa.Packets.MapChannel.Server
                         foreach (var mission in dispensableMissions)
                         {
                             pw.WriteUInt(mission.Key);
-                            pw.WriteTuple(6);
-                            pw.WriteUInt(mission.Value.MissionConstantData.Level);
-                            pw.WriteStruct(mission.Value.MissionConstantData.RewardInfo);
-                            pw.WriteNoneStruct();                                       // offerVOAudioSetId (NoneStruct for no-audio)  // ToDo
-                            pw.WriteList(mission.Value.ItemRequired.Count);       // itemsRequired
-                            foreach (var item in mission.Value.ItemRequired)
-                                pw.WriteInt(item);                                      // itemClassId
-                            pw.WriteList(mission.Value.ObjectivesList.Count);  // objectives
-                            foreach (var objective in mission.Value.ObjectivesList)
-                            {
-                                pw.WriteTuple(2);
-                                pw.WriteNoneStruct();                   // ordinal      (not used by client)
-                                pw.WriteUInt(objective.ObjectiveId);     // objectiveId
-                            }
-                            pw.WriteUInt(mission.Value.MissionConstantData.GroupType);         // groupType
+                            mission.Value.WriteOffer(pw);
                         }
 
                         break;

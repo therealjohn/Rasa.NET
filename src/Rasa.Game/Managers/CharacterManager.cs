@@ -37,17 +37,19 @@ namespace Rasa.Managers
         private const string LegacyStartingExperienceRevision = "legacy";
         internal const uint BootcampPrivateMapContextId = 1985;
         internal const uint BootcampExitPadWaypointId = 60;
-        private const uint BootcampInitiationMissionId = 1990;
+        internal const uint BootcampInitiationMissionId = 1990;
         private const byte BootcampParityLevel = 4;
         private const uint BootcampSkipAmmoTemplateId = 28;
         private const uint BootcampSkipAmmoQuantity = 20;
+        private const uint StartingPistolTemplateId = 17131;
+        private const uint StartingAmmoQuantity = 1000;
         private const uint BootcampAliaWaypointId = 57;
         private const uint BootcampAliaHospitalId = 103;
         private const byte BootcampAbilitySlot = 0;
         private const double BootcampStartCoordX = 389.8046875d;
         private const double BootcampStartCoordY = 136.78515625d;
         private const double BootcampStartCoordZ = -80.6640625d;
-        private const double BootcampStartRotation = 3.11637806892395d;
+        private const double BootcampStartRotation = 3.11637806892395d - Math.PI;
         private const uint BootcampArrivalMapContextId = 1220;
         private const double BootcampArrivalCoordX = 884.11d;
         private const double BootcampArrivalCoordY = 305.8d;
@@ -620,6 +622,7 @@ namespace Rasa.Managers
                 characterEntry.Id,
                 Deployment11StartingExperienceRevision,
                 CharacterStartingExperienceState.Pending));
+            CreateStartingLoadout(unitOfWork, client.AccountEntry.Id, characterEntry.Id);
 
             if (string.IsNullOrWhiteSpace(client.AccountEntry.FamilyName) || changeFamilyName)
             {
@@ -627,6 +630,45 @@ namespace Rasa.Managers
             }
 
             return characterEntry.Id;
+        }
+
+        private void CreateStartingLoadout(ICharUnitOfWork unitOfWork, uint accountId, uint characterId)
+        {
+            var progression = new ManifestationManager(_gameUnitOfWorkFactory);
+            foreach (var skill in new[]
+                     {
+                         SkillId.Lightning, SkillId.Sprint, SkillId.Firearms,
+                         SkillId.HandToHand, SkillId.MotorAssistArmor
+                     })
+                unitOfWork.CharacterSkills.AddOrUpdate(
+                    characterId,
+                    (uint)skill,
+                    progression.SkillIdx2AbilityId[progression.GetSkillIndexById((int)skill)],
+                    1);
+
+            unitOfWork.CharacterAbilityDrawers.AddOrUpdate(
+                characterId, 0, (int)ActionId.AaRecruitLightning, 1);
+            unitOfWork.CharacterAbilityDrawers.AddOrUpdate(
+                characterId, 1, (int)ActionId.AaRecruitSprint, 1);
+
+            foreach (var (templateId, quantity, inventoryType, slot) in new[]
+                     {
+                         (StartingPistolTemplateId, 1U, InventoryType.WeaponDrawerInventory, 0U),
+                         (BootcampSkipAmmoTemplateId, StartingAmmoQuantity, InventoryType.Personal,
+                             (uint)InventoryOffset.CategoryConsumable)
+                     })
+            {
+                if (!ItemManager.Instance.ItemTemplateItemClass.TryGetValue(templateId, out var classId) ||
+                    !EntityClassManager.Instance.LoadedEntityClasses.TryGetValue(classId, out var entityClass) ||
+                    entityClass.ItemClassInfo == null ||
+                    entityClass.ItemClassInfo.StackSize < quantity)
+                    throw new GameplayRejectionException($"Starting item template {templateId} is unavailable or cannot hold {quantity} items.");
+
+                var item = new Item(templateId, quantity, entityClass.ItemClassInfo.MaxHitPoints, 2139062144);
+                var itemId = unitOfWork.Items.CreateItem(item);
+                unitOfWork.CharacterInventories.AddInvItem(
+                    accountId, characterId, (uint)inventoryType, slot, itemId);
+            }
         }
 
         private bool TryPersistCharacterCreation(
@@ -647,7 +689,7 @@ namespace Rasa.Managers
                 characterId = createdCharacterId.Value;
                 return true;
             }
-            catch (Exception error) when (error is DbUpdateException or DbException)
+            catch (Exception error) when (error is GameplayRejectionException or DbUpdateException or DbException)
             {
                 Logger.WriteLog(LogType.Error, $"Character creation failed: {error}");
                 SendCharacterCreateFailed(client, CreateCharacterResult.TechnicalDifficulty);
@@ -835,12 +877,10 @@ namespace Rasa.Managers
                                 BootcampStartCoordZ,
                                 BootcampStartRotation,
                                 BootcampPrivateMapContextId);
-                            EnsureMissionActivated(
-                                unitOfWork,
-                                character.Id,
-                                BootcampInitiationMissionId);
-                            client.PendingMissionAnnouncements.Add(BootcampInitiationMissionId);
-                            Logger.WriteLog(LogType.Debug, $"[MissionDiag] character {character.Id}: Pending->Bootcamp transition fired; queued mission {BootcampInitiationMissionId} for announcement.");
+                            if ((_missionManager ?? MissionManager.Instance).LoadedMissions
+                                    .GetValueOrDefault(BootcampInitiationMissionId)?.IsOperational != true)
+                                throw new GameplayRejectionException(
+                                    $"Bootcamp mission {BootcampInitiationMissionId} is unavailable.");
                         }
 
                         startingExperience =
@@ -889,6 +929,30 @@ namespace Rasa.Managers
 
             MapChannelManager.Instance.ReleaseOwnedPrivateInstances(characterId);
         }
+
+        internal void OfferStartingExperienceMission(Client client)
+        {
+            if (client?.Player == null ||
+                !IsOwnedBootcampPlayer(client.Player) ||
+                client.Player.Missions.ContainsKey(BootcampInitiationMissionId))
+                return;
+
+            using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+            if (CanAcceptStartingExperienceMission(client.Player, BootcampInitiationMissionId, unitOfWork))
+                (_missionManager ?? MissionManager.Instance).OfferRadioMission(client, BootcampInitiationMissionId);
+        }
+
+        internal static bool CanAcceptStartingExperienceMission(
+            Manifestation player, uint missionId, ICharUnitOfWork unitOfWork) =>
+            missionId == BootcampInitiationMissionId &&
+            IsOwnedBootcampPlayer(player) &&
+            unitOfWork.CharacterStartingExperience.Get(player.Id)?.State == CharacterStartingExperienceState.Bootcamp;
+
+        private static bool IsOwnedBootcampPlayer(Manifestation player) =>
+            player?.MapContextId == BootcampPrivateMapContextId &&
+            player.MapChannel?.MapInfo.MapContextId == BootcampPrivateMapContextId &&
+            player.MapChannel.IsPrivateInstance &&
+            player.MapChannel.OwnerCharacterId == player.Id;
 
         private static MapChannel ResolveReconnectMapChannel(
             CharacterEntry character,
@@ -1154,61 +1218,6 @@ namespace Rasa.Managers
                 BootcampArrivalCoordZ,
                 BootcampArrivalRotation,
                 BootcampArrivalMapContextId);
-        }
-
-        private void EnsureMissionActivated(
-            ICharUnitOfWork unitOfWork,
-            uint characterId,
-            uint missionId)
-        {
-            if (unitOfWork.CharacterMissions.GetByCharacterAndMission(
-                    characterId,
-                    missionId) != null)
-                return;
-
-            var definition = (_missionManager ?? MissionManager.Instance).LoadedMissions
-                .GetValueOrDefault(missionId);
-            if (definition?.IsOperational != true)
-                throw new GameplayRejectionException(
-                    $"Bootcamp mission {missionId} is unavailable.");
-
-            var completeable = definition.Objectives.Values
-                .Where(objective => objective.IsRequired.Value)
-                .All(objective => objective.InitialState.Value == MissionObjectiveState.Completed);
-            unitOfWork.CharacterMissions.Add(
-                new CharacterMissionEntry(
-                    characterId,
-                    missionId,
-                    (uint)MissionState.Active)
-                {
-                    Completeable = completeable
-                });
-            unitOfWork.CharacterMissionProgress.AddObjectives(
-                definition.Objectives.Values.Select(objective =>
-                {
-                    var entry = new CharacterMissionObjectiveEntry(
-                        characterId,
-                        missionId,
-                        objective.ObjectiveId,
-                        (byte)objective.InitialState.Value);
-                    foreach (var counter in objective.Counters)
-                        entry.Counters.Add(
-                            new CharacterMissionObjectiveCounterEntry(
-                                characterId,
-                                missionId,
-                                objective.ObjectiveId,
-                                counter.Key,
-                                counter.Value.InitialValue));
-                    foreach (var counter in objective.ItemCounters)
-                        entry.ItemCounters.Add(
-                            new CharacterMissionObjectiveItemCounterEntry(
-                                characterId,
-                                missionId,
-                                objective.ObjectiveId,
-                                counter.Key,
-                                counter.Value.InitialValue));
-                    return entry;
-                }));
         }
 
         private bool HasPlayerTriggeredDepartureMission(

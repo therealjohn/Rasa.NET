@@ -20,6 +20,25 @@ namespace Rasa.Structures
         {
         }
 
+        internal void WriteOffer(PythonWriter pw)
+        {
+            pw.WriteTuple(6);
+            pw.WriteUInt(MissionConstantData.Level);
+            pw.WriteStruct(MissionConstantData.RewardInfo);
+            pw.WriteNoneStruct(); // offerVOAudioSetId
+            pw.WriteList(ItemRequired.Count);
+            foreach (var item in ItemRequired)
+                pw.WriteInt(item);
+            pw.WriteList(ObjectivesList.Count);
+            foreach (var objective in ObjectivesList)
+            {
+                pw.WriteTuple(2);
+                pw.WriteNoneStruct(); // Preserve the NPC offer's unused ordinal.
+                pw.WriteUInt(objective.ObjectiveId);
+            }
+            pw.WriteUInt(MissionConstantData.GroupType);
+        }
+
         public void Write(PythonWriter pw)
         {
             pw.WriteTuple(5);                       // missionInfo = (missionStatus, bCompleteable, constantData, changeTime, objectiveList)

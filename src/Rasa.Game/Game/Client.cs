@@ -61,15 +61,6 @@ namespace Rasa.Game
         internal object SyncRoot => _clientLock;
         internal PlayerTransfer PendingTransfer { get; set; }
 
-        /// <summary>
-        /// Missions activated server-side without going through the NPC-accept flow (bootcamp's
-        /// automatic Initiation grant, so far) - set while the character is still being selected,
-        /// before Player exists to call a method on. MissionManager.PublishInitialState drains
-        /// this once the player is placed in the world and sends the MissionGainedPacket that
-        /// TryAcceptNpcMission would otherwise have sent at grant time.
-        /// </summary>
-        internal HashSet<uint> PendingMissionAnnouncements { get; } = new();
-
         private readonly ClientPacketHandler _handler;
         private readonly PacketQueue _packetQueue = new();
         private readonly bool[] _receivedSequence = new bool[256];

@@ -460,6 +460,7 @@ namespace Rasa.Managers
             ManifestationManager.Instance.ResetInactivity(client);
             InventoryManager.Instance.InitForClient(client);
             ManifestationManager.Instance.UpdateStatsValues(client, true);
+            client.Player.Attributes[Attributes.Chi].Current = 0;
 
             // register new Player
             EntityManager.Instance.RegisterEntity(client.Player.EntityId, EntityType.Character);

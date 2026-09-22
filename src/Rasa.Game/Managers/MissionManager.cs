@@ -642,8 +642,6 @@ namespace Rasa.Managers
                 client,
                 new MissionStatusInfoPacket(BuildStatusSnapshot(client.Player)),
                 "mission status snapshot");
-
-            AnnouncePendingMissionGrants(client);
         }
 
         internal void RefreshNpcConversationStatuses(Client client)
@@ -667,45 +665,30 @@ namespace Rasa.Managers
                         $"NPC {npc.EntityId} conversation status after mission progress");
         }
 
-        /// <summary>
-        /// Sends the accept popup for missions granted outside the NPC-accept flow (bootcamp's
-        /// automatic Initiation grant, so far), now that the player exists to call a method on.
-        /// TryAcceptNpcMission sends this itself at grant time; server-side grants have no client
-        /// to notify yet when they run, so CharacterManager queues the mission id on the Client
-        /// and this drains it the first time the player lands in the world.
-        /// </summary>
-        private void AnnouncePendingMissionGrants(Client client)
+        internal void OfferRadioMission(Client client, uint missionId)
         {
-            Logger.WriteLog(LogType.Debug, $"[MissionDiag] AnnouncePendingMissionGrants for character {client.Player?.Id}: {client.PendingMissionAnnouncements.Count} queued.");
-
-            if (client.PendingMissionAnnouncements.Count == 0)
+            if (!IsActivePlayer(client) ||
+                client.Player.Missions.ContainsKey(missionId))
                 return;
 
-            foreach (var missionId in client.PendingMissionAnnouncements)
+            using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+            if (unitOfWork.CharacterMissions.GetByCharacterAndMission(client.Player.Id, missionId) != null ||
+                !ArePrerequisitesSatisfied(client.Player, missionId, unitOfWork, out _))
+                return;
+
+            if (!TryGetOperationalMission(missionId, out var definition))
             {
-                if (!client.Player.Missions.TryGetValue(missionId, out var log))
-                {
-                    Logger.WriteLog(LogType.Debug, $"[MissionDiag] mission {missionId}: not present in player.Missions after hydration; skipping.");
-                    continue;
-                }
-
-                if (!_loadedMissions.TryGetValue(missionId, out var definition) ||
-                    definition?.IsOperational != true)
-                {
-                    Logger.WriteLog(LogType.Debug, $"[MissionDiag] mission {missionId}: definition missing or not operational; skipping.");
-                    continue;
-                }
-
-                Logger.WriteLog(LogType.Debug, $"[MissionDiag] mission {missionId}: sending MissionGainedPacket to entity {client.Player.EntityId}.");
-                PublishMissionPacket(
-                    client,
-                    new MissionGainedPacket(
-                        missionId,
-                        BuildPublishedMissionInfo(client.Player, definition, log)),
-                    $"mission {missionId} gained notice");
+                Logger.WriteLog(LogType.Error,
+                    $"Unable to offer radio mission {missionId} to character {client.Player.Id}: definition is not operational.");
+                return;
             }
 
-            client.PendingMissionAnnouncements.Clear();
+            var offer = definition.CreateInfo(
+                MissionState.NotAssigned, false, definition.CreateInitialObjectiveLogs());
+            if (_rewardDefinitions.TryGetValue(missionId, out var reward))
+                offer.MissionConstantData.RewardInfo = reward.CreateInfo();
+            PublishMissionPacket(client, new DispenseRadioMissionPacket(missionId, offer, true),
+                $"radio mission {missionId} offer");
         }
 
         internal bool TryGetAreaDefinition(
@@ -955,7 +938,20 @@ namespace Rasa.Managers
                 },
                 unitOfWork);
 
-        public bool TryAcceptNpcMission(Client client, ulong npcEntityId, uint missionId)
+        public bool TryAcceptNpcMission(Client client, ulong npcEntityId, uint missionId) =>
+            TryAcceptMission(client, missionId, npcEntityId);
+
+        internal bool TryAcceptRadioMission(
+            Client client,
+            uint missionId,
+            Func<Manifestation, uint, ICharUnitOfWork, bool> canAccept) =>
+            TryAcceptMission(client, missionId, null, canAccept);
+
+        private bool TryAcceptMission(
+            Client client,
+            uint missionId,
+            ulong? npcEntityId,
+            Func<Manifestation, uint, ICharUnitOfWork, bool> canAcceptRadio = null)
         {
             if (client == null)
                 return false;
@@ -966,10 +962,15 @@ namespace Rasa.Managers
                     return Reject($"Rejected mission {missionId}: character is not active in the world.");
                 if (!TryGetOperationalMission(missionId, out var definition))
                     return Reject($"Rejected mission {missionId}: definition is not operational.");
-                if (!TryGetNpcOnPlayerMap(client.Player, npcEntityId, out var npc))
-                    return Reject($"Rejected mission {missionId}: NPC entity {npcEntityId} is not in the current map instance.");
-                if (npc.Npc == null || npc.DbId != definition.MissionGiver)
-                    return Reject($"Rejected mission {missionId}: NPC {npc.DbId} is not its authoritative giver.");
+                if (npcEntityId.HasValue)
+                {
+                    if (!TryGetNpcOnPlayerMap(client.Player, npcEntityId.Value, out var npc))
+                        return Reject($"Rejected mission {missionId}: NPC entity {npcEntityId} is not in the current map instance.");
+                    if (npc.Npc == null || npc.DbId != definition.MissionGiver)
+                        return Reject($"Rejected mission {missionId}: NPC {npc.DbId} is not its authoritative giver.");
+                }
+                else if (canAcceptRadio == null)
+                    return Reject($"Rejected radio mission {missionId}: no admission policy is available.");
                 if (!ArePrerequisitesSatisfied(client.Player, missionId, out var prerequisiteFailure))
                     return Reject($"Rejected mission {missionId}: {prerequisiteFailure}");
                 if (client.Player.Missions.ContainsKey(missionId))
@@ -992,6 +993,12 @@ namespace Rasa.Managers
                     using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
                     unitOfWork.ExecuteTransaction(() =>
                     {
+                        if (!npcEntityId.HasValue &&
+                            !canAcceptRadio(client.Player, missionId, unitOfWork))
+                        {
+                            prerequisiteFailure = "the character is not eligible for this radio mission offer.";
+                            return;
+                        }
                         if (unitOfWork.CharacterMissions.Count(client.Player.Id) >= MissionLogCapacity)
                         {
                             durableLogFull = true;

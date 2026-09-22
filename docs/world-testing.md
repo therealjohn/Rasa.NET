@@ -1,7 +1,8 @@
 # World movement, travel and spawn checks
 
 The first world-reliability target is **Concordia Wilderness**, map context
-`1220` (`adv_foreas_concordia_wilderness`). It is the default new-character map.
+`1220` (`adv_foreas_concordia_wilderness`). New Deployment 11 characters enter
+private Bootcamp `1985` first; legacy and skipped characters use their saved map.
 The checked-in seed contains 218 spawn pools there: 183 have a nonzero configured
 population and 35 are empty. Empty pools are not populated with invented defaults.
 
@@ -51,6 +52,43 @@ focused. `BootcampCharacterEntryTests`, `BootcampDepartureTests`, and
 These automated suites validate server-side mission and gameplay behavior only.
 They do not drive the retail client.
 
+### New-character defaults and the arrival offer
+
+Character creation persists a pistol (template `17131`) in weapon drawer slot
+`0`, 1,000 rounds (template `28`) in the consumables inventory, and rank 1 in
+Lightning, Sprint, Firearms, Hand to Hand, and Motor Assist Armor. Lightning and
+Sprint occupy drawer slots `0` and `1` (visible positions 1 and 2). These records
+share the character-creation transaction. They are not granted again on login,
+and existing characters' equipment, allocations and drawer choices are not reset.
+
+Level-1 attributes remain 10 Body / 10 Mind / 10 Spirit, with zero unspent
+attribute or skill points. Later level-ups retain their normal point budgets.
+Login fills Health and Power but starts adrenaline empty. The first Bootcamp
+entry reverses the old spawn heading by 180 degrees; reconnect uses the saved
+heading instead of rotating again.
+
+Initiation (`1990`) is offered on arrival, not preaccepted. The client receives
+`DispenseRadioMission` and its Accept Mission button sends `AssignRadioMission`.
+Only an active character in its own private Bootcamp instance, with durable
+starting-experience state `Bootcamp`, can accept this arrival offer. The mission
+and initial objectives are committed before `MissionGained` is sent. Reconnecting
+before acceptance offers it again; reconnecting after acceptance restores progress.
+
+Apply the `BootcampLightningCue` **World** migration when deploying (SQLite
+applies pending migrations on startup; MySQL requires an explicit update). It
+changes the first Eloh greeting to `1634`, the client's Logos/Lightning cue.
+`client/ui/conversationwindow.py` selects `tutlightning_left` or
+`tutlightning_right` for that greeting. The client owns the glow animation and
+hides it when the animation ends; the server does not change the selected slot
+or create a competing timer. The second greeting is unchanged. Native acceptance
+should confirm the expected roughly five-second highlight in both UI layouts.
+
+The focused creation, acceptance, rollback, reconnect and cue checks are:
+
+```powershell
+dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~CharacterStartingExperienceCreationTests|FullyQualifiedName~BootcampCharacterEntryTests|FullyQualifiedName~BootcampInitiationTests|FullyQualifiedName~BootcampLightningCueMigration|FullyQualifiedName~MissionProtocolTests"
+```
+
 For guidance on authoring new mission content itself - conversation delivery,
 text/position sourcing, real-client verification - see the
 [mission authoring guide](mission-authoring.md).
@@ -61,6 +99,7 @@ The mission request boundary matches the local 1.16.5.0 client scripts:
 
 - `AbandonMission` (392): `(missionId,)`
 - `AssignNPCMission` (407): `(npcId, missionId)`
+- `AssignRadioMission` (408): `(missionId,)`, currently restricted to the Bootcamp arrival offer
 - `CompleteNPCMission` (430): `(npcId, missionId, selectionIdx, rating)`
 - `CompleteNPCObjective` (431): `(npcId, missionId, objectiveId, playerFlagId)`
 - `RewardNPCMission` (540): `(npcId, missionId, selectionIdx, rating)`
@@ -77,7 +116,9 @@ Objective updates use the client receiver tuple layouts for
 including separate generic and item counter dictionaries, nullable remaining
 time, and complete X/Y/Z indicator coordinates. Objective state and current
 counter values are persisted separately from immutable initial/target metadata.
-Production mission activation remains separate work.
+An arrival offer uses the six-field conversation information tuple, not the
+five-field mission-status tuple. Other radio-mission admission rules remain
+unsupported.
 
 Run the focused boundary checks with:
 

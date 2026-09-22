@@ -152,6 +152,60 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
+        public void TrainingPreservesAlreadyLearnedRecruitSkillsAndRearrangedStartingAbilities()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create();
+            var progression = new ManifestationManager(harness.Context);
+            using (var unit = harness.Context.CreateChar())
+            {
+                foreach (var skill in new[]
+                         {
+                             SkillId.Lightning, SkillId.Sprint, SkillId.Firearms,
+                             SkillId.HandToHand, SkillId.MotorAssistArmor
+                         })
+                    unit.CharacterSkills.AddOrUpdate(
+                        harness.Client.Player.Id, (uint)skill,
+                        progression.SkillIdx2AbilityId[progression.GetSkillIndexById((int)skill)], 1);
+                unit.CharacterAbilityDrawers.AddOrUpdate(
+                    harness.Client.Player.Id, 0, (int)ActionId.AaRecruitSprint, 1);
+                unit.CharacterAbilityDrawers.AddOrUpdate(
+                    harness.Client.Player.Id, 1, (int)ActionId.AaRecruitLightning, 1);
+                unit.Complete();
+            }
+            harness.Client.Player.Skills = harness.Maps.GetPlayerSkills(harness.Client.Player.Id);
+            harness.Client.Player.Abilities = harness.Maps.GetPlayerAbilities(harness.Client.Player.Id);
+            var actors = PrepareActors(harness);
+            Accept(harness, actors.McAllister);
+            CompleteObjective(harness, actors.Delessio, 4);
+            LootCrate(harness);
+            EquipBoots(harness);
+            Assert.AreEqual(-1, harness.Client.Player.Skills[SkillId.Firearms].AbilityId);
+            Assert.AreEqual(-1, harness.Client.Player.Skills[SkillId.MotorAssistArmor].AbilityId);
+            CompleteObjective(harness, actors.Delessio, 5);
+            CompleteObjective(harness, actors.Hartmann, 6);
+            EquipAndReloadRifle(harness);
+            var target = harness.BootcampMap.DynamicObjects.First(candidate => (uint)candidate.EntityClassId == 29365);
+            harness.Client.Player.Target = target.EntityId;
+            MissileManager.Instance.RequestWeaponAttack(harness.Client,
+                new RequestWeaponAttackPacket { ActionId = ActionId.WeaponAttack, ActionArgId = 133 });
+            MissileManager.Instance.DoWork(harness.BootcampMap, 1000);
+            CompleteObjective(harness, actors.Hartmann, 9);
+
+            Assert.AreEqual((int)ActionId.AaRecruitSprint, harness.Client.Player.Abilities[0].AbilityId);
+            Assert.AreEqual((int)ActionId.AaRecruitLightning, harness.Client.Player.Abilities[1].AbilityId);
+            using var verify = harness.Context.CreateChar();
+            var skills = verify.CharacterSkills.GetCharacterSkills(harness.Client.Player.Id);
+            Assert.HasCount(5, skills);
+            Assert.IsTrue(skills.All(skill => skill.SkillLevel == 1));
+            Assert.AreEqual(-1, skills.Single(skill => skill.SkillId == (uint)SkillId.Firearms).AbilityId);
+            Assert.AreEqual(-1, skills.Single(skill => skill.SkillId == (uint)SkillId.MotorAssistArmor).AbilityId);
+            var drawer = verify.CharacterAbilityDrawers.GetCharacterAbilities(harness.Client.Player.Id);
+            Assert.HasCount(2, drawer);
+            Assert.AreEqual((int)ActionId.AaRecruitSprint, drawer.Single(slot => slot.AbilitySlot == 0).AbilityId);
+            Assert.AreEqual((int)ActionId.AaRecruitLightning, drawer.Single(slot => slot.AbilitySlot == 1).AbilityId);
+        }
+
+        [TestMethod]
         public void RifleAndLightningUseTheSameStandingTargetsThroughTheFinalHandoff()
         {
             using var harness = BootcampRuntimeTestHarness.Create();
