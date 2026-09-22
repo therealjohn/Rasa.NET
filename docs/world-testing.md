@@ -473,6 +473,81 @@ are absent while tracker and NPC interactions continue to work.
 
 ## Native-client Bootcamp acceptance checklist
 
+### Capture the Flag encounter and escort
+
+Apply the paired `BootcampCaptureTheFlag` World migration before exercising
+mission `1994`. It disables the old Collector/Dissector bridge pools, adds a
+recurring battle between AFS soldiers and Thrax Infantry Initiates, and authors
+the three Forean companions. The cave-exit area and indicator `439` are unchanged.
+
+The Thrax use class `29769`, model `creature_thrax_soldier_grunt_v01.geo`, and
+client name `7674`. Two AFS soldiers and three Thrax have individual,
+terrain-checked bridge spawn points. Both factions fight through normal AI and
+missile damage and respawn 20 seconds after death. These soldiers stay in the
+bridge encounter; they are not the player's escort. Positions and combat
+balance are server reconstructions, not claimed retail measurements.
+
+The companions exist around the shooting range before the mission:
+
+| Companion | Creature | Client name | Entity class | Starting position |
+| --- | --- | --- | --- | --- |
+| Forean Guardsman Initiate | 510213 | 7874 | 7034 | (368, 120.21479, 158) |
+| Forean Shaman Initiate | 510214 | 7890 | 7035 | (372, 119.956856, 158) |
+| Forean Archer Initiate | 510215 | 7986 | 7036 | (374, 119.74777, 164) |
+
+Accepting Capture the Flag makes these same actors follow the character.
+`UpdateEscortStatus` (`684`) drives the client's `OVERHEAD_ESCORT` effect
+(`vfx_overhead_escort`) and escort minimap markers. This does not re-enable the
+gold 3D objective indicators. Marker state is included when an escort becomes
+visible again. Reconnect restores surviving companions near the character's
+saved position; deaths remain durable, and losing a companion does not fail the
+mission. Only the owning escort's kill can advance the player's objective.
+
+The existing cave-exit trigger starts Tizzik's encounter. Tizzik G is the
+mission's boss (the client creature-name table spells his name "Tizzik Gi").
+He now uses normal combat actions. His defeat retains the existing seven-second
+Youngblood arrival delay. Scenario objective activation refreshes NPC
+conversation availability after the actors and objective state converge, so
+Youngblood is speakable without reconnecting. After the turn-in he remains at
+the reclaimed base across reconnects and offers Calling for Reinforcements.
+The separate completion/reward request behavior is unchanged.
+
+```powershell
+dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~BootcampCaptureTheFlag|FullyQualifiedName~CaptureTheFlagMigration"
+```
+
+#### Pending navigation repair on the game-asset machine
+
+The checked-in `navmesh\adv_bootcamp.nav` does not provide a complete route from
+the cave exit `(279.05, 120.5, 66.07)` to Youngblood at
+`(93.2, 109.64925, 137.5)`. Real escort AI follows the partial route and stops
+near `(182.84, 108.35, 83.18)`. Following from the shooting range to the cave
+exit works. The supplied Downloads copy of `adv_bootcamp.nav` has the same
+SHA-256 as the repository copy and does not repair the route.
+
+`ForeanEscortsCanFollowFromTheCaveExitToTheReclaimedBase` reproduces the remaining
+failure. It is explicitly ignored until this repair is made; the rest of the
+encounter coverage must not be mistaken for a complete walking escort run.
+No teleport, unchecked straight-line route, or guessed terrain connection is
+used as a workaround.
+
+On the machine with the full game installation, diagnose the partial path with:
+
+```powershell
+dotnet run --project src\Rasa.NavMesh\Rasa.NavMesh.csproj --configuration Release -- --path navmesh\adv_bootcamp.nav 279.05 120.5 66.07 93.2 109.64925 137.5
+```
+
+The command currently returns a partial path and exit code `1`. The rebuild
+needs both `data\maps\adv_bootcamp` and the original `data\mesh*.glm` archives.
+Map and terrain files alone omit the cave and bridge collision meshes.
+Use `Rasa.NavMesh` to build only `adv_bootcamp` into a temporary output
+directory, inspect the geometry and navigation boundary, and correct the
+actual cause before replacing the checked-in mesh. Do not move area/indicator
+`439`, move the base NPCs to bypass the gap, or globally raise climb limits
+without checking the resulting paths against collision geometry. Remove the
+test's `Ignore` only when the real escort route passes, then verify the complete
+walk, boss fight, and Youngblood handoff in the native client.
+
 The repository does not contain a native-client automation harness. Use this
 manual script when validating Bootcamp in the retail `1.16.5.0` client.
 

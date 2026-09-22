@@ -62,9 +62,9 @@ namespace Rasa.Test.Missions
         private const uint FreshPendingCharacterId = 2;
         private const byte FreshPendingSlot = 1;
 
-        internal static Harness Create()
+        internal static Harness Create(bool useWorldContent = false)
         {
-            var bootstrap = CreateBootstrap();
+            var bootstrap = CreateBootstrap(useWorldContent);
             ConfigureRuntimePlayer(bootstrap.Context.Client);
             var bootcampMap = bootstrap.Maps.GetOrCreatePrivateInstance(
                 BootcampMapContextId,
@@ -79,12 +79,13 @@ namespace Rasa.Test.Missions
                 bootstrap.Singletons,
                 () => bootstrap.Clock.UtcNow,
                 value => bootstrap.Clock.UtcNow = value,
-                bootstrap.Context.Client);
+                bootstrap.Context.Client,
+                useWorldContent);
         }
 
-        internal static Harness CreateFromPendingSelection()
+        internal static Harness CreateFromPendingSelection(bool useWorldContent = false)
         {
-            var bootstrap = CreateBootstrap();
+            var bootstrap = CreateBootstrap(useWorldContent);
             SeedFreshPendingCharacter(bootstrap.Context);
             var client = CreateSelectionClient(bootstrap.Context, FreshPendingAccountId);
 
@@ -108,7 +109,8 @@ namespace Rasa.Test.Missions
                 bootstrap.Singletons,
                 () => bootstrap.Clock.UtcNow,
                 value => bootstrap.Clock.UtcNow = value,
-                client);
+                client,
+                useWorldContent);
         }
 
         internal static void AssertObjectiveStates(
@@ -344,7 +346,7 @@ namespace Rasa.Test.Missions
             client.State = RasaGame::Rasa.Data.ClientState.Ingame;
         }
 
-        private static Bootstrap CreateBootstrap()
+        private static Bootstrap CreateBootstrap(bool useWorldContent)
         {
             var databaseDirectory = Path.Combine(
                 AppContext.BaseDirectory,
@@ -373,7 +375,8 @@ namespace Rasa.Test.Missions
                          CorporalVanValkenbergCreatureId,
                          TizzikGiCreatureId,
                          PracticeDummyCreatureId,
-                         LightningDummyCreatureId
+                         LightningDummyCreatureId,
+                         510213U, 510214U, 510215U
                      })
             {
                 creatures.LoadedCreatures[creatureId] = new Creature
@@ -465,6 +468,8 @@ namespace Rasa.Test.Missions
                 auction,
                 social,
                 factory);
+            if (useWorldContent)
+                LoadBootcampWorldContent(worldContext, creatures, manager, maps);
             objects.InitTeleporters();
 
             return new Bootstrap(
@@ -475,6 +480,76 @@ namespace Rasa.Test.Missions
                 maps,
                 singletons,
                 clock);
+        }
+
+        private static void LoadBootcampWorldContent(
+            SqliteWorldContext world, CreatureManager creatures, MissionManager missions, MapChannelManager maps)
+        {
+            var staticSpawns = world.SpawnPoolEntries.AsNoTracking()
+                .Where(pool => pool.MapContextId == BootcampMapContextId).ToArray();
+            var ids = staticSpawns.SelectMany(pool => new[]
+                {
+                    pool.Creature1Id, pool.Creature2Id, pool.Creature3Id,
+                    pool.Creature4Id, pool.Creature5Id, pool.Creature6Id
+                })
+                .Concat(world.MissionSpawnEntries.AsNoTracking()
+                    .Where(spawn => spawn.MissionId == 1994).Select(spawn => spawn.CreatureId))
+                .Where(id => id != 0).Distinct().ToArray();
+            var actions = world.Set<CreatureActionEntry>().AsNoTracking().ToDictionary(action => action.Id);
+            foreach (var entry in world.Set<CreatureEntry>().AsNoTracking().Where(entry => ids.Contains(entry.Id)))
+            {
+                var classEntry = world.Set<EntityClassEntry>().AsNoTracking().Single(row => row.Id == entry.ClassId);
+                var augmentations = classEntry.AugList.Split(',')
+                    .Select(value => (AugmentationType)uint.Parse(value)).ToList();
+                EntityClassManager.Instance.LoadedEntityClasses[(EntityClasses)entry.ClassId] =
+                    new EntityClass(entry.ClassId, classEntry.ClassName, classEntry.MeshId,
+                        classEntry.ClassCollisionRole, augmentations, classEntry.TargetFlag != 0)
+                    {
+                        CreatureFlags = world.Set<CreatureClassFlagEntry>().AsNoTracking()
+                            .Where(flag => flag.ClassId == entry.ClassId)
+                            .Select(flag => (CreatureFlag)flag.FlagId).ToList()
+                    };
+                var creature = new Creature(entry)
+                {
+                    Npc = augmentations.Contains(AugmentationType.NPC)
+                        ? new Npc
+                        {
+                            NpcPackageId = world.Set<NpcPackageEntry>().AsNoTracking()
+                                .Where(package => package.Id == entry.Id)
+                                .Select(package => package.PackageId).SingleOrDefault(),
+                            NpcMissionIds = missions.LoadedMissions.Values
+                                .Where(mission => mission.MissionGiver == entry.Id || mission.MissionReciver == entry.Id)
+                                .Select(mission => mission.MissionId).ToList()
+                        }
+                        : null,
+                    AppearanceData = world.Set<CreatureAppearanceEntry>().AsNoTracking()
+                        .Where(appearance => appearance.Id == entry.Id)
+                        .ToDictionary(appearance => (EquipmentData)appearance.SlotId,
+                            appearance => new AppearanceData
+                            {
+                                SlotId = (EquipmentData)appearance.SlotId,
+                                Class = appearance.ClassId,
+                                Color = new Color(appearance.Color),
+                                Hue2 = new Color(2139062144)
+                            })
+                };
+                foreach (var actionId in new[]
+                         {
+                             entry.Action1, entry.Action2, entry.Action3, entry.Action4,
+                             entry.Action5, entry.Action6, entry.Action7, entry.Action8
+                         }.Where(id => id != 0))
+                    creature.Actions.Add(new CreatureAction(actions[actionId]));
+                creatures.LoadedCreatures[entry.Id] = creature;
+            }
+
+            var root = new DirectoryInfo(AppContext.BaseDirectory);
+            while (root != null && !File.Exists(Path.Combine(root.FullName, "Rasa.NET.sln")))
+                root = root.Parent;
+            if (root == null)
+                throw new DirectoryNotFoundException("Repository root not found.");
+            maps.MapChannelArray[BootcampMapContextId].NavMesh = new NavMeshQuery(NavMeshFile.Read(
+                NavMeshFile.PathFor(Path.Combine(root.FullName, "navmesh"), "adv_bootcamp")));
+            SpawnPoolManager.Instance.SpawnPoolInit();
         }
 
         private static void SeedFreshPendingCharacter(MissionTestContext context)
@@ -523,6 +598,7 @@ namespace Rasa.Test.Missions
             private readonly Action<DateTime> _setUtcNow;
             private ManagerInstances _singletons;
             private readonly List<(uint CreatureId, uint? PackageId, Vector3 Position)> _npcs = new();
+            private readonly bool _useWorldContent;
 
             internal Harness(
                 MissionTestContext context,
@@ -533,7 +609,8 @@ namespace Rasa.Test.Missions
                 IDisposable singletons,
                 Func<DateTime> getUtcNow,
                 Action<DateTime> setUtcNow,
-                Client client)
+                Client client,
+                bool useWorldContent)
             {
                 Context = context;
                 WorldContext = worldContext;
@@ -544,6 +621,7 @@ namespace Rasa.Test.Missions
                 _singletons = (ManagerInstances)singletons;
                 _getUtcNow = getUtcNow;
                 _setUtcNow = setUtcNow;
+                _useWorldContent = useWorldContent;
             }
 
             internal MissionTestContext Context { get; }
@@ -689,7 +767,8 @@ namespace Rasa.Test.Missions
                              CorporalVanValkenbergCreatureId,
                              TizzikGiCreatureId,
                              PracticeDummyCreatureId,
-                             LightningDummyCreatureId
+                             LightningDummyCreatureId,
+                             510213U, 510214U, 510215U
                          })
                 {
                     creatures.LoadedCreatures[creatureId] = new Creature
@@ -781,6 +860,8 @@ namespace Rasa.Test.Missions
                     auction,
                     social,
                     factory);
+                if (_useWorldContent)
+                    LoadBootcampWorldContent(WorldContext, creatures, manager, maps);
                 objects.InitTeleporters();
                 Manager = manager;
                 Maps = maps;
@@ -1173,6 +1254,7 @@ namespace Rasa.Test.Missions
             private readonly object _previousItems;
             private readonly object _previousLoot;
             private readonly object _previousSpawns;
+            private readonly Dictionary<EntityClasses, EntityClass> _previousClasses;
 
             internal ManagerInstances(
                 MapChannelManager maps,
@@ -1198,6 +1280,8 @@ namespace Rasa.Test.Missions
                 _previousItems = _itemsField.GetValue(null);
                 _previousLoot = _lootField.GetValue(null);
                 _previousSpawns = _spawnsField.GetValue(null);
+                _previousClasses = new Dictionary<EntityClasses, EntityClass>(
+                    EntityClassManager.Instance.LoadedEntityClasses);
                 _mapsField.SetValue(null, maps);
                 _objectsField.SetValue(null, objects);
                 _creaturesField.SetValue(null, creatures);
@@ -1234,6 +1318,10 @@ namespace Rasa.Test.Missions
                 _itemsField.SetValue(null, _previousItems);
                 _lootField.SetValue(null, _previousLoot);
                 _spawnsField.SetValue(null, _previousSpawns);
+                var classes = EntityClassManager.Instance.LoadedEntityClasses;
+                classes.Clear();
+                foreach (var entry in _previousClasses)
+                    classes.Add(entry.Key, entry.Value);
             }
         }
     }

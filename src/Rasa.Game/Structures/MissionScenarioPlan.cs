@@ -85,6 +85,7 @@ namespace Rasa.Structures
                 publication();
             foreach (var action in _postCommit)
                 action();
+            missionManager.RefreshNpcConversationStatuses(client);
         }
 
         public void Dispose()

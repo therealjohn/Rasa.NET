@@ -61,7 +61,8 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(
                 before.Experience + PromotionRewardExperience,
                 harness.Context.ReadRewardTotals().Experience);
-            Assert.AreEqual(0, CountScenarioCreatures(harness.BootcampMap, "mission:1994"));
+            Assert.AreEqual(3, CountScenarioCreatures(harness.BootcampMap, "mission:1994", "spawn:1"));
+            Assert.AreEqual(0, CountScenarioCreatures(harness.BootcampMap, "mission:1994", "spawn:2"));
 
             var packets = harness.Context.Drain();
             Assert.AreEqual(0, packets.OfType<CharacterClassPacket>().Count());
@@ -98,14 +99,16 @@ namespace Rasa.Test.Missions
                 (2U, MissionObjectiveState.Completed),
                 (1U, MissionObjectiveState.Incomplete),
                 (3U, MissionObjectiveState.Inactive));
-            Assert.AreEqual(2, CountScenarioCreatures(harness.BootcampMap, "mission:1994", "spawn:1"));
+            Assert.AreEqual(3, CountScenarioCreatures(harness.BootcampMap, "mission:1994", "spawn:1"));
             Assert.AreEqual(1, CountScenarioCreatures(harness.BootcampMap, "mission:1994", "spawn:2"));
             Assert.AreEqual(0, CountScenarioCreatures(harness.BootcampMap, "mission:1994", "spawn:3"));
 
             var foreignMap = harness.Maps.GetOrCreatePrivateInstance(
                 BootcampRuntimeTestHarness.BootcampMapContextId,
                 999);
-            Assert.AreEqual(0, CountScenarioCreatures(foreignMap, "mission:1994"));
+            Assert.AreEqual(3, CountScenarioCreatures(foreignMap, "mission:1994", "spawn:1"));
+            Assert.IsTrue(foreignMap.SpawnPools.Where(pool => pool.ScenarioMissionId == 1994)
+                .All(pool => pool.FollowOwnerCharacterId == 0));
         }
 
         [TestMethod]
@@ -168,11 +171,11 @@ namespace Rasa.Test.Missions
                 corpseMilliseconds: 1000,
                 respawnMilliseconds: 1000);
 
-            Assert.AreEqual(1, CountScenarioCreatures(harness.BootcampMap, "mission:1994", "spawn:1"));
+            Assert.AreEqual(2, CountScenarioCreatures(harness.BootcampMap, "mission:1994", "spawn:1"));
 
             harness.ReconnectFresh();
 
-            Assert.AreEqual(1, CountScenarioCreatures(harness.BootcampMap, "mission:1994", "spawn:1"));
+            Assert.AreEqual(2, CountScenarioCreatures(harness.BootcampMap, "mission:1994", "spawn:1"));
 
             var tizzik = BootcampRuntimeTestHarness.FindCreature(
                 harness.BootcampMap,
@@ -227,7 +230,7 @@ namespace Rasa.Test.Missions
             PromoteAndStartAssault(harness);
 
             harness.ReconnectFresh();
-            Assert.AreEqual(2, CountScenarioCreatures(harness.BootcampMap, "mission:1994", "spawn:1"));
+            Assert.AreEqual(3, CountScenarioCreatures(harness.BootcampMap, "mission:1994", "spawn:1"));
             Assert.AreEqual(1, CountScenarioCreatures(harness.BootcampMap, "mission:1994", "spawn:2"));
 
             var tizzik = BootcampRuntimeTestHarness.FindCreature(

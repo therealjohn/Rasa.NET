@@ -395,6 +395,8 @@ namespace Rasa.Test.Missions
             CellManager.Instance.AddToWorld(owned, hostile);
             foreach (var creature in owned.MapCellInfo.Cells.Values.SelectMany(cell => cell.CreatureList).ToArray())
                 EnsureTestCreatureAttributes(creature);
+            context.Client.Player.Attributes[Attributes.Health] =
+                new ActorAttributes(Attributes.Health, 100, 100, 100, 0, 0);
 
             BehaviorManager.Instance.MapChannelThink(owned, 3500);
 
