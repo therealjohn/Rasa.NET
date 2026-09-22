@@ -48,6 +48,14 @@ It covers fixed and selectable rewards, recovery of older unrewarded `Success`
 rows, and retries after reconnect. `Accept Mission` only starts a mission;
 `Complete Mission` claims its rewards without a second acceptance step.
 
+Calling for Reinforcements (`1995`) uses the shipped client objective IDs
+`2, 3, 1, 4`. The survivor conversation belongs to objective `2`; the
+server-only reconstruction `10` is no longer sent in mission snapshots or
+objective updates. Text IDs alone cannot localize an invented objective ID:
+the client indexes mission objectives by the mission/objective pair.
+Legacy saves are converted without restarting an active bomb deadline.
+See the [Bootcamp checks](world-testing.md) for migration and interaction coverage.
+
 ## Coverage inventory
 
 | Boundary | Automated coverage |

@@ -60,7 +60,7 @@ namespace Rasa.Test.Missions
         [TestMethod]
         public void MissingRequiredBootcampNpcPackageLogsTheExactOperatorDiagnosticAndBlocksReadyState()
         {
-            const string expected = "Mission 1995@deployment_11 objective 10 transition 1 trigger 1: " +
+            const string expected = "Mission 1995@deployment_11 objective 2 transition 2 trigger 1: " +
                                     "conversation trigger references missing npc_package.package_id 2584; " +
                                     "restore npc_package.package_id 2584 or update mission_trigger.npc_package_id to a valid package.";
 
@@ -77,8 +77,8 @@ namespace Rasa.Test.Missions
                 var diagnostic = report.Diagnostics.Single(entry =>
                     entry.Code == "missing-npc-package" &&
                     entry.MissionId == 1995 &&
-                    entry.ObjectiveId == 10 &&
-                    entry.TransitionId == 1 &&
+                    entry.ObjectiveId == 2 &&
+                    entry.TransitionId == 2 &&
                     entry.TriggerId == 1);
 
                 Assert.IsTrue(report.BlocksReadiness);

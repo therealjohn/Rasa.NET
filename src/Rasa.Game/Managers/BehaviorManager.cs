@@ -108,7 +108,7 @@ namespace Rasa.Managers
             var foundEntity_entityId = 0ul;
 
             // AFS do not attack AFS
-            var attacksPlayers = creature.Faction != Factions.AFS;
+            var attacksPlayers = !IsMissionEscort(creature) && creature.Faction != Factions.AFS;
 
             foreach (var cell in CellManager.CellsIn(mapChannel, creature.Cells))
             {
@@ -140,6 +140,10 @@ namespace Rasa.Managers
 
                 foreach (var tCreature in cell.CreatureList)
                 {
+                    if (IsMissionEscort(creature) &&
+                        !CreatureManager.IsHostileTarget(mapChannel, creature, tCreature))
+                        continue;
+
                     if (tCreature.Attributes[Attributes.Health].Current <= 0)
                         continue;
 
@@ -203,6 +207,11 @@ namespace Rasa.Managers
                 return;
             }
 
+            if (IsMissionEscort(creature) && AdvanceEscort(mapChannel, creature, delta))
+                return;
+            if (BootcampCombat.IsBaseDefender(creature) && AdvanceBaseDefender(mapChannel, creature, delta))
+                return;
+
             // calculate new cell position
             var cellX = (uint)((creature.Position.X / CellManager.CellSize) + CellManager.CellBias);
             var cellZ = (uint)((creature.Position.Z / CellManager.CellSize) + CellManager.CellBias);
@@ -217,7 +226,9 @@ namespace Rasa.Managers
                 var tCreature = tCell.CreatureList[randomCreatureIndex];
                 // Scripted actors keep their authored path and final pose.
                 if (creature != tCreature && tCreature.Attributes[Attributes.Health].Current > 0 &&
-                    tCreature.Controller.CurrentAction != BehaviorActionScriptedMove)
+                    !IsMissionEscort(creature) && !BootcampCombat.IsBaseDefender(creature) &&
+                    tCreature.Controller.CurrentAction != BehaviorActionScriptedMove &&
+                    !IsMissionEscort(tCreature) && !BootcampCombat.IsBaseDefender(tCreature))
                 {
                     var difX = creature.Position.X - tCreature.Position.X;
                     var difY = creature.Position.Y - tCreature.Position.Y;
@@ -652,9 +663,207 @@ namespace Rasa.Managers
             return creature.HomePos.Position;
         }
 
+        private static bool IsMissionEscort(Creature creature) =>
+            creature.MasterEntityId == 0 && creature.SpawnPool?.FollowOwnerCharacterId > 0;
+
+        private bool AdvanceBaseDefender(MapChannel map, Creature creature, long delta)
+        {
+            var home = creature.HomePos.Position;
+            var target = map.MapCellInfo.Cells.Values.SelectMany(cell => cell.CreatureList).Distinct()
+                .Where(candidate => BootcampCombat.IsThrax(candidate) &&
+                    CreatureManager.IsHostileTarget(map, creature, candidate) &&
+                    Vector3.Distance(candidate.Position, home) <= BootcampCombat.BaseDefenseRadius)
+                .OrderBy(candidate => Vector3.DistanceSquared(candidate.Position, creature.Position))
+                .FirstOrDefault();
+            if (target != null && Vector3.Distance(creature.Position, home) <= BootcampCombat.BaseDefenseRadius)
+            {
+                if (creature.Controller.CurrentAction != BehaviorActionFighting ||
+                    creature.Controller.ActionFighting.TargetEntityId != target.EntityId)
+                    SetActionFighting(creature, target.EntityId);
+                return false;
+            }
+
+            if (creature.Controller.CurrentAction != BehaviorActionFollow)
+            {
+                creature.Controller.CurrentAction = BehaviorActionFollow;
+                creature.Controller.ActionFighting.TargetEntityId = 0;
+                creature.Controller.ActionFollow.PathUpdateTime = 0;
+            }
+            if (Vector3.Distance(creature.Position, home) <= 0.75f)
+                StopFollowing(map, creature);
+            else
+                FollowGrounded(map, creature, home, creature.RunSpeed, delta, 0.5f);
+            return true;
+        }
+
+        private bool AdvanceEscort(MapChannel map, Creature creature, long delta)
+        {
+            var owner = CreatureManager.FindEscortOwner(map, creature);
+            if (owner == null)
+            {
+                creature.Controller.ActionFollow.OwnerAttackTarget = null;
+                creature.Controller.CurrentAction = BehaviorActionFollow;
+                creature.Controller.ActionFighting.TargetEntityId = 0;
+                StopFollowing(map, creature);
+                return true;
+            }
+
+            var destination = owner.Player.Position;
+            creature.HomePos.Position = destination;
+            var follow = creature.Controller.ActionFollow;
+            var gap = Vector3.Distance(creature.Position, destination);
+            var target = follow.OwnerAttackTarget;
+            var hadOwnerTarget = target != null;
+            var wasFighting = creature.Controller.CurrentAction == BehaviorActionFighting;
+            if (target != null &&
+                (!CreatureManager.IsHostileTarget(map, creature, target) ||
+                 gap > 20 || Vector3.Distance(target.Position, destination) > 35))
+                follow.OwnerAttackTarget = target = null;
+
+            if (!hadOwnerTarget && wasFighting && gap <= 20 &&
+                EntityManager.Instance.Creatures.TryGetValue(
+                    creature.Controller.ActionFighting.TargetEntityId, out var currentTarget) &&
+                CreatureManager.IsHostileTarget(map, creature, currentTarget) &&
+                Vector3.Distance(currentTarget.Position, destination) <= 35)
+                target = currentTarget;
+
+            if (target != null)
+            {
+                if (creature.Controller.CurrentAction != BehaviorActionFighting ||
+                    creature.Controller.ActionFighting.TargetEntityId != target.EntityId)
+                    SetActionFighting(creature, target.EntityId);
+                return false;
+            }
+
+            if (!hadOwnerTarget && !wasFighting && gap <= 20 && !follow.CatchUpRunning &&
+                creature.LastAgression >= AggroScanDelayMs &&
+                CheckForAttackableEntityInRange(map, creature, creature.AggroRange))
+                return false;
+
+            if (wasFighting)
+            {
+                creature.Controller.Path.Clear();
+                creature.Controller.PathIndex = 0;
+                follow.PathUpdateTime = 0;
+                creature.Controller.ActionFighting.TargetEntityId = 0;
+                creature.LastAgression = 0;
+            }
+            creature.Controller.CurrentAction = BehaviorActionFollow;
+            follow.FollowTargetId = owner.Player.EntityId;
+            if (gap <= 4)
+            {
+                follow.CatchUpRunning = false;
+                StopFollowing(map, creature);
+                return true;
+            }
+
+            if (gap > 10)
+                follow.CatchUpRunning = true;
+            else if (gap <= 6)
+                follow.CatchUpRunning = false;
+
+            // Player run is 6.5 m/s; the shipped Sprint ranks scale it by 120-160%.
+            // Bounded 220% catch-up beats even rank five, without copying GM speed.
+            var speed = gap > 20 ? 6.5f * 2.2f :
+                follow.CatchUpRunning ? Math.Clamp(creature.RunSpeed, 6.5f, 6.5f * 2.2f) : creature.WalkSpeed;
+            FollowGrounded(map, creature, destination, speed, delta, 4);
+            return true;
+        }
+
+        private static void StopFollowing(MapChannel map, Creature creature)
+        {
+            var wasRunning = creature.IsRunning;
+            creature.Controller.Path.Clear();
+            creature.Controller.PathIndex = 0;
+            creature.Controller.ActionFollow.PathUpdateTime = 0;
+            if (creature.IsRunning)
+            {
+                creature.IsRunning = false;
+                CellManager.Instance.CellCallMethod(map, creature, new IsRunningPacket(false));
+            }
+            var direction = new Vector2((float)creature.Rotation, 0);
+            var previous = creature.Controller.LastMovement;
+            if (!wasRunning && previous?.Velocity == 0 &&
+                previous.Position == creature.Position && previous.ViewDirection == direction)
+                return;
+            PublishMovement(creature, new Movement(creature.Position, 0, 0x08, direction));
+        }
+
+        private static void PublishMovement(Creature creature, Movement movement)
+        {
+            creature.Controller.LastMovement = movement;
+            CellManager.Instance.CellMoveObject(creature, movement);
+        }
+
+        private static void FollowGrounded(MapChannel map, Creature creature, Vector3 destination,
+            float speed, long delta, float stopDistance)
+        {
+            var controller = creature.Controller;
+            controller.ActionFollow.PathUpdateTime -= delta;
+            if (controller.ActionFollow.PathUpdateTime <= 0)
+            {
+                controller.ActionFollow.PathUpdateTime = ChasePathUpdateMs;
+                BuildPath(map, creature, destination);
+            }
+
+            var previous = creature.Position;
+            var budget = speed * delta / 1000f;
+            var approachRemaining = Math.Max(0, Vector3.Distance(previous, destination) - stopDistance);
+            var travelled = 0f;
+            while (controller.PathIndex < controller.Path.Count && budget > 0 && approachRemaining > 0)
+            {
+                var node = controller.Path[controller.PathIndex];
+                var distance = Vector3.Distance(creature.Position, node);
+                if (distance < 0.01f)
+                {
+                    controller.PathIndex++;
+                    continue;
+                }
+                var step = Math.Min(distance, Math.Min(budget, approachRemaining));
+                var next = NavMeshManager.SnapToGround(map,
+                    creature.Position + (node - creature.Position) * (step / distance));
+                var actual = Vector3.Distance(creature.Position, next);
+                for (var attempt = 0; actual > budget && attempt < 8; attempt++)
+                {
+                    step *= budget / actual * 0.999f;
+                    next = NavMeshManager.SnapToGround(map,
+                        creature.Position + (node - creature.Position) * (step / distance));
+                    actual = Vector3.Distance(creature.Position, next);
+                }
+                if (actual > budget)
+                {
+                    Logger.WriteLog(LogType.Error,
+                        $"Mission actor {creature.EntityId} cannot take a grounded step within its movement budget.");
+                    break;
+                }
+                creature.Position = next;
+                budget -= actual;
+                approachRemaining -= step;
+                travelled += actual;
+                if (step >= distance)
+                    controller.PathIndex++;
+                else
+                    break;
+            }
+            var direction = creature.Position - previous;
+            if (direction.LengthSquared() > 0.0001f)
+                creature.Rotation = Math.Atan2(-direction.X, -direction.Z);
+            var running = travelled > 0 && speed > creature.WalkSpeed;
+            if (creature.IsRunning != running)
+            {
+                creature.IsRunning = running;
+                CellManager.Instance.CellCallMethod(map, creature, new IsRunningPacket(running));
+            }
+            SynchronizeMovementCell(map, creature);
+            PublishMovement(creature,
+                new Movement(creature.Position, travelled * 1000 / delta, 0x08,
+                    new Vector2((float)creature.Rotation, 0)));
+        }
+
         /// <summary>
         /// Sets the creature's path to <paramref name="destination"/>: the navmesh corners when the
-        /// map has one and both ends are on it, otherwise the destination alone (a straight line).
+        /// map has one and both ends are on it. Mission escorts and the base defender never use
+        /// the straight-line fallback that ordinary creatures retain on maps without a navmesh.
         /// </summary>
         private static void BuildPath(MapChannel mapChannel, Creature creature, Vector3 destination)
         {
@@ -665,8 +874,11 @@ namespace Rasa.Managers
 
             if (path != null && path.Count > 0)
                 creature.Controller.Path.AddRange(path);
-            else
+            else if (!IsMissionEscort(creature) && !BootcampCombat.IsBaseDefender(creature))
                 creature.Controller.Path.Add(destination);
+            else
+                Logger.WriteLog(LogType.Error,
+                    $"Mission actor {creature.EntityId} has no navmesh route to {destination}.");
         }
 
         /// <summary>
@@ -899,6 +1111,11 @@ namespace Rasa.Managers
         public void SetActionFollow(Creature creature, ulong followTargetId)
         {
             creature.Controller.CurrentAction = BehaviorActionFollow;
+            if (creature.Controller.ActionFollow.FollowTargetId != followTargetId)
+            {
+                creature.Controller.ActionFollow.OwnerAttackTarget = null;
+                creature.Controller.ActionFollow.CatchUpRunning = false;
+            }
             creature.Controller.ActionFollow.FollowTargetId = followTargetId;
             creature.Controller.ActionFollow.HasAnchor = false;
             creature.Controller.ActionFollow.PathUpdateTime = 0;
@@ -913,6 +1130,8 @@ namespace Rasa.Managers
         public void SetActionAnchor(Creature creature, Vector3 anchor)
         {
             creature.Controller.CurrentAction = BehaviorActionFollow;
+            creature.Controller.ActionFollow.OwnerAttackTarget = null;
+            creature.Controller.ActionFollow.CatchUpRunning = false;
             creature.Controller.ActionFollow.HasAnchor = true;
             creature.Controller.ActionFollow.Anchor = anchor;
             creature.Controller.ActionFollow.PathUpdateTime = 0;
@@ -978,7 +1197,7 @@ namespace Rasa.Managers
             creature.IsRunning = false;
             move.Arrived = true;
             SynchronizeMovementCell(mapChannel, creature);
-            CellManager.Instance.CellMoveObject(creature,
+            PublishMovement(creature,
                 new Movement(creature.Position, 0, 0x08, new Vector2((float)creature.Rotation, 0)));
             CellManager.Instance.CellCallMethod(creature, new IsRunningPacket(false));
         }
@@ -1024,6 +1243,8 @@ namespace Rasa.Managers
             bool synchronizeVisibility = false)
         {
             var remaining = Math.Sqrt(difX * difX + difY * difY + difZ * difZ);
+            if (remaining < 0.0001d)
+                return 0;
             var length = 1.0d / remaining;
             difX *= length;
             difY *= length;
@@ -1056,7 +1277,7 @@ namespace Rasa.Managers
             // send movement update
             var movement = new Movement(new Vector3(creature.Position.X, creature.Position.Y, creature.Position.Z), velocity, 0x08, new Vector2(vX, 0f));
 
-            CellManager.Instance.CellMoveObject(creature, movement);
+            PublishMovement(creature, movement);
 
             return step;
         }

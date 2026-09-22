@@ -503,6 +503,13 @@ visible again. Reconnect restores surviving companions near the character's
 saved position; deaths remain durable, and losing a companion does not fail the
 mission. Only the owning escort's kill can advance the player's objective.
 
+Owned escorts enter catch-up running beyond 10 metres, return to walking within
+6 metres, and stop within 4 metres. A bounded catch-up sprint closes a larger gap
+without teleporting. They assist actual attacks against hostile creatures,
+rather than attacking anything the player selects, and return to following when
+the fight ends or the owner moves away. Their kills grant the owning player
+normal XP, loot and mission progress.
+
 The existing cave-exit trigger starts Tizzik's encounter. Tizzik G is the
 mission's boss (the client creature-name table spells his name "Tizzik Gi").
 He now uses normal combat actions. His defeat retains the existing seven-second
@@ -510,10 +517,40 @@ Youngblood arrival delay. Scenario objective activation refreshes NPC
 conversation availability after the actors and objective state converge, so
 Youngblood is speakable without reconnecting. After the turn-in he remains at
 the reclaimed base across reconnects and offers Calling for Reinforcements.
-The separate completion/reward request behavior is unchanged.
+Complete Mission grants rewards and finishes the mission in one request.
+Youngblood is an unkillable base defender, not an escort. He fights nearby
+Thrax while remaining available for conversations. His kills grant player XP
+and loot only when the player or their owned escort damaged that enemy during
+its current life; unattended base fighting grants no player rewards.
+
+The paired `BootcampCombat` World migration adds twelve packs (42 Thrax total)
+along the cave, base, missing-team and crash-site approaches. Each pack contains
+three or four level-8-13 infantry; the new pools respawn after 120 seconds.
+Tizzik is level 13. The pre-existing bridge battle keeps its 20-second respawn.
+Positions are measured against the repaired navmesh, including the underground
+cave route, rather than terrain height alone.
+
+Bootcamp Thrax (bridge infantry, route infantry and Tizzik) use a dedicated drop
+profile. Each eligible corpse contains one Thrax Skull (template `41666`, class
+`20307`) and rolls these additional drops independently:
+
+| Item | Template | Chance | Quantity |
+| --- | --- | --- | --- |
+| Standard cartridges | 28 | 55% | 12-24 |
+| Standard batteries | 56 | 30% | 8-16 |
+| Basic medpack | 44917 | 15% | 1 |
+| Thrax Medal | 41665 | 25% | 1 |
+
+Credits retain the existing 1-9 range. Items are rolled and created once, in a
+single character transaction, before presenting the corpse. The existing
+owner-only inventory claim, partial claims and retry protection still apply.
+Other creatures retain their existing drop behavior.
+Loot-bearing scenario corpses, including Tizzik, use the ordinary corpse
+lifetimes (120 seconds unclaimed, 300 seconds while open), not the one-second
+cleanup used for non-lootable scenario actors.
 
 ```powershell
-dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~BootcampCaptureTheFlag|FullyQualifiedName~CaptureTheFlagMigration"
+dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~BootcampCaptureTheFlag|FullyQualifiedName~CaptureTheFlagMigration|FullyQualifiedName~BootcampEncounterLootTests|FullyQualifiedName~BootcampCompanionCombatTests"
 ```
 
 #### Navigation repair from the cave exit to the reclaimed base
@@ -546,6 +583,17 @@ rather than the shared default in `BuildSettings`) closes that seam and
 produces a complete path. `ForeanEscortsCanFollowFromTheCaveExitToTheReclaimedBase`
 covers this route and is no longer ignored.
 
+The subsequent grounding correction retains that climb setting but uses
+0.05-metre vertical cells, one-metre terrain sampling and denser surface-height
+details (`--detail-distance 1`). The previous mesh put Youngblood's base
+0.32-0.55 metres above the source terrain despite passing a nearest-navmesh
+check. Five measured base points now differ from the source surface by less
+than 0.15 metres; `BootcampGroundingTests` also requires complete cave/bridge,
+missing-team and crash-site routes. Youngblood's authored Y is `109.2201` at
+`(93.2, 137.5)` in X/Z. These settings apply only to the regenerated Bootcamp
+asset, not the builder defaults or other maps. Native animation and feet-to-ground
+rendering still require client acceptance.
+
 To reproduce or re-diagnose on a machine with the full game installation:
 
 ```powershell
@@ -556,7 +604,7 @@ This now returns a complete path and exit code `0`. To rebuild `adv_bootcamp`
 into a temporary output directory instead of trusting the checked-in file:
 
 ```powershell
-dotnet run --project src\Rasa.NavMesh\Rasa.NavMesh.csproj --configuration Release -- --client "<Tabula Rasa install>" --out <temp dir> --map adv_bootcamp --climb 1.0
+dotnet run --project src\Rasa.NavMesh\Rasa.NavMesh.csproj --configuration Release -- --client "<Tabula Rasa install>" --out <temp dir> --map adv_bootcamp --climb 1.0 --cell-height 0.05 --terrain-step 1 --detail-distance 1
 ```
 
 Verify any future rebuild with the same `--path` query before replacing the
@@ -566,6 +614,38 @@ paths against the actual collision geometry, as was done here.
 
 The repository does not contain a native-client automation harness. Use this
 manual script when validating Bootcamp in the retail `1.16.5.0` client.
+
+Calling for Reinforcements (`1995`) exposes only client objectives `2, 3, 1, 4`.
+Entering area `435` reveals the survivor without completing objective `2`.
+Speaking to survivor package `2584` completes that objective and reveals
+Conrad's bomb interaction. Recovering the bomb starts the 600-second deadline;
+finishing the 1400 ms planting windup satisfies it before the fuse and
+reinforcement arrival. Van Valkenberg's dialogue makes the final handoff
+available through the existing departure interaction.
+
+The bomb target uses tutorial wreck class `24586`, not dropship-crate class
+`24911`. Its scenario key remains stable for reconnect compatibility. The
+crash-site destination is the user-confirmed `(-225, 101, -71)` near the damaged
+landing pad; authored actors and interactions are grounded against the current
+Bootcamp navmesh. Conrad and the wreck use their shipped usable-state contract,
+including disabled planting after the charge is placed.
+
+The bomb target is tutorial wreck class `24586` (mesh `20000024`), not dropship
+crate class `24911` or extraction landing-pad class `29771`. Planting triggers
+and interaction enable/disable steps use `24586` for both `1995` and retry
+`2005`. The client uses argument `1` for Conrad and the wreck; their initial
+usable states are TreasureDispenser closed (`200`) and Door closed (`31`).
+Scenario reconstruction replaces old crate visuals and reapplies interaction
+state after spawning, so a planted bomb does not become usable again on login.
+
+The paired `BootcampReinforcements` World and Char migrations remove the
+unsupported objective `10`. Existing saves waiting at `10` resume objective `2`
+at the survivor conversation. Saves already past that dialogue keep their later
+objectives, deadlines and scenario receipts. Runtime hydration and live
+snapshots also apply the compatibility conversion, covering content reloads.
+Unknown legacy layouts are preserved and produce an explicit compatibility
+error rather than having the mission deleted. Back up character databases
+before migration; undoing this character-data merge requires restoring a backup.
 
 ### SQLite pass
 
@@ -601,7 +681,7 @@ Bootcamp reference in a disposable database copy. Two safe examples are:
 
 - remove NPC package `2584` (the wounded survivor package), or
 - set `mission_objective_definition.client_body_text_id = 0` for mission `1995`
-  objective `10`
+  objective `2`
 
 Restart `Rasa.Game` and confirm:
 

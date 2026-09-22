@@ -518,7 +518,7 @@ namespace Rasa.Test.Missions
                 harness.Client,
                 survivor.EntityId,
                 MissionCallingForReinforcements,
-                10,
+                2,
                 1));
 
             harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
@@ -559,7 +559,7 @@ namespace Rasa.Test.Missions
                 harness.Client,
                 survivor.EntityId,
                 MissionCallingForReinforcements,
-                10,
+                2,
                 1));
             return youngblood;
         }

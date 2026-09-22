@@ -67,7 +67,7 @@ namespace Rasa.Test.Missions
                 MissionProgressEvent.Area(1995, MissingScoutAreaId)));
             Assert.AreEqual(
                 MissionObjectiveState.Incomplete,
-                harness.Context.Client.Player.Missions[1995].Objectives[10].State);
+                harness.Context.Client.Player.Missions[1995].Objectives[2].State);
             Assert.AreEqual(
                 MissionObjectiveState.Inactive,
                 harness.Context.Client.Player.Missions[1995].Objectives[3].State);
@@ -83,11 +83,11 @@ namespace Rasa.Test.Missions
                 harness.Context.Client,
                 survivor.EntityId,
                 1995,
-                10,
+                2,
                 1));
             Assert.AreEqual(
                 MissionObjectiveState.Completed,
-                harness.Context.Client.Player.Missions[1995].Objectives[10].State);
+                harness.Context.Client.Player.Missions[1995].Objectives[2].State);
             Assert.AreEqual(
                 MissionObjectiveState.Incomplete,
                 harness.Context.Client.Player.Missions[1995].Objectives[3].State);
@@ -119,7 +119,7 @@ namespace Rasa.Test.Missions
 
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Context.Client,
-                MissionProgressEvent.Interaction(24911)));
+                MissionProgressEvent.Interaction(24586)));
             Assert.AreEqual(
                 MissionObjectiveState.Inactive,
                 harness.Context.Client.Player.Missions[1995].Objectives[4].State);
@@ -240,7 +240,7 @@ namespace Rasa.Test.Missions
 
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Context.Client,
-                MissionProgressEvent.Interaction(24911)));
+                MissionProgressEvent.Interaction(24586)));
             Assert.AreEqual(
                 MissionObjectiveState.Inactive,
                 retryMission.Objectives[4].State);
@@ -318,7 +318,7 @@ namespace Rasa.Test.Missions
                 harness.Context.Client,
                 survivor.EntityId,
                 1995,
-                10,
+                2,
                 1));
         }
 
@@ -338,7 +338,7 @@ namespace Rasa.Test.Missions
         private static void PrepareBootcampScenarioClasses()
         {
             var classes = EntityClassManager.Instance.LoadedEntityClasses;
-            foreach (var entityClassId in new uint[] { 24911, 24990 })
+            foreach (var entityClassId in new uint[] { 24586, 24990 })
                 if (!classes.ContainsKey((EntityClasses)entityClassId))
                     classes.Add((EntityClasses)entityClassId, new EntityClass(
                         entityClassId,

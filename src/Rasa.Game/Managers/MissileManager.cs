@@ -113,6 +113,18 @@ namespace Rasa.Managers
             if (creature.State == CharacterState.Dead)
                 return;
 
+            if (BootcampCombat.IsBaseDefender(creature))
+            {
+                foreach (var hit in missile.Args.HitData)
+                    if (hit.EntityId == creature.EntityId)
+                    {
+                        hit.Resisted = (uint)Math.Max(0, missile.DamageA);
+                        hit.FinalAmt = 0;
+                    }
+                missile.DamageA = 0;
+                return;
+            }
+
             // Shooting something is being in a fight, not only being shot at - otherwise a player
             // who opens fire and wins never enters combat at all.
             EnterCombat(missile.Source);
@@ -126,6 +138,7 @@ namespace Rasa.Managers
 
             // decrease health (if armor is depleted)
             var healthDecrease = Math.Min(missile.DamageA - armorDecrease, creature.Attributes[Attributes.Health].Current);
+            CreatureManager.RecordCombatDamage(mapChannel, creature, missile.Source, armorDecrease + healthDecrease);
             creature.Attributes[Attributes.Health].Current -= healthDecrease;
             CellManager.Instance.CellCallMethod(mapChannel, creature, new UpdateHealthPacket(creature.Attributes[Attributes.Health], creature.EntityId));
             
@@ -381,6 +394,9 @@ namespace Rasa.Managers
             missile.ActionArgId = action.ActionArgId;
             missile.IsAbility = false;
 
+            if (targetActor is Creature attackedCreature)
+                CreatureManager.RecordOwnerAttack(mapChannel, action.Actor, attackedCreature);
+
             CellManager.Instance.CellCallMethod(mapChannel, action.Actor, new PerformWindupPacket(PerformType.ThreeArgs, missile.ActionId, missile.ActionArgId, missile.TargetEntityId));
 
             mapChannel.QueuedMissiles.Add(missile);
@@ -407,6 +423,11 @@ namespace Rasa.Managers
                     targetType = 0;
             }
             else if (missile.TargetEntityId != 0 && !IsOnMap(mapChannel, missile.TargetActor))
+                targetType = 0;
+            if (missile.Source is Creature companion &&
+                (companion.SpawnPool?.FollowOwnerCharacterId > 0 || BootcampCombat.IsBaseDefender(companion)) &&
+                missile.TargetActor is Creature enemy &&
+                !CreatureManager.IsHostileTarget(mapChannel, companion, enemy))
                 targetType = 0;
 
             switch (targetType)

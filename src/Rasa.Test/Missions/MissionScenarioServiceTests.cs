@@ -261,6 +261,8 @@ namespace Rasa.Test.Missions
         {
             using var context = MissionTestContext.WithCustomDefinitions(
                 new Dictionary<uint, Mission>());
+            context.Client.Player.Attributes[Attributes.Health] =
+                new ActorAttributes(Attributes.Health, 100, 100, 100, 0, 0);
             PrepareScenarioCreatureClass();
             var fixture = CreateEscortRuntimeFixture();
             context.Map.MapInfo = new MapInfo(1985, "bootcamp_fixture", 1556, 0);

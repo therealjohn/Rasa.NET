@@ -452,6 +452,8 @@ namespace Rasa.Managers
             IReadOnlyList<CharacterMissionEntry> rows,
             CharacterMissionProgressSnapshot progress)
         {
+            progress = BootcampReinforcementsCompatibility.NormalizeSnapshot(
+                player.Id, progress, _gameUnitOfWorkFactory, this);
             player.Missions = BuildHydration(player.Id, rows, progress).Missions;
         }
 
@@ -462,6 +464,7 @@ namespace Rasa.Managers
             HydrationResult result = null;
             unitOfWork.ExecuteTransaction(() =>
             {
+                BootcampReinforcementsCompatibility.NormalizeDurable(player.Id, unitOfWork, this);
                 result = BuildHydration(
                     player.Id,
                     unitOfWork.CharacterMissions.Get(player.Id),
@@ -471,6 +474,31 @@ namespace Rasa.Managers
             });
             player.Missions = result.Missions;
         }
+
+        private void NormalizeMissionCompatibility(Manifestation player, uint? missionId = null) =>
+            BootcampReinforcementsCompatibility.NormalizeRuntime(player, _gameUnitOfWorkFactory, this, missionId);
+
+        private bool TryNormalizeMissionCompatibility(Manifestation player, uint? missionId = null)
+        {
+            try
+            {
+                NormalizeMissionCompatibility(player, missionId);
+                return true;
+            }
+            catch (Exception error) when (GameplayRejectionException.IsExpected(error))
+            {
+                Logger.WriteLog(LogType.Error,
+                    $"Refused mission operation for character {player?.Id}: compatibility update failed: {error}");
+                return false;
+            }
+        }
+
+        internal bool TryHydrateMission(
+            uint characterId,
+            CharacterMissionEntry row,
+            CharacterMissionProgressSnapshot progress,
+            out MissionLog mission) =>
+            BuildHydration(characterId, new[] { row }, progress).Missions.TryGetValue(row.MissionId, out mission);
 
         private HydrationResult BuildHydration(
             uint characterId,
@@ -549,6 +577,7 @@ namespace Rasa.Managers
 
         public IReadOnlyDictionary<uint, MissionInfo> BuildStatusSnapshot(Manifestation player)
         {
+            NormalizeMissionCompatibility(player);
             var snapshot = new Dictionary<uint, MissionInfo>();
             foreach (var entry in player.Missions)
             {
@@ -567,6 +596,8 @@ namespace Rasa.Managers
 
         internal void PublishMissionStatus(Client client, uint missionId, string description)
         {
+            if (!TryNormalizeMissionCompatibility(client?.Player, missionId))
+                return;
             if (client?.Player == null ||
                 !client.Player.Missions.TryGetValue(missionId, out var runtimeMission) ||
                 !TryGetOperationalMission(missionId, out var definition) ||
@@ -638,6 +669,8 @@ namespace Rasa.Managers
 
         public void PublishInitialState(Client client)
         {
+            if (!TryNormalizeMissionCompatibility(client?.Player))
+                return;
             PublishMissionPacket(
                 client,
                 new MissionStatusInfoPacket(BuildStatusSnapshot(client.Player)),
@@ -1381,6 +1414,8 @@ namespace Rasa.Managers
             {
                 if (!IsActivePlayer(client))
                     return Reject($"Rejected mission {missionId} objective completion: character is not active in the world.");
+                if (!TryNormalizeMissionCompatibility(client.Player, missionId))
+                    return false;
                 if (!TryGetOperationalMission(missionId, out var definition) ||
                     !definition.Objectives.TryGetValue(objectiveId, out var objectiveDefinition))
                     return Reject($"Rejected mission {missionId} objective {objectiveId}: definition is unavailable.");
@@ -2169,13 +2204,16 @@ namespace Rasa.Managers
             lock (client.SyncRoot)
             {
                 if (!IsActivePlayer(client) ||
-                    client.AccountEntry == null ||
-                    !HasProgressCandidate(client, progress))
+                    client.AccountEntry == null)
                     return false;
 
                 var plan = MissionProgressPublicationPlan.Empty;
                 try
                 {
+                    BootcampReinforcementsCompatibility.NormalizeProgress(
+                        client.Player, _gameUnitOfWorkFactory, this, progress);
+                    if (!HasProgressCandidate(client, progress))
+                        return false;
                     using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
                     unitOfWork.ExecuteTransaction(() =>
                         plan = PlanProgress(
@@ -2783,7 +2821,7 @@ namespace Rasa.Managers
                 activatedSpawnGroups);
         }
 
-        private static bool IsPublishedState(MissionState state) =>
+        internal static bool IsPublishedState(MissionState state) =>
             state == MissionState.Active ||
             state == MissionState.Success ||
             state == MissionState.Failed ||
@@ -2976,6 +3014,8 @@ namespace Rasa.Managers
             foreach (var mission in _loadedMissions.Values)
             {
                 if (!mission.IsOperational)
+                    continue;
+                if (!TryNormalizeMissionCompatibility(player, mission.MissionId))
                     continue;
                 if (!player.Missions.TryGetValue(mission.MissionId, out var log))
                 {

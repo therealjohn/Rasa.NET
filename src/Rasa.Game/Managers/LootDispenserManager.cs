@@ -45,6 +45,7 @@ namespace Rasa.Managers
         private readonly MissionManager _missionManager;
         private readonly Func<Client, double> _distance;
         private readonly Action<Item> _beforeItemPublication;
+        private readonly Func<int, int, int> _lootRoll;
         private readonly object _retirementSyncRoot = new object();
         private readonly Dictionary<ulong, PendingRetirement> _pendingRetirements = new();
 
@@ -86,7 +87,8 @@ namespace Rasa.Managers
             IGameUnitOfWorkFactory gameUnitOfWorkFactory,
             Func<Client, double> distance = null,
             MissionManager missionManager = null,
-            Action<Item> beforeItemPublication = null)
+            Action<Item> beforeItemPublication = null,
+            Func<int, int, int> lootRoll = null)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
             _missionManager = missionManager;
@@ -94,6 +96,7 @@ namespace Rasa.Managers
                 client.Server?.Config.GameConfig.CorpseLootDistance ??
                 Config.GameConfig.DefaultCorpseLootDistance);
             _beforeItemPublication = beforeItemPublication;
+            _lootRoll = lootRoll ?? Random.Shared.Next;
         }
 
         internal void AttachInfo(Client client, LootDispenser loot)
@@ -180,6 +183,10 @@ namespace Rasa.Managers
             Creature creature,
             long deadTime)
         {
+            if (creature.CorpseLootEntityId != 0 &&
+                mapChannel.LootDispensers.TryGetValue(creature.CorpseLootEntityId, out var loot))
+                return HasExpired(loot, creature, deadTime);
+
             if (creature?.SpawnPool?.ScenarioKey != null)
             {
                 var lifetime = Math.Max(
@@ -190,13 +197,7 @@ namespace Rasa.Managers
                 return Math.Max(deadTime, creature.Controller?.DeadTime ?? 0) >= lifetime;
             }
 
-            if (creature.CorpseLootEntityId == 0 ||
-                !mapChannel.LootDispensers.TryGetValue(
-                    creature.CorpseLootEntityId, out var loot))
-                return Math.Max(deadTime, creature.Controller?.DeadTime ?? 0) >=
-                       EmptyCorpseMs;
-
-            return HasExpired(loot, creature, deadTime);
+            return Math.Max(deadTime, creature.Controller?.DeadTime ?? 0) >= EmptyCorpseMs;
         }
 
         internal LootDispenser Create(Client killer, Creature creature)
@@ -234,6 +235,9 @@ namespace Rasa.Managers
 
         private LootDispenser CreateLoot(Client killer, LootDispenser loot)
         {
+            if (BootcampCombat.IsThrax(loot.Corpse))
+                return CreateThraxLoot(killer, loot);
+
             int giveLoot;
 
             lock (Roll)
@@ -256,6 +260,52 @@ namespace Rasa.Managers
                     loot.LootItems.Add(new LootItem(item, killer.Player.EntityId, 0));
             }
 
+            return loot;
+        }
+
+        private LootDispenser CreateThraxLoot(Client owner, LootDispenser loot)
+        {
+            var staged = new List<Item>();
+            var committed = false;
+            try
+            {
+                using var unit = _gameUnitOfWorkFactory.CreateChar();
+                unit.ExecuteTransaction(() =>
+                {
+                    foreach (var drop in BootcampThraxLoot.Roll(_lootRoll))
+                    {
+                        var template = ItemManager.Instance.GetItemTemplateById(drop.TemplateId);
+                        var itemClass = template == null ? null :
+                            EntityClassManager.Instance.GetClassInfo(template.Class)?.ItemClassInfo;
+                        if (itemClass == null || drop.Quantity > itemClass.StackSize)
+                            throw new GameplayRejectionException($"Invalid Bootcamp Thrax loot template {drop.TemplateId}.");
+                        var item = ItemManager.StageItem(template, drop.Quantity, string.Empty);
+                        staged.Add(item);
+                        item.Id = unit.Items.CreateItem(item);
+                        if (item.Id == 0)
+                            throw new GameplayRejectionException($"Thrax loot item {drop.TemplateId} was not persisted.");
+                    }
+                });
+                committed = true;
+            }
+            finally
+            {
+                if (!committed)
+                    foreach (var item in staged)
+                        EntityManager.Instance.FreeEntity(item.EntityId);
+            }
+
+            loot.Credits = _lootRoll(1, 10);
+            loot.LootQuality = LootQuality.Junk;
+            foreach (var item in staged)
+            {
+                EntityManager.Instance.RegisterEntity(item.EntityId, EntityType.Item);
+                EntityManager.Instance.RegisterItem(item.EntityId, item);
+                loot.LootItems.Add(new LootItem(item, owner.Player.EntityId, 0));
+                var quality = (LootQuality)item.ItemTemplate.QualityId;
+                if (quality.Rank() > loot.LootQuality.Rank())
+                    loot.LootQuality = quality;
+            }
             return loot;
         }
 

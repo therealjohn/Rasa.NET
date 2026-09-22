@@ -254,7 +254,7 @@ namespace Rasa.Test.Missions
                 new SqliteDbContextPropertyModifier())!;
         }
 
-        private static void PrepareBootcampScenarioClasses()
+        private static void PrepareBootcampScenarioClasses(SqliteWorldContext world)
         {
             var classes = EntityClassManager.Instance.LoadedEntityClasses;
             foreach (var entityClassId in new uint[] { 24911, 24990, 7862, 29877, 29365 })
@@ -266,6 +266,12 @@ namespace Rasa.Test.Missions
                         0,
                         new List<AugmentationType>(),
                         true));
+
+            var wreck = world.EntityClassEntries.AsNoTracking().Single(entry => entry.Id == 24586);
+            classes[(EntityClasses)wreck.Id] = new EntityClass(
+                wreck.Id, wreck.ClassName, wreck.MeshId, wreck.ClassCollisionRole,
+                wreck.AugList.Split(',').Select(value => (AugmentationType)uint.Parse(value)).ToList(),
+                wreck.TargetFlag != 0);
 
             if (!classes.TryGetValue((EntityClasses)4001, out var creatureClass))
             {
@@ -380,7 +386,7 @@ namespace Rasa.Test.Missions
             worldContext.Database.Migrate();
 
             var context = MissionTestContext.WithCustomDefinitions(new Dictionary<uint, Mission>());
-            PrepareBootcampScenarioClasses();
+            PrepareBootcampScenarioClasses(worldContext);
             PrepareBootcampRewardTemplates(context);
 
             var factory = new RuntimeLoadingFactory(context, worldContext);
@@ -490,6 +496,7 @@ namespace Rasa.Test.Missions
                 auction,
                 social,
                 factory);
+            LoadBootcampLootContent(worldContext);
             if (useWorldContent)
                 LoadBootcampWorldContent(worldContext, creatures, manager, maps);
             objects.InitTeleporters();
@@ -504,6 +511,38 @@ namespace Rasa.Test.Missions
                 clock);
         }
 
+        private static void LoadBootcampLootContent(SqliteWorldContext world)
+        {
+            var templateIds = new uint[] { 41666, 28, 56, 44917, 41665 };
+            foreach (var link in world.Set<ItemTemplateItemClassEntry>().AsNoTracking()
+                         .Where(row => templateIds.Contains(row.ItemTemplateId)))
+            {
+                var data = world.Set<ItemTemplateEntry>().AsNoTracking().Single(row => row.Id == link.ItemTemplateId);
+                var entry = world.Set<EntityClassEntry>().AsNoTracking().Single(row => row.Id == link.ItemClass);
+                var classId = (EntityClasses)entry.Id;
+                EntityClassManager.Instance.LoadedEntityClasses.TryGetValue(classId, out var previous);
+                var entityClass = new EntityClass(entry.Id, entry.ClassName, entry.MeshId,
+                    entry.ClassCollisionRole, entry.AugList.Split(',')
+                        .Select(value => (AugmentationType)uint.Parse(value)).ToList(), entry.TargetFlag != 0)
+                {
+                    ItemClassInfo = new ItemClassInfo(world.Set<ItemClassEntry>().AsNoTracking()
+                        .Single(row => row.Id == link.ItemClass)),
+                    ItemTemplates = previous == null ? new Dictionary<uint, ItemTemplate>() :
+                        new Dictionary<uint, ItemTemplate>(previous.ItemTemplates)
+                };
+                entityClass.ItemTemplates[link.ItemTemplateId] = new ItemTemplate(link)
+                {
+                    QualityId = data.QualityId,
+                    InventoryCategory = (InventoryCategory)data.InventoryCategory,
+                    HasSellableFlag = data.HasSellableFlag != 0,
+                    BuyPrice = data.BuyPrice,
+                    SellPrice = data.SellPrice
+                };
+                EntityClassManager.Instance.LoadedEntityClasses[classId] = entityClass;
+                ItemManager.Instance.ItemTemplateItemClass[link.ItemTemplateId] = classId;
+            }
+        }
+
         private static void LoadBootcampWorldContent(
             SqliteWorldContext world, CreatureManager creatures, MissionManager missions, MapChannelManager maps)
         {
@@ -515,7 +554,8 @@ namespace Rasa.Test.Missions
                     pool.Creature4Id, pool.Creature5Id, pool.Creature6Id
                 })
                 .Concat(world.MissionSpawnEntries.AsNoTracking()
-                    .Where(spawn => spawn.MissionId == 1994).Select(spawn => spawn.CreatureId))
+                    .Where(spawn => spawn.MissionId == 1994 || spawn.MissionId == 1995 || spawn.MissionId == 2005)
+                    .Select(spawn => spawn.CreatureId))
                 .Where(id => id != 0).Distinct().ToArray();
             var actions = world.Set<CreatureActionEntry>().AsNoTracking().ToDictionary(action => action.Id);
             foreach (var entry in world.Set<CreatureEntry>().AsNoTracking().Where(entry => ids.Contains(entry.Id)))
@@ -882,6 +922,7 @@ namespace Rasa.Test.Missions
                     auction,
                     social,
                     factory);
+                LoadBootcampLootContent(WorldContext);
                 if (_useWorldContent)
                     LoadBootcampWorldContent(WorldContext, creatures, manager, maps);
                 objects.InitTeleporters();

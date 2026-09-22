@@ -93,7 +93,7 @@ namespace Rasa.Test.Missions
 
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Client,
-                MissionProgressEvent.Interaction(24911)));
+                MissionProgressEvent.Interaction(24586)));
             var satisfactionPackets = harness.Drain();
             AssertRelativeOrder(
                 satisfactionPackets,
@@ -337,7 +337,7 @@ namespace Rasa.Test.Missions
                 harness.Client,
                 survivor.EntityId,
                 MissionCallingForReinforcements,
-                10,
+                2,
                 1));
             harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
             harness.Drain();
@@ -511,7 +511,7 @@ namespace Rasa.Test.Missions
                 harness.Client,
                 survivor.EntityId,
                 MissionCallingForReinforcements,
-                10,
+                2,
                 1));
             harness.Drain();
         }

@@ -52,7 +52,7 @@ namespace Rasa.Test.Gameplay
                 harness.Context.Client,
                 survivor.EntityId,
                 1995,
-                10,
+                2,
                 1));
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Context.Client,
@@ -61,7 +61,7 @@ namespace Rasa.Test.Gameplay
             Assert.IsFalse(harness.Manager.TickScenarios(harness.Context.Client));
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Context.Client,
-                MissionProgressEvent.Interaction(24911)));
+                MissionProgressEvent.Interaction(24586)));
             harness.UtcNow += TimeSpan.FromSeconds(5);
             Assert.IsTrue(harness.Manager.TickScenarios(harness.Context.Client));
             harness.UtcNow += TimeSpan.FromSeconds(2);

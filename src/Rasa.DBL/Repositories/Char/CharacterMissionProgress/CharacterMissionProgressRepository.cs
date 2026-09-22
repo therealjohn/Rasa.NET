@@ -123,6 +123,13 @@ namespace Rasa.Repositories.Char.CharacterMissionProgress
             _charContext.SaveChanges();
         }
 
+        public void Remove(uint characterId, uint missionId, uint objectiveId)
+        {
+            _charContext.CharacterMissionObjectiveEntries.Remove(
+                RequireObjective(characterId, missionId, objectiveId));
+            _charContext.SaveChanges();
+        }
+
         private CharacterMissionObjectiveEntry RequireObjective(
             uint characterId,
             uint missionId,

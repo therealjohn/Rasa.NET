@@ -93,6 +93,7 @@ namespace Rasa.Structures
         /// be harvested either.
         /// </summary>
         public int HarvestAttemptsLeft { get; set; }
+        internal Manifestation CombatParticipant { get; set; }
 
         public Creature(CreatureEntry data)
         {

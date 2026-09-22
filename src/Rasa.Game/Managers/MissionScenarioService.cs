@@ -205,6 +205,7 @@ namespace Rasa.Managers
 
                 var rows = unitOfWork.CharacterMissionScenario.Get(characterId, durableMission.MissionId);
                 var state = ParseState(rows);
+                var interactionSteps = new List<MissionScenarioStepDefinition>();
                 foreach (var scenario in scenarios.Values.OrderBy(scenario => scenario.ScenarioId))
                     foreach (var step in scenario.Steps)
                     {
@@ -222,6 +223,12 @@ namespace Rasa.Managers
                         if (!state.CompletedSteps.ContainsKey(key))
                             continue;
 
+                        if (step.Kind is MissionScenarioStepKind.EnableInteraction or MissionScenarioStepKind.DisableInteraction)
+                        {
+                            interactionSteps.Add(step);
+                            continue;
+                        }
+
                         ApplyRebuildStep(
                             characterId,
                             durableMission.MissionId,
@@ -230,6 +237,10 @@ namespace Rasa.Managers
                             manager,
                             state);
                     }
+
+                // A later-numbered scene may create the object controlled by an earlier receipt.
+                foreach (var step in interactionSteps)
+                    ApplyRebuildStep(characterId, durableMission.MissionId, step, mapChannel, manager, state);
             }
         }
 
@@ -588,6 +599,8 @@ namespace Rasa.Managers
         }
 
         private const uint BootcampEquipmentCrateEntityClassId = 29877;
+        private const uint BootcampConradEntityClassId = 24990;
+        private const uint BootcampDropshipWreckEntityClassId = 24586;
         private static readonly MissionLootSource BootcampEquipmentCrateLoot = new(1992, 1, 58);
         private const uint BootcampAlisterCreatureId = 510203;
         private static readonly Vector3 BootcampAlisterDestination = new(400, 120, 150);
@@ -1336,6 +1349,12 @@ namespace Rasa.Managers
             if (mapChannel == null || string.IsNullOrWhiteSpace(runtimeKey))
                 return null;
 
+            // The tutorial wreck uses Door states; Conrad uses TreasureDispenser states.
+            var initialState = lootSource != null || (uint)entityClassId == BootcampConradEntityClassId
+                ? UseObjectState.TdStateClosed
+                : (uint)entityClassId == BootcampDropshipWreckEntityClassId
+                    ? UseObjectState.DoorStateClosed
+                    : UseObjectState.IdStateActive;
             var registry = GetRegistry(mapChannel);
             if (!registry.DynamicObjectsByKey.TryGetValue(runtimeKey, out var existing))
             {
@@ -1346,8 +1365,23 @@ namespace Rasa.Managers
             }
 
             if (existing != null &&
+                MapInstanceScope.Contains(mapChannel, existing) &&
+                (existing.EntityClassId != entityClassId ||
+                 existing.Position != position ||
+                 existing.Rotation != rotation))
+            {
+                if (existing.LootDispenserEntityId != 0 || existing.MissionLootSource != null)
+                    throw new GameplayRejectionException(
+                        $"Cannot replace scenario object {runtimeKey}: it still owns reward loot.");
+                RemoveScenarioDynamicObject(mapChannel, runtimeKey);
+                existing = null;
+            }
+
+            if (existing != null &&
                 MapInstanceScope.Contains(mapChannel, existing))
             {
+                if (existing.StateId == UseObjectState.IdStateActive)
+                    existing.StateId = initialState;
                 if (existing.LootDispenserEntityId == 0)
                     _objects().SetScenarioInteractionEnabled(mapChannel, existing, enabled);
                 return existing;
@@ -1362,8 +1396,7 @@ namespace Rasa.Managers
                 enabled,
                 windupTime);
             dynamicObject.MissionLootSource = lootSource;
-            if (lootSource != null)
-                dynamicObject.StateId = UseObjectState.TdStateClosed;
+            dynamicObject.StateId = initialState;
             mapChannel.DynamicObjects.Add(dynamicObject);
             CellManager.Instance.AddToWorld(mapChannel, dynamicObject);
 

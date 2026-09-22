@@ -203,7 +203,7 @@ namespace Rasa.Test.Missions
             BootcampRuntimeTestHarness.AdvanceScenarioCorpseAndRespawn(
                 harness,
                 tizzik,
-                corpseMilliseconds: 1000,
+                corpseMilliseconds: LootDispenserManager.LootableCorpseMs,
                 respawnMilliseconds: 1000);
 
             Assert.AreEqual(0, CountScenarioCreatures(harness.BootcampMap, "mission:1994", "spawn:2"));

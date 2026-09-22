@@ -249,7 +249,7 @@ namespace Rasa.Test.Missions
                 harness.Client,
                 survivor.EntityId,
                 1995,
-                10,
+                2,
                 1));
         }
 

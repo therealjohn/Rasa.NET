@@ -241,7 +241,6 @@ namespace Rasa.Test.Missions
                     (3U, MissionObjectiveState.Inactive));
                 AssertObjectiveStates(snapshot, 1995,
                     (2U, MissionObjectiveState.Incomplete),
-                    (10U, MissionObjectiveState.Inactive),
                     (3U, MissionObjectiveState.Inactive),
                     (1U, MissionObjectiveState.Inactive),
                     (4U, MissionObjectiveState.Inactive));
@@ -269,18 +268,11 @@ namespace Rasa.Test.Missions
                 CollectionAssert.AreEquivalent(
                     new[]
                     {
-                        MissionActionKind.CompleteObjective,
-                        MissionActionKind.StartScenario,
-                        MissionActionKind.RevealObjective,
-                        MissionActionKind.ActivateObjective
+                        MissionActionKind.StartScenario
                     },
                     scoutTransition.Actions.Select(action => action.Kind).ToArray());
-                CollectionAssert.AreEqual(
-                    new[] { 2U, 10U, 10U },
-                    scoutTransition.Actions
-                        .Where(action => action.TargetObjectiveId.HasValue)
-                        .Select(action => action.TargetObjectiveId!.Value)
-                        .ToArray());
+                Assert.AreEqual((byte)MissionObjectiveState.Incomplete, scoutTransition.ToStateValue);
+                Assert.IsFalse(scoutTransition.Actions.Any(action => action.TargetObjectiveId.HasValue));
 
                 var survivorScene = finalMission.Scenarios[1];
                 Assert.IsTrue(survivorScene.Steps.Any(step =>
@@ -293,12 +285,12 @@ namespace Rasa.Test.Missions
                     step.Kind == MissionScenarioStepKind.SpawnDynamicObject &&
                     step.DynamicObjectKey == "bootcamp-dropship-debris"));
 
-                var survivorConversationTransition = finalMission.Transitions[(10U, 1U)];
+                var survivorConversationTransition = finalMission.Transitions[(2U, 2U)];
                 var survivorConversationTrigger = survivorConversationTransition.Triggers.Single();
                 Assert.AreEqual(MissionTriggerKind.Conversation, survivorConversationTrigger.Kind);
                 Assert.AreEqual(2584U, survivorConversationTrigger.NpcPackageId);
                 CollectionAssert.AreEqual(
-                    new[] { 10U, 3U, 3U },
+                    new[] { 2U, 3U, 3U },
                     survivorConversationTransition.Actions
                         .Where(action => action.TargetObjectiveId.HasValue)
                         .Select(action => action.TargetObjectiveId!.Value)
@@ -313,7 +305,11 @@ namespace Rasa.Test.Missions
                     step.DynamicObjectKey == "bootcamp-conrad-corpse"));
                 Assert.IsTrue(crashSiteScene.Steps.Any(step =>
                     step.Kind == MissionScenarioStepKind.SpawnDynamicObject &&
-                    step.DynamicObjectKey == "bootcamp-dropship-debris"));
+                    step.DynamicObjectKey == "bootcamp-dropship-debris" &&
+                    step.EntityClassId == 24586));
+                Assert.AreEqual(24586U, finalMission.Transitions[(1U, 1U)].Triggers.Single().SubjectId);
+                Assert.AreEqual(24586U, retryMission.Transitions[(1U, 1U)].Triggers.Single().SubjectId);
+                Assert.AreEqual(20000024U, context.EntityClassEntries.Single(entry => entry.Id == 24586).MeshId);
 
                 Assert.AreEqual(
                     MissionScenarioStepKind.SatisfyDeadline,
@@ -362,7 +358,7 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
-        public void BootcampMissionContentAddsAReconstructedSurvivorConversationObjectiveBetweenClientObjectivesTwoAndThree()
+        public void BootcampMissionContentFoldsSurvivorConversationIntoSupportedClientObjectiveTwo()
         {
             WithDisposableSqliteWorld((context, _) =>
             {
@@ -374,27 +370,27 @@ namespace Rasa.Test.Missions
                     .Select(objective => objective.ObjectiveId)
                     .ToArray();
                 CollectionAssert.AreEqual(
-                    new uint[] { 2, 10, 3, 1, 4 },
+                    new uint[] { 2, 3, 1, 4 },
                     orderedObjectiveIds);
 
                 var reconstructedConversation = context.MissionObjectiveDefinitionEntries.Single(entry =>
                     entry.MissionId == 1995 &&
                     entry.ContentRevision == BootcampRevision &&
-                    entry.ObjectiveId == 10);
+                    entry.ObjectiveId == 2);
                 Assert.AreEqual(21556U, reconstructedConversation.ClientNameTextId);
                 Assert.AreEqual(21557U, reconstructedConversation.ClientBodyTextId);
 
                 var reconstructionEvidence = context.MissionEvidenceEntries.Single(entry =>
                     entry.MissionId == 1995 &&
                     entry.ContentRevision == BootcampRevision &&
-                    entry.OwnerKind == MissionEvidenceOwnerKind.Objective &&
-                    entry.OwnerId == 10);
+                    entry.EvidenceId == 3);
+                Assert.AreEqual(2U, reconstructionEvidence.OwnerId);
                 Assert.AreEqual(
                     MissionEvidenceSourceKind.Reconstruction,
                     reconstructionEvidence.SourceKind);
                 StringAssert.Contains(
                     reconstructionEvidence.ReconstructionNote,
-                    "server-authored reconstruction objective");
+                    "no client objective 10 exists");
             });
         }
 
@@ -501,6 +497,37 @@ namespace Rasa.Test.Missions
                 migrator.Migrate();
                 Assert.IsFalse(Validate(LoadSnapshot(context), context).BlocksReadiness);
             });
+        }
+
+        [TestMethod]
+        [DataRow(typeof(SqliteWorldContext), "20260922161000_BootcampReinforcements", false)]
+        [DataRow(typeof(MySqlWorldContext), "20260922161010_BootcampReinforcements", false)]
+        [DataRow(typeof(Rasa.Context.Char.SqliteCharContext), "20260922161000_BootcampReinforcements", true)]
+        [DataRow(typeof(Rasa.Context.Char.MySqlCharContext), "20260922161010_BootcampReinforcements", true)]
+        public void ReinforcementsProviderMigrationsPreserveProgressAndRepairWorldContent(
+            Type contextType, string migrationId, bool characterData)
+        {
+            using var context = CreateContext(contextType, "unused");
+            var migrations = context.Database.GetMigrations().ToArray();
+            CollectionAssert.Contains(migrations, migrationId);
+            var previous = migrations.TakeWhile(migration => migration != migrationId).Last();
+            var sql = NormalizeSql(context.GetService<IMigrator>().GenerateScript(previous, migrationId));
+            if (characterData)
+            {
+                StringAssert.Contains(sql, "create temporary table bootcamp_reinforcements_legacy");
+                StringAssert.Contains(sql, "delete from character_mission_objective where mission_id = 1995 and objective_id = 10");
+                Assert.IsFalse(sql.Contains("update character_mission_deadline", StringComparison.Ordinal));
+                Assert.IsFalse(sql.Contains("delete from character_mission_scenario", StringComparison.Ordinal));
+                if (contextType == typeof(Rasa.Context.Char.MySqlCharContext))
+                    StringAssert.Contains(sql, "drop temporary table bootcamp_reinforcements_legacy");
+            }
+            else
+            {
+                StringAssert.Contains(sql, "update mission_trigger set objective_id = 2, transition_id = 2");
+                StringAssert.Contains(sql, "update mission_scenario_step set entity_class_id = 24586");
+                StringAssert.Contains(sql, "update mission_trigger set subject_id = 24586");
+                StringAssert.Contains(sql, "delete from mission_objective_definition where mission_id = 1995 and content_revision = 'deployment_11' and objective_id = 10");
+            }
         }
 
         [TestMethod]

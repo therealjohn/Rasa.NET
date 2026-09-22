@@ -134,10 +134,12 @@ namespace Rasa.Managers
 
         internal void HandleCreatureKill(MapChannel mapChannel, Creature creature, Actor killedBy)
         {
-            if (creature.State == CharacterState.Dead)
+            if (creature.State == CharacterState.Dead || BootcampCombat.IsBaseDefender(creature))
                 return; // creature already dead
 
             var isScenarioActor = creature?.SpawnPool?.ScenarioKey != null;
+            var canReward = creature.Faction != Factions.AFS &&
+                (!isScenarioActor || BootcampCombat.IsThrax(creature));
 
             // kill creature
             var stateIds = new List<CharacterState> { CharacterState.Dead };
@@ -162,19 +164,27 @@ namespace Rasa.Managers
             // todo: How were credits and experience calculated when multiple players attacked the same creature? Did only the player with the first strike get experience?
 
             Client client = null;
-
-            // get client if it's killed by player
             foreach (var cell in CellManager.CellsIn(mapChannel, killedBy?.Cells))
-                foreach (var tempClient in cell.ClientList)
-                    if (tempClient.Player == killedBy)
+                foreach (var candidate in cell.ClientList)
+                    if (candidate.Player == killedBy && MapInstanceScope.Contains(mapChannel, killedBy))
                     {
-                        client = tempClient;
+                        client = candidate;
                         break;
                     }
 
+            if (client == null && killedBy is Creature killer && killer.Faction != creature.Faction)
+                client = FindEscortOwner(mapChannel, killer);
+            if (client == null && killedBy is Creature defender &&
+                BootcampCombat.IsBaseDefender(defender) && BootcampCombat.IsThrax(creature) &&
+                defender.Faction != creature.Faction && IsLivingOnMap(mapChannel, defender))
+                client = FindCombatPlayer(mapChannel, creature.CombatParticipant);
+            creature.CombatParticipant = null;
+            canReward &= client != null &&
+                (!mapChannel.IsPrivateInstance || mapChannel.OwnerCharacterId == client.Player.Id);
+
             if (client != null)
             {
-                if (!isScenarioActor)
+                if (canReward)
                 {
                     // give experience
                     var experience = creature.Level * 100; // base experience
@@ -192,29 +202,30 @@ namespace Rasa.Managers
                 }
             }
 
-            // The corpse is harvestable by whoever earned it, a fixed number of times. Set here
-            // rather than at the first harvest so that a creature that died without a player
-            // behind it - a minion's kill, a fall, a despawn - is left at zero and nobody can
-            // harvest it at all.
-            //
-            // Written on every kill and not only on a claimed one: a spawn pool puts the same
-            // Creature back on its feet, so a claim left over from a previous life would still be
-            // sitting there the next time it died to something that was not a player, and that
-            // player would be handed a corpse they did not earn.
-            creature.HarvestOwnerEntityId = !isScenarioActor && client != null
+            // Only the credited player may harvest; unowned deaths clear any previous claim.
+            creature.HarvestOwnerEntityId = canReward && client != null
                 ? client.Player.EntityId
                 : 0;
-            creature.HarvestAttemptsLeft = !isScenarioActor && client != null
+            creature.HarvestAttemptsLeft = canReward && client != null
                 ? Harvest.AttemptsPerCorpse
                 : 0;
 
             // spawn loot
-            if (killedBy != null && client != null && !isScenarioActor)
+            if (killedBy != null && client != null && canReward)
             {
-                LootDispenserManager.Instance.Loot(client, creature);
+                try
+                {
+                    LootDispenserManager.Instance.Loot(client, creature);
+                }
+                catch (Exception error) when (GameplayRejectionException.IsExpected(error))
+                {
+                    Logger.WriteLog(LogType.Error,
+                        $"Corpse loot generation failed for creature {creature.EntityId} ({creature.DbId}), " +
+                        $"character {client.Player.Id}; recording kill progress without loot: {error}");
+                }
             }
 
-            var progressClient = client ?? FindEscortOwner(mapChannel, killedBy as Creature);
+            var progressClient = client;
             if (progressClient != null &&
                 CanCreditScenarioProgress(mapChannel, creature, progressClient))
                 (_missionManager ?? MissionManager.Instance).RecordProgress(
@@ -222,24 +233,72 @@ namespace Rasa.Managers
                     MissionProgressEvent.Creature(creature.DbId));
         }
 
-        private static Client FindEscortOwner(MapChannel mapChannel, Creature escort)
+        internal static Client FindEscortOwner(MapChannel mapChannel, Creature escort)
         {
             var pool = escort?.SpawnPool;
-            if (pool?.FollowOwnerCharacterId is not > 0 ||
+            if (pool?.FollowOwnerCharacterId is not > 0 || escort.MasterEntityId != 0 ||
                 pool.ScenarioOwnerCharacterId != pool.FollowOwnerCharacterId ||
                 mapChannel.IsPrivateInstance && mapChannel.OwnerCharacterId != pool.FollowOwnerCharacterId ||
-                !MapInstanceScope.Contains(mapChannel, escort) ||
-                !EntityManager.Instance.Creatures.TryGetValue(escort.EntityId, out var registered) ||
-                !ReferenceEquals(registered, escort))
+                !IsLivingOnMap(mapChannel, escort))
                 return null;
 
             return mapChannel.ClientList.FirstOrDefault(client =>
                 client?.State == ClientState.Ingame && client.PendingTransfer == null &&
                 client.Player?.Id == pool.FollowOwnerCharacterId &&
-                MapInstanceScope.Contains(mapChannel, client.Player) &&
+                IsLivingOnMap(mapChannel, client.Player) &&
                 CellManager.Instance.IsInWorld(client) &&
                 client.Player.Missions.TryGetValue(pool.ScenarioMissionId, out var mission) &&
                 mission.State == MissionState.Active);
+        }
+
+        internal static bool IsLivingOnMap(MapChannel map, Actor actor) =>
+            actor != null && actor.State != CharacterState.Dead &&
+            actor.Attributes.TryGetValue(Attributes.Health, out var health) && health.Current > 0 &&
+            MapInstanceScope.Contains(map, actor) &&
+            (actor is Creature creature
+                ? EntityManager.Instance.GetEntityType(actor.EntityId) == EntityType.Creature &&
+                  (creature.RuntimeMapChannel == null || ReferenceEquals(creature.RuntimeMapChannel, map)) &&
+                  EntityManager.Instance.Creatures.TryGetValue(actor.EntityId, out var registered) &&
+                  ReferenceEquals(registered, creature)
+                : actor is Manifestation player &&
+                  EntityManager.Instance.GetEntityType(actor.EntityId) == EntityType.Character &&
+                  EntityManager.Instance.Players.TryGetValue(actor.EntityId, out var registeredPlayer) &&
+                  ReferenceEquals(registeredPlayer, player));
+
+        internal static bool IsHostileTarget(MapChannel map, Actor source, Creature target) =>
+            IsLivingOnMap(map, source) && IsLivingOnMap(map, target) &&
+            target.Faction != (source is Creature creature ? creature.Faction : Factions.AFS);
+
+        internal static void RecordOwnerAttack(MapChannel map, Actor source, Creature target)
+        {
+            if (source is not Manifestation player ||
+                map?.SpawnPools?.Any(pool =>
+                    pool.FollowOwnerCharacterId != 0 && pool.FollowOwnerCharacterId == player.Id) != true ||
+                FindCombatPlayer(map, player) == null ||
+                !IsHostileTarget(map, player, target))
+                return;
+
+            foreach (var escort in map.MapCellInfo.Cells.Values.SelectMany(cell => cell.CreatureList).Distinct())
+                if (FindEscortOwner(map, escort)?.Player == player &&
+                    IsHostileTarget(map, escort, target))
+                    escort.Controller.ActionFollow.OwnerAttackTarget = target;
+        }
+
+        private static Client FindCombatPlayer(MapChannel map, Manifestation player) =>
+            IsLivingOnMap(map, player) ? map.ClientList.FirstOrDefault(client =>
+                client?.Player == player && client.State == ClientState.Ingame &&
+                client.PendingTransfer == null && CellManager.Instance.IsInWorld(client) &&
+                (!map.IsPrivateInstance || map.OwnerCharacterId == player.Id)) : null;
+
+        internal static void RecordCombatDamage(MapChannel map, Creature target, Actor source, int damage)
+        {
+            if (damage <= 0 || !BootcampCombat.IsThrax(target) || !IsHostileTarget(map, source, target))
+                return;
+            var client = source is Manifestation player
+                ? FindCombatPlayer(map, player)
+                : FindEscortOwner(map, source as Creature);
+            if (client != null)
+                target.CombatParticipant = client.Player;
         }
 
         internal static void PublishEscortStatus(MapChannel mapChannel, Creature creature, bool isEscort)

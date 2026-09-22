@@ -35,6 +35,7 @@ namespace Rasa.Repositories.Char.CharacterMissionProgress
             uint expectedValue,
             uint value);
         void Remove(uint characterId, uint missionId);
+        void Remove(uint characterId, uint missionId, uint objectiveId);
     }
 
     public sealed class CharacterMissionProgressSnapshot
