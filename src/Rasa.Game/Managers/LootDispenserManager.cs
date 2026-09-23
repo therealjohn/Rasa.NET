@@ -875,7 +875,14 @@ namespace Rasa.Managers
                 HasExpired(loot, corpse))
                 return false;
 
-            return Vector3.Distance(player.Position, corpse.Position) <= limit;
+            var distance = Vector3.Distance(player.Position, corpse.Position);
+            if (distance > limit)
+            {
+                Logger.WriteLog(LogType.Debug,
+                    $"Corpse loot request rejected for character {player.Id}: distance {distance:F3} exceeds limit {limit:F3} for corpse {corpse.EntityId}.");
+                return false;
+            }
+            return true;
         }
 
         private static bool IsFinite(Vector3 value) =>

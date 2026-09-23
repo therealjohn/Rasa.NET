@@ -3,7 +3,7 @@
     public class GameConfig
     {
         public const int DefaultTransferTimeoutSeconds = 60;
-        public const double DefaultCorpseLootDistance = 2;
+        public const double DefaultCorpseLootDistance = 6;
 
         public string PublicAddress { get; set; }
         public int Port { get; set; }

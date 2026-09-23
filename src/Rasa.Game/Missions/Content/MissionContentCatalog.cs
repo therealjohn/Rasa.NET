@@ -108,6 +108,8 @@ namespace Rasa.Managers
                     Experiences.AddRange(content.GetExperiences(release.ReleaseName).Select(entry =>
                         JsonSerializer.Deserialize<MissionExperienceDocument>(entry.Bindings, MissionPackCodec.Options)
                         ?? throw new InvalidOperationException($"Experience {entry.ExperienceKey} has no binding document.")));
+                    Game.Missions.Content.Bootcamp.BootcampConradPlacementCompatibility.Apply(
+                        Missions, SceneBindings, Experiences);
                 }
             }
             Runtime = new MissionRuntime(Missions.Values);

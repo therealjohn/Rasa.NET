@@ -261,20 +261,33 @@ Run the focused checks with:
 dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~Rasa.Test.Gameplay.LootConsolidationTests"
 ```
 
-The default maximum corpse-looting distance is **2 metres**, measured in finite
-3D world coordinates, including height. This is an approved server rule, not
-a reconstructed historical client value. Configure it in Game's settings:
+The default maximum corpse-looting distance is **6 metres**, measured in finite
+3D world coordinates from the player to the corpse's origin, including height.
+It applies to both opening the menu and claiming its contents. Configure it in
+Game's settings:
 
 ```json
 {
   "GameConfig": {
-    "CorpseLootDistance": 2
+    "CorpseLootDistance": 6
   }
 }
 ```
 
 A configured limit must be finite and greater than zero. Invalid limits reject
 both opening and claiming; they do not silently fall back to a different range.
+Explicit configuration overrides still take precedence over the default.
+If an existing local configuration sets `CorpseLootDistance` to `2`, update it
+to `6` to receive the new behavior.
+
+The native 1.16.5.0 client permits manual looting within the manifestation's
+six-metre use range, testing the corpse's `DAMAGE1` connection point or its origin.
+The previous two-metre server default rejected ordinary clicks at three to five
+metres even though the corpse advertised lootability. The server still measures
+to the origin, not animated client connection points. Its out-of-range
+rejections now include the actual/configured distances in the debug log;
+lootability effects alone do not mean a corpse is currently in reach.
+
 Both requests recheck the living, active owner, account/character identity,
 registered player and corpse, current map/cell membership, corpse attachment and
 original lifetimes. Logging out, departure/re-entry, expired/removed corpses,
@@ -667,6 +680,24 @@ and interaction enable/disable steps use `24586` for both `1995` and retry
 usable states are TreasureDispenser closed (`200`) and Door closed (`31`).
 Scenario reconstruction replaces old crate visuals and reapplies interaction
 state after spawning, so a planted bomb does not become usable again on login.
+
+The published `deployment_11` Conrad placement `(-102.4, 86.20677, 66.8)` is
+inside the client's static trench wall (class `9707`), despite having a nearby
+navmesh polygon. Game applies a narrowly matched, in-memory Bootcamp compatibility
+correction: the corpse appears at `(-99, 86.41823, 74)` and indicator `436` points
+to its ground at `(-99, 86.32086, 74)`. Both the mission and experience-owned actor
+bindings are projected together. The original published rows, release hashes,
+assignment, objectives, bomb deadline and scene receipts remain unchanged;
+custom bindings and other revisions are not overridden.
+
+To recover a character already waiting for Conrad, rebuild and restart Game,
+then reconnect that character. No mission republish, abandonment or character
+reset is needed. Confirm the corpse is visible beside the missing team, the
+marker agrees with its location, and using it advances objective `3` and starts
+the bomb deadline. Also check reconnect before pickup, after pickup and after
+planting. Source-geometry checks cover the full corpse footprint, connected
+ground and an unobstructed sight line from the survivor; native-client rendering
+still needs the manual check.
 
 The paired `BootcampReinforcements` World and Char migrations remove the
 unsupported objective `10`. Existing saves waiting at `10` resume objective `2`

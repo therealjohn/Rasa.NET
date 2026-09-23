@@ -11,6 +11,8 @@ namespace Rasa.Test.Missions
 {
     using Rasa.Data;
     using Rasa.Managers;
+    using Rasa.Packets.LootDispenser.Client;
+    using Rasa.Packets.LootDispenser.Server;
     using Rasa.Packets.MapChannel.Server;
     using Rasa.Packets.Protocol;
     using Rasa.Structures;
@@ -154,6 +156,7 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(harness.Client.Player.EntityId, boss.HarvestOwnerEntityId);
             Assert.AreEqual(MissionObjectiveState.Completed,
                 harness.Client.Player.Missions[1994].Objectives[1].State);
+            AssertCorpseMenuOpensAtFiveMetres(harness, boss);
             var awardedXp = harness.Client.Player.Experience;
             var loot = boss.CorpseLootEntityId;
             CreatureManager.Instance.HandleCreatureKill(harness.BootcampMap, boss, escort);
@@ -209,6 +212,8 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(earnsReward, harness.Client.Player.Experience > xp);
             Assert.AreEqual(earnsReward, enemy.CorpseLootEntityId != 0);
             Assert.AreEqual(earnsReward ? harness.Client.Player.EntityId : 0UL, enemy.HarvestOwnerEntityId);
+            if (earnsReward)
+                AssertCorpseMenuOpensAtFiveMetres(harness, enemy);
             var awardedXp = harness.Client.Player.Experience;
             CreatureManager.Instance.HandleCreatureKill(harness.BootcampMap, enemy, youngblood);
             Assert.AreEqual(awardedXp, harness.Client.Player.Experience);
@@ -677,6 +682,20 @@ namespace Rasa.Test.Missions
             harness.Client.Player.Attributes[Attributes.Health].Current =
                 harness.Client.Player.Attributes[Attributes.Health].CurrentMax = 100000;
             return Actors(harness).Single(actor => actor.DbId == 510210);
+        }
+
+        private static void AssertCorpseMenuOpensAtFiveMetres(
+            BootcampRuntimeTestHarness.Harness harness, Creature corpse)
+        {
+            harness.MovePlayerTo(corpse.Position + new Vector3(5, 0, 0));
+            CellManager.Instance.UpdateVisibility(harness.Client);
+            harness.Drain();
+
+            LootDispenserManager.Instance.RequestCorpseLooting(harness.Client,
+                new RequestCorpseLootingPacket { EntityId = corpse.CorpseLootEntityId });
+
+            Assert.AreEqual(1, harness.Drain().OfType<LootCorpsePacket>().Count(),
+                "An eligible companion kill must open its owner's loot menu at the default manual-use distance.");
         }
 
         private static Creature ReachYoungblood(BootcampRuntimeTestHarness.Harness harness)

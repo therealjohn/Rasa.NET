@@ -4,6 +4,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
@@ -15,15 +16,20 @@ namespace Rasa.Test.Missions
 {
     using Rasa.Data;
     using Rasa.Game;
+    using Rasa.Game.Missions.Content;
     using Rasa.Managers;
     using Rasa.Memory;
     using Rasa.Models;
+    using Rasa.Missions.Scenes;
+    using Rasa.Packets.Game.Server;
     using Rasa.Packets.MapChannel.Client;
+    using Rasa.Packets.MapChannel.Server;
     using Rasa.Packets.Mission.Server;
     using Rasa.Repositories.Char.CharacterMissionScenario;
     using Rasa.Services.Preloader;
     using Rasa.Structures;
     using Rasa.Structures.Char;
+    using Rasa.Structures.World;
 
     [TestClass]
     [DoNotParallelize]
@@ -32,6 +38,195 @@ namespace Rasa.Test.Missions
         private const uint MissingScoutAreaId = 435;
         private static readonly TimeSpan BombDeadline = TimeSpan.FromMinutes(10);
         private static readonly TimeSpan ArrivalDelay = TimeSpan.FromSeconds(2);
+
+        [TestMethod]
+        [DataRow(false)]
+        [DataRow(true)]
+        public void ConradIsIntroducedAtTheGroundedObjectiveMarkerAndCanBeUsed(bool reconnect)
+        {
+            using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);
+            StartCrashSiteScene(harness);
+            if (reconnect)
+                harness.ReconnectFresh();
+            var conrad = FindScenarioObject(harness, "bootcamp-conrad-corpse");
+            var indicator = harness.Manager.BuildStatusSnapshot(harness.Client.Player)[1995].ObjectivesList
+                .Single(objective => objective.ObjectiveId == 3).IndicatorList
+                .Single(candidate => candidate.IndicatorId == 436);
+            var marker = indicator.Position;
+            var ground = harness.BootcampMap.NavMesh.Nearest(marker);
+            Assert.IsTrue(ground.HasValue, $"Conrad's marker has no ground at {marker}.");
+            var survivor = harness.WorldContext.MissionSpawnEntries.Single(row =>
+                row.MissionId == 1995 && row.SpawnGroupId == 1 && row.SpawnId == 1);
+            var survivorPosition = new Vector3((float)survivor.PosX, (float)survivor.PosY, (float)survivor.PosZ);
+            var route = harness.BootcampMap.NavMesh.FindPath(survivorPosition, conrad.Position, out var complete);
+            Assert.IsNotNull(route);
+            Assert.IsTrue(complete,
+                $"Conrad at {conrad.Position} must be on reachable ground, not the navmesh island inside the trench wall.");
+            Assert.IsLessThan(0.25f, Math.Abs(conrad.Position.Y - ground.Value.Y),
+                $"Conrad at {conrad.Position} must be visible above the ground at {ground.Value}.");
+            Assert.IsLessThan(0.25f, Vector2.Distance(
+                new Vector2(marker.X, marker.Z), new Vector2(conrad.Position.X, conrad.Position.Z)));
+            Assert.IsLessThan(6f, Vector3.Distance(survivorPosition,
+                conrad.Position + new Vector3(0.16736676f, 0.033820882f, 0.19178998f)));
+            // The shipped corpse's footprint must fit on connected ground, not just its origin.
+            foreach (var x in new[] { -0.6709014f, 0f, 1.1951588f })
+                foreach (var z in new[] { -0.99099433f, 0f, 0.47449246f })
+                {
+                    var sample = conrad.Position + new Vector3(x, 0, z);
+                    var surface = harness.BootcampMap.NavMesh.Nearest(sample);
+                    Assert.IsTrue(surface.HasValue);
+                    Assert.IsLessThan(0.1f, Vector2.Distance(
+                        new Vector2(sample.X, sample.Z), new Vector2(surface.Value.X, surface.Value.Z)));
+                    Assert.IsTrue(harness.BootcampMap.NavMesh.IsWalkClear(ground.Value, surface.Value),
+                        $"Conrad's body extends into blocked ground at {sample}.");
+                }
+            harness.Drain();
+            harness.MovePlayerTo(ground.Value);
+
+            CellManager.Instance.UpdateVisibility(harness.Client);
+
+            var introduced = harness.Drain().OfType<CreatePhysicalEntityPacket>()
+                .SingleOrDefault(packet => packet.EntityId == conrad.EntityId);
+            Assert.IsNotNull(introduced, "Approaching the objective marker must introduce Conrad to the client.");
+            Assert.AreEqual((EntityClasses)24990, introduced.ClassId);
+            Assert.AreEqual(conrad.Position,
+                introduced.EntityData.OfType<WorldLocationDescriptorPacket>().Single().Position);
+            Assert.IsTrue(conrad.IsEnabled);
+            UseNativeObject(harness, conrad);
+            Assert.AreEqual(MissionObjectiveState.Completed, harness.Client.Player.Missions[1995].Objectives[3].State);
+            Assert.AreEqual(harness.UtcNow + BombDeadline, ReadDeadline(harness, 1995).DueAtUtc);
+        }
+
+        [TestMethod]
+        [DataRow(false, false)]
+        [DataRow(true, false)]
+        [DataRow(true, true)]
+        public void ConradCompatibilityPreservesPublishedContentAndSavedProgress(bool recovered, bool planted)
+        {
+            using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);
+            StartCrashSiteScene(harness);
+            if (recovered)
+                harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
+            if (planted)
+                harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-dropship-debris"));
+            harness.Manager.RebuildScenarioRuntime(harness.Client.Player.Id, harness.BootcampMap);
+            var store = new MissionPackStore(harness.WorldContext);
+            string PublishedMission() => JsonSerializer.Serialize(
+                store.Export(1995, "deployment_11", "bootcamp-modular-v1"), MissionPackCodec.Options);
+            string PublishedExperience() => harness.WorldContext.Set<MissionExperienceBindingEntry>().AsNoTracking()
+                .Single(entry => entry.ReleaseName == "bootcamp-modular-v1").Bindings;
+            string ActiveRelease() => JsonSerializer.Serialize(
+                harness.WorldContext.Set<MissionActiveReleaseEntry>().AsNoTracking().Single());
+            var missionBefore = PublishedMission();
+            var experienceBefore = PublishedExperience();
+            var releaseBefore = ActiveRelease();
+            var savedBefore = ConradSavedState(harness);
+            var persistedActor = store.Export(1995, "deployment_11", "bootcamp-modular-v1")
+                .Scene.Actors["bootcamp-conrad-corpse"];
+            Assert.AreEqual(new ScenePosition(-102.4f, 86.20677f, 66.8f), persistedActor.Position,
+                "The published binding must remain immutable, not be silently rewritten.");
+            var legacy = FindScenarioObject(harness, "bootcamp-conrad-corpse");
+            legacy.Position = new Vector3(persistedActor.Position.X, persistedActor.Position.Y, persistedActor.Position.Z);
+
+            Assert.IsFalse(harness.Manager.LoadMissions().BlocksReadiness);
+            harness.Manager.RebuildScenarioRuntime(harness.Client.Player.Id, harness.BootcampMap);
+
+            var replacement = FindScenarioObject(harness, "bootcamp-conrad-corpse");
+            Assert.AreNotEqual(legacy.EntityId, replacement.EntityId);
+            Assert.AreEqual(new Vector3(-99, 86.41823f, 74), replacement.Position);
+            harness.ReconnectFresh();
+            Assert.AreEqual(new Vector3(-99, 86.41823f, 74),
+                FindScenarioObject(harness, "bootcamp-conrad-corpse").Position);
+            Assert.AreEqual(!planted, FindScenarioObject(harness, "bootcamp-dropship-debris").IsEnabled);
+            Assert.AreEqual(savedBefore, ConradSavedState(harness),
+                "Placement recovery must preserve the assignment, objectives, timers and durable scene effects.");
+            Assert.AreEqual(missionBefore, PublishedMission());
+            Assert.AreEqual(experienceBefore, PublishedExperience());
+            Assert.AreEqual(releaseBefore, ActiveRelease());
+            store.Publish(Content.MissionPackTestSupport.ReadBootcampPacks(),
+                Content.MissionPackTestSupport.ReadClientBindings());
+            Assert.AreEqual(missionBefore, PublishedMission(),
+                "The unchanged checked-in release must still be publishable after compatibility projection.");
+            if (!recovered)
+            {
+                harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
+                Assert.AreEqual(MissionObjectiveState.Completed, harness.Client.Player.Missions[1995].Objectives[3].State);
+            }
+        }
+
+        [TestMethod]
+        [DataRow("mission-revision")]
+        [DataRow("experience-revision")]
+        [DataRow("mission-script")]
+        [DataRow("experience-script")]
+        [DataRow("mission-position")]
+        [DataRow("experience-position")]
+        public void ConradCompatibilityDoesNotOverrideCustomBindings(string change)
+        {
+            var customPosition = new ScenePosition(-98, 86.5f, 75);
+            using var harness = BootcampRuntimeTestHarness.Create(configurePacks: packs =>
+            {
+                var mission = packs.Single(pack => pack.Definition?.MissionId == 1995);
+                var experience = packs.Single(pack => pack.Experience != null).Experience;
+                switch (change)
+                {
+                    case "mission-revision":
+                        foreach (var row in packs.Where(pack => pack.Definition != null).SelectMany(pack => pack.Rows()))
+                        {
+                            var revision = row.GetType().GetProperty(nameof(MissionContentDefinitionEntry.ContentRevision));
+                            Assert.IsNotNull(revision);
+                            revision.SetValue(row, "custom-revision");
+                        }
+                        break;
+                    case "experience-revision": experience.Revision = "custom-revision"; break;
+                    case "mission-script": mission.Scene.Script = "data.sequence"; break;
+                    case "experience-script": experience.Scene.Script = "data.sequence"; break;
+                    case "mission-position":
+                        mission.Scene.Actors["bootcamp-conrad-corpse"] =
+                            mission.Scene.Actors["bootcamp-conrad-corpse"] with { Position = customPosition };
+                        break;
+                    case "experience-position":
+                        experience.Scene.Actors["bootcamp-conrad-corpse"] =
+                            experience.Scene.Actors["bootcamp-conrad-corpse"] with { Position = customPosition };
+                        break;
+                }
+            });
+            StartCrashSiteScene(harness);
+            Assert.AreEqual(change == "experience-position"
+                    ? new Vector3(customPosition.X, customPosition.Y, customPosition.Z)
+                    : new Vector3(-102.4f, 86.20677f, 66.8f),
+                FindScenarioObject(harness, "bootcamp-conrad-corpse").Position);
+            var marker = harness.Manager.LoadedMissions[1995].Objectives[3].Indicators.Single();
+            Assert.AreEqual(-102.4f, marker.Position.X);
+            Assert.AreEqual(66.8f, marker.Position.Z);
+        }
+
+        private static string ConradSavedState(BootcampRuntimeTestHarness.Harness harness)
+        {
+            using var unit = harness.Context.CreateChar();
+            var assignment = unit.CharacterMissions.GetByCharacterAndMission(harness.Client.Player.Id, 1995);
+            var deadline = unit.CharacterMissionDeadlines.Get(harness.Client.Player.Id, 1995);
+            var store = unit.CharacterMissions.Runtime;
+            var runs = store.ScenesForCharacter(harness.Client.Player.Id);
+            return JsonSerializer.Serialize(new
+            {
+                assignment.AssignmentId, assignment.ContentRevision, assignment.Generation,
+                assignment.Version, assignment.MissionState, assignment.Completeable,
+                Objectives = unit.CharacterMissionProgress.GetTracked(harness.Client.Player.Id, 1995).Values
+                    .OrderBy(objective => objective.ObjectiveId)
+                    .Select(objective => new { objective.ObjectiveId, objective.ObjectiveState }),
+                Deadline = deadline == null ? null : new { deadline.DueAtUtc, deadline.State },
+                Scenes = runs.Where(run => run.MissionId == 1995).OrderBy(run => run.RunId)
+                    .Select(run => new { run.RunId, run.Release, run.Generation, run.Checkpoint, run.Status }),
+                Timers = runs.SelectMany(run => store.Timers(run.RunId))
+                    .OrderBy(timer => timer.RunId).ThenBy(timer => timer.Name),
+                Effects = runs.SelectMany(run => store.Effects(run.RunId))
+                    .Where(effect => JsonSerializer.Deserialize<WorldIntent>(effect.Payload).Role
+                        is "bootcamp-conrad-corpse" or "bootcamp-dropship-debris")
+                    .OrderBy(effect => effect.RunId).ThenBy(effect => effect.OperationKey)
+                    .Select(effect => new { effect.RunId, effect.Generation, effect.OperationKey, effect.Payload })
+            });
+        }
 
         [TestMethod]
         public void AuthoredFinalePositionsKeepTheConfirmedCrashSiteAndGroundedHandoff()
@@ -45,7 +240,7 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(70.8, survivor.PosZ, 0.0001);
             var conrad = FindScenarioObject(harness, "bootcamp-conrad-corpse");
             Assert.IsLessThan(0.001f, Vector3.Distance(
-                new Vector3(-102.4f, 86.20677f, 66.8f), conrad.Position));
+                new Vector3(-99, 86.41823f, 74), conrad.Position));
             var wreck = FindScenarioObject(harness, "bootcamp-dropship-debris");
             Assert.IsLessThan(0.001f, Vector3.Distance(
                 new Vector3(-225, 101.12099f, -71), wreck.Position));

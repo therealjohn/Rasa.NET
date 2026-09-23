@@ -476,6 +476,16 @@ running server. Stop/drain, publish and restart. Merely building Game, applying
 migrations, copying JSON beside the executable or creating a character does
 not publish a release.
 
+The known Conrad placement defect in Bootcamp `deployment_11` is handled by
+`BootcampConradPlacementCompatibility` in the Game content adapter. It projects
+only the exact legacy corpse bindings and indicator onto clear ground when the
+catalog loads. The checked-in/published coordinates remain immutable, and existing
+assignments keep their revision and progress. Rebuild/restart Game and reconnect;
+do not change or republish that revision to apply this correction. New content
+should author the intended position normally in a new revision rather than rely
+on this compatibility rule. See the
+[Conrad recovery and native-client checks](world-testing.md#native-client-bootcamp-acceptance-checklist).
+
 The CLI connects to SQLite only. For MySQL, apply the provider's migrations and
 invoke the same `MissionPackStore.Validate`, `Diff` and `Publish` methods with an
 explicitly configured `MySqlWorldContext` from provider-aware tooling. There is

@@ -8,7 +8,9 @@ namespace Rasa.Test.Missions
 {
     using Rasa.Data;
     using Rasa.Managers;
+    using Rasa.Packets.ClientMethod.Server;
     using Rasa.Packets.LootDispenser.Client;
+    using Rasa.Packets.LootDispenser.Server;
     using Rasa.Structures;
 
     [TestClass]
@@ -100,6 +102,63 @@ namespace Rasa.Test.Missions
                     creature.SpawnPool.DbId >= first && creature.SpawnPool.DbId < first + count).ToArray();
                 Assert.AreEqual(count, pack.Length);
                 Assert.IsTrue(pack.All(creature => Vector3.Distance(creature.Position, pack[0].Position) < 6));
+            }
+        }
+
+        [TestMethod]
+        [DataRow(1.5f, true)]
+        [DataRow(3f, true)]
+        [DataRow(5f, true)]
+        [DataRow(6f, true)]
+        [DataRow(6.01f, false)]
+        public void LootableThraxOpensAndClaimsWithinDefaultManualUseRange(float distance, bool allowed)
+        {
+            using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);
+            SpawnPoolManager.Instance.SpawnPoolWorker(harness.BootcampMap, 0);
+            var thrax = harness.BootcampMap.MapCellInfo.Cells.Values
+                .SelectMany(cell => cell.CreatureList).First(creature => creature.DbId == 510216);
+            harness.MovePlayerTo(thrax);
+            CellManager.Instance.UpdateVisibility(harness.Client);
+            harness.Drain();
+            MissileManager.Instance.MissileLaunch(harness.BootcampMap,
+                new ActionData(harness.Client.Player, ActionId.WeaponAttack, 1, thrax.EntityId, 0), 10000);
+            MissileManager.Instance.DoWork(harness.BootcampMap, 1000);
+            Assert.AreEqual(CharacterState.Dead, thrax.State);
+            var loot = harness.BootcampMap.LootDispensers[thrax.CorpseLootEntityId];
+            Assert.IsTrue(harness.Drain().OfType<CanLootItemsPacket>().Any(packet => packet.CanLootItems),
+                "The owner has been told that this Thrax can be looted.");
+            harness.MovePlayerTo(thrax.Position + new Vector3(distance, 0, 0));
+            CellManager.Instance.UpdateVisibility(harness.Client);
+            harness.Drain();
+
+            var manager = LootDispenserManager.Instance;
+            manager.RequestCorpseLooting(harness.Client,
+                new RequestCorpseLootingPacket { EntityId = loot.EntityId });
+
+            Assert.AreEqual(allowed ? 1 : 0, harness.Drain().OfType<LootCorpsePacket>().Count(),
+                $"A lootable Thrax ignored its owner's manual loot request at {distance} metres.");
+            Assert.AreEqual(allowed ? harness.Client.Player.EntityId : 0UL, loot.CurrentLooter);
+            Assert.IsFalse(loot.FullyLooted, "Opening the menu must not claim its contents.");
+            var inventoryBefore = harness.Client.Player.Inventory.PersonalInventory.ToArray();
+            var creditsBefore = harness.Client.Player.Credits[CurencyType.Credits];
+            var corpseCredits = loot.Credits;
+
+            manager.RequestLootAllFromCorpse(harness.Client,
+                new RequestLootAllFromCorpsePacket { EntityId = loot.EntityId });
+
+            Assert.AreEqual(allowed, loot.FullyLooted);
+            if (allowed)
+            {
+                Assert.IsTrue(loot.LootItems.All(item => item.Taken));
+                Assert.AreEqual(creditsBefore + corpseCredits, harness.Client.Player.Credits[CurencyType.Credits]);
+                var skull = loot.LootItems.Single(item => item.ItemTemplateId == 41666);
+                Assert.AreEqual(1, harness.Client.Player.Inventory.PersonalInventory.Count(id => id == skull.EntityId));
+            }
+            else
+            {
+                CollectionAssert.AreEqual(inventoryBefore, harness.Client.Player.Inventory.PersonalInventory.ToArray());
+                Assert.AreEqual(creditsBefore, harness.Client.Player.Credits[CurencyType.Credits]);
+                Assert.IsFalse(harness.Drain().OfType<GotLootPacket>().Any());
             }
         }
 

@@ -126,7 +126,7 @@ If you want to overwrite one or multiple settings from the appsettings.json of `
 
 `Rasa.Game\Config` owns the server settings loaded from `src\Rasa.Game\appsettings.json`:
 
-- `GameConfig` owns the public game endpoint, listener backlog, the 60-second transfer acknowledgement timeout, the 2-metre corpse-looting distance, and the optional GM performance-metrics interval. The metrics interval is `0` by default, which disables those packets.
+- `GameConfig` owns the public game endpoint, listener backlog, the 60-second transfer acknowledgement timeout, the 6-metre corpse-looting distance, and the optional GM performance-metrics interval. The metrics interval is `0` by default, which disables those packets.
 - `QueueConfig`, `CommunicatorConfig`, `ServerInfoConfig`, and `SocketAsyncConfig` own their existing queue, auth-communicator, server-list, and socket settings.
 - `GameDataConfig` owns enabled races, startup server flags, the knowledge-base JSON path, and `NavMeshPath`. The default navigation directory is `navmesh`.
 
