@@ -217,7 +217,7 @@ namespace Rasa.Managers
                         EntityManager.Instance.RegisterEntity(item.EntityId, EntityType.Item);
                         EntityManager.Instance.RegisterItem(item.EntityId, item);
                         slot.OwnershipTransferred = true;
-                        MissionManager.TryPublish(
+                        MissionApplication.TryPublish(
                             () => _beforeRegister?.Invoke(item),
                             $"mission reward item {item.Id} publication hook");
                     }
@@ -236,7 +236,7 @@ namespace Rasa.Managers
 
                     if (slot.Existing != null)
                     {
-                        MissionManager.TryPublish(
+                        MissionApplication.TryPublish(
                             () => client.CallMethod(
                                 slot.Existing.EntityId,
                                 new SetStackCountPacket(slot.Count)),
@@ -245,11 +245,11 @@ namespace Rasa.Managers
                     }
 
                     var item = slot.Staged;
-                    MissionManager.TryPublish(
+                    MissionApplication.TryPublish(
                         () => ItemManager.Instance.SendItemDataToClient(
                             client, item, false),
                         $"mission reward item {item.Id} entity data");
-                    MissionManager.TryPublish(
+                    MissionApplication.TryPublish(
                         () => client.CallMethod(
                             SysEntity.ClientInventoryManagerId,
                             new InventoryAddItemPacket(

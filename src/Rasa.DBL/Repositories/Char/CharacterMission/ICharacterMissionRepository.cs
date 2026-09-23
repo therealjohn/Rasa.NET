@@ -7,6 +7,7 @@ namespace Rasa.Repositories.Char.CharacterMission
 
     public interface ICharacterMissionRepository
     {
+        MissionRuntime.MissionRuntimeRepository Runtime { get; }
         IReadOnlyList<CharacterMissionEntry> Get(uint characterId);
         List<CharacterMissionEntry> Get(
             uint accountId,

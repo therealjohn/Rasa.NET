@@ -229,9 +229,8 @@ namespace Rasa.Test.Missions
             {
                 using var context = CreateContext(contextType, "unused");
                 Assert.IsFalse(context.Database.HasPendingModelChanges(), contextType.Name);
-                Assert.IsTrue(context.Database.GetMigrations().Last().Contains(
-                    "BootcampFinalReviewFixes",
-                    StringComparison.Ordinal), contextType.Name);
+                Assert.IsTrue(context.Database.GetMigrations().Any(migration => migration.Contains(
+                    "BootcampFinalReviewFixes", StringComparison.Ordinal)), contextType.Name);
             }
         }
 
@@ -277,7 +276,7 @@ namespace Rasa.Test.Missions
             StringAssert.Contains(sql, "constraint ck_mission_scenario_step_kind_parameter_set check");
             StringAssert.Contains(sql, "constraint ck_mission_scenario_step_numeric_bounds check");
             StringAssert.Contains(sql, "kind in (1, 2, 3, 4, 5)");
-            StringAssert.Contains(sql, "kind in (1, 2, 3, 4, 5, 6, 7, 8)");
+            StringAssert.Contains(sql, "kind in (1, 2, 3, 4, 5, 6, 7, 8, 9)");
             StringAssert.Contains(sql, "kind in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23)");
             StringAssert.Contains(sql, "selection_count in (0, 1)");
             StringAssert.Contains(sql, "kind in (1, 2)");

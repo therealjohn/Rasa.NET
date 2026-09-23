@@ -38,8 +38,8 @@ namespace Rasa.Test.Missions
             var repositoryRoot = FindRepositoryRoot();
             foreach (var relativePath in new[]
                      {
-                         @"src\Rasa.Game\Managers\MissionManager.cs",
-                         @"src\Rasa.Game\Managers\MissionScenarioService.cs"
+                         @"src\Rasa.Game\Missions\MissionApplication.cs",
+                         @"src\Rasa.Game\Missions\MissionSceneHost.cs"
                      })
             {
                 var path = Path.Combine(repositoryRoot, relativePath);
@@ -89,7 +89,7 @@ namespace Rasa.Test.Missions
                         Comment = "River Recon"
                     }
                 });
-            var manager = new MissionManager(factory, new Dictionary<uint, Mission>());
+            var manager = new MissionApplication(factory, new Dictionary<uint, Mission>());
             manager.LoadMissions();
 
             Assert.IsFalse(manager.LoadedMissions[321].IsOperational);
@@ -130,7 +130,7 @@ namespace Rasa.Test.Missions
                         Comment = "Legacy rewardless mission"
                     }
                 });
-            var manager = new MissionManager(factory, new Dictionary<uint, Mission>());
+            var manager = new MissionApplication(factory, new Dictionary<uint, Mission>());
             manager.LoadMissions();
 
             Assert.IsFalse(manager.LoadedMissions[321].IsOperational);
@@ -181,7 +181,7 @@ namespace Rasa.Test.Missions
                         Quantity = 3
                     }
                 });
-            var manager = new MissionManager(factory, new Dictionary<uint, Mission>());
+            var manager = new MissionApplication(factory, new Dictionary<uint, Mission>());
             manager.LoadMissions();
 
             Assert.IsFalse(manager.LoadedMissions[321].IsOperational);

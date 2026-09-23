@@ -13,7 +13,7 @@ namespace Rasa.Structures
     {
         internal MissionActionContext(
             Client client,
-            MissionManager missionManager,
+            MissionApplication missionManager,
             ManifestationManager manifestationManager,
             ICharUnitOfWork unitOfWork,
             Mission missionDefinition,
@@ -28,7 +28,7 @@ namespace Rasa.Structures
             MissionScenarioPlan plan)
         {
             Client = client;
-            MissionManager = missionManager;
+            MissionApplication = missionManager;
             ManifestationManager = manifestationManager;
             UnitOfWork = unitOfWork;
             MissionDefinition = missionDefinition;
@@ -44,7 +44,7 @@ namespace Rasa.Structures
         }
 
         internal Client Client { get; }
-        internal MissionManager MissionManager { get; }
+        internal MissionApplication MissionApplication { get; }
         internal ManifestationManager ManifestationManager { get; }
         internal ICharUnitOfWork UnitOfWork { get; }
         internal Mission MissionDefinition { get; }

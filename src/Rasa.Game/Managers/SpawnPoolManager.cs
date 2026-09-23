@@ -306,6 +306,7 @@ namespace Rasa.Managers
                             creature,
                             spawnPool.FollowTargetEntityId);
                     CellManager.Instance.AddToWorld(mapChannel, creature);
+                    MissionApplication.Instance.Scenes.ActorAvailable(mapChannel, spawnPool.DbId);
                 }
                 catch
                 {
@@ -407,6 +408,20 @@ namespace Rasa.Managers
                 MapChannelManager.Instance.FindByContextId(creature.SpawnPool.MapContextId),
                 pos);
 
+            var map = creature.SpawnPool.RuntimeMapChannel;
+            var pose = creature.SpawnPool.ScenePose;
+            if (pose != null && map?.IsPrivateInstance == true &&
+                pose.OwnerCharacterId == map.OwnerCharacterId && pose.Handle.MapEpoch == map.MissionEpoch)
+            {
+                var authored = new Vector3(pose.Position.X, pose.Position.Y, pose.Position.Z);
+                if (Vector3.Distance(pos, authored) >= 0.5f)
+                    throw new GameplayRejectionException("Authored recovered pose is not on its spawn's grounded surface.");
+                pos = authored;
+                creature.Controller.ScriptedMove = new ScriptedMove
+                    { Destination = pos, Orientation = pose.Orientation, Arrived = true };
+                creature.Controller.CurrentAction = BehaviorManager.BehaviorActionScriptedMove;
+                creature.IsRunning = false;
+            }
             CreatureManager.Instance.SetLocation(creature, pos, creature.SpawnPool.Rotation, creature.SpawnPool.MapContextId);
         }
 

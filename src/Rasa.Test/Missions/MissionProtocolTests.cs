@@ -312,7 +312,7 @@ namespace Rasa.Test.Missions
             var beforeRewards = context.ReadRewardTotals();
             context.ResetCharUnitCount();
 
-            var missionSingleton = typeof(MissionManager).GetField(
+            var missionSingleton = typeof(MissionApplication).GetField(
                 "_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
             var npcSingleton = typeof(NpcManager).GetField(
                 "_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
@@ -408,8 +408,8 @@ namespace Rasa.Test.Missions
                 GameOpcode.ObjectiveRevealed,
                 new byte[]
                 {
-                    0x83, 0x15, 0x16, 0x85, 0x10, 0x00, 0x86, 0x10, 0x10, 0x10,
-                    0x00, 0x00, 0x82, 0x82, 0x70, 0x70, 0x70, 0x10, 0x70
+                    0x83, 0x15, 0x16, 0x85, 0x10, 0x02, 0x86, 0x10, 0x10, 0x10,
+                    0x02, 0x02, 0x82, 0x82, 0x70, 0x70, 0x70, 0x10, 0x70
                 },
                 reader =>
                 {

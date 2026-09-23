@@ -20,6 +20,7 @@ namespace Rasa.Test.Missions
     using Context.World;
     using Rasa.Packets.MapChannel.Client;
     using Rasa.Game.Handlers;
+    using Rasa.Game.Missions.Content;
     using Rasa.Packets;
     using Rasa.Data;
     using Rasa.Game;
@@ -62,9 +63,11 @@ namespace Rasa.Test.Missions
         private const uint FreshPendingCharacterId = 2;
         private const byte FreshPendingSlot = 1;
 
-        internal static Harness Create(bool useWorldContent = false)
+        internal static Harness Create(bool useWorldContent = false, Action<MapChannelManager> initializeMaps = null,
+            Action<IReadOnlyList<MissionPackDocument>> configurePacks = null)
         {
-            var bootstrap = CreateBootstrap(useWorldContent);
+            var bootstrap = CreateBootstrap(useWorldContent, configurePacks);
+            initializeMaps?.Invoke(bootstrap.Maps);
             ConfigureRuntimePlayer(bootstrap.Context.Client);
             var bootcampMap = bootstrap.Maps.GetOrCreatePrivateInstance(
                 BootcampMapContextId,
@@ -83,10 +86,12 @@ namespace Rasa.Test.Missions
                 useWorldContent);
         }
 
-        internal static Harness CreateFromPendingSelection(bool useWorldContent = false)
+        internal static Harness CreateFromPendingSelection(bool useWorldContent = false, bool accountEntitled = false)
         {
             var bootstrap = CreateBootstrap(useWorldContent);
             SeedFreshPendingCharacter(bootstrap.Context);
+            using (var unit = bootstrap.Context.CreateChar())
+                unit.GameAccounts.UpdateCanSkipBootcamp(FreshPendingAccountId, accountEntitled);
             var client = CreateSelectionClient(bootstrap.Context, FreshPendingAccountId);
 
             bootstrap.Characters.RequestSwitchToCharacterInSlot(
@@ -135,6 +140,7 @@ namespace Rasa.Test.Missions
 
         internal static DynamicObject FindScenarioObject(MapChannel map, string key) =>
             map.DynamicObjects.SingleOrDefault(dynamicObject =>
+                dynamicObject.SceneActorRole == key ||
                 string.Equals(dynamicObject.ScenarioKey, key, StringComparison.Ordinal) ||
                 dynamicObject.ScenarioKey?.EndsWith($":object:{key}", StringComparison.Ordinal) == true);
 
@@ -372,9 +378,11 @@ namespace Rasa.Test.Missions
             destination.ClientList.Add(client);
             CellManager.Instance.AddToWorld(client);
             client.State = RasaGame::Rasa.Data.ClientState.Ingame;
+            MissionApplication.Instance.Scenes.Resume(client);
         }
 
-        private static Bootstrap CreateBootstrap(bool useWorldContent)
+        private static Bootstrap CreateBootstrap(bool useWorldContent,
+            Action<IReadOnlyList<MissionPackDocument>> configurePacks = null)
         {
             var databaseDirectory = Path.Combine(
                 AppContext.BaseDirectory,
@@ -384,13 +392,14 @@ namespace Rasa.Test.Missions
             var worldDatabase = Path.Combine(databaseDirectory, "world");
             var worldContext = (SqliteWorldContext)CreateContext(typeof(SqliteWorldContext), worldDatabase);
             worldContext.Database.Migrate();
+            Content.MissionPackTestSupport.PublishBootcamp(worldContext, configurePacks);
 
             var context = MissionTestContext.WithCustomDefinitions(new Dictionary<uint, Mission>());
             PrepareBootcampScenarioClasses(worldContext);
             PrepareBootcampRewardTemplates(context);
 
             var factory = new RuntimeLoadingFactory(context, worldContext);
-            MissionManager manager = null;
+            MissionApplication manager = null;
             CharacterManager charactersManager = null;
             var clock = new ClockState(new DateTime(2026, 9, 19, 12, 0, 0, DateTimeKind.Utc));
             var creatures = new CreatureManager(factory, new ManifestationManager(context));
@@ -432,7 +441,7 @@ namespace Rasa.Test.Missions
                 () => factory,
                 () => manager,
                 () => clock.UtcNow);
-            var scenarioService = new MissionScenarioService(
+            var scenarioService = new MissionSceneHost(
                 () => factory,
                 () => manager,
                 manifestation,
@@ -453,7 +462,7 @@ namespace Rasa.Test.Missions
             maps.MapChannelArray.Add(BootcampMapContextId, CreatePublicMap(BootcampMapContextId, "bootcamp_runtime"));
             maps.MapChannelArray.Add(WildernessMapContextId, CreatePublicMap(WildernessMapContextId, "alia_das_fixture"));
             objects = new DynamicObjectManager(factory, maps);
-            manager = new MissionManager(
+            manager = new MissionApplication(
                 factory,
                 new Dictionary<uint, Mission>(),
                 new Dictionary<uint, MissionRewardDefinition>(),
@@ -544,7 +553,7 @@ namespace Rasa.Test.Missions
         }
 
         private static void LoadBootcampWorldContent(
-            SqliteWorldContext world, CreatureManager creatures, MissionManager missions, MapChannelManager maps)
+            SqliteWorldContext world, CreatureManager creatures, MissionApplication missions, MapChannelManager maps)
         {
             var staticSpawns = world.SpawnPoolEntries.AsNoTracking()
                 .Where(pool => pool.MapContextId == BootcampMapContextId).ToArray();
@@ -665,7 +674,7 @@ namespace Rasa.Test.Missions
             internal Harness(
                 MissionTestContext context,
                 SqliteWorldContext worldContext,
-                MissionManager manager,
+                MissionApplication manager,
                 MapChannelManager maps,
                 MapChannel bootcampMap,
                 IDisposable singletons,
@@ -688,7 +697,7 @@ namespace Rasa.Test.Missions
 
             internal MissionTestContext Context { get; }
             internal SqliteWorldContext WorldContext { get; }
-            internal MissionManager Manager { get; private set; }
+            internal MissionApplication Manager { get; private set; }
             internal MapChannelManager Maps { get; private set; }
             internal Client Client { get; private set; }
             internal MapChannel BootcampMap { get; private set; }
@@ -779,6 +788,7 @@ namespace Rasa.Test.Missions
             {
                 _npcs.Add((dbId, npcPackageId, position ?? Vector3.Zero));
                 var npc = Context.AddNpc(dbId, BootcampMap, npcPackageId, position);
+                BindNpcSpawn(npc);
                 npc.AppearanceData ??= new Dictionary<EquipmentData, AppearanceData>();
                 if (npc.Attributes.Count == 0)
                 {
@@ -817,7 +827,7 @@ namespace Rasa.Test.Missions
 
                 var factory = new RuntimeLoadingFactory(Context, WorldContext);
                 var manifestation = new ManifestationManager(Context);
-                MissionManager manager = null;
+                MissionApplication manager = null;
                 CharacterManager charactersManager = null;
                 var creatures = new CreatureManager(factory, manifestation);
                 foreach (var creatureId in new[]
@@ -857,7 +867,7 @@ namespace Rasa.Test.Missions
                     () => factory,
                     () => manager,
                     _getUtcNow);
-                var scenarioService = new MissionScenarioService(
+                var scenarioService = new MissionSceneHost(
                     () => factory,
                     () => manager,
                     manifestation,
@@ -878,13 +888,14 @@ namespace Rasa.Test.Missions
                 maps.MapChannelArray.Add(BootcampMapContextId, CreatePublicMap(BootcampMapContextId, "bootcamp_runtime"));
                 maps.MapChannelArray.Add(WildernessMapContextId, CreatePublicMap(WildernessMapContextId, "alia_das_fixture"));
                 objects = new DynamicObjectManager(factory, maps);
-                manager = new MissionManager(
+                manager = new MissionApplication(
                     factory,
                     new Dictionary<uint, Mission>(),
                     new Dictionary<uint, MissionRewardDefinition>(),
                     manifestation,
                     deadlineService: deadlineService,
-                    scenarioService: scenarioService);
+                    scenarioService: scenarioService,
+                    utcNow: _getUtcNow);
                 var inventory = new InventoryManager(factory, manager);
                 var auction = new AuctionHouseManager(factory, manager);
                 var clan = Activator.CreateInstance(
@@ -933,15 +944,23 @@ namespace Rasa.Test.Missions
                     AddNpcToCurrentMap(npc.CreatureId, npc.PackageId, npc.Position);
 
                 var freshClient = Context.CreateCompetingClient(Manager);
+                freshClient.Player.Id = characterId;
                 typeof(Client).GetProperty(nameof(Client.AccountEntry))!
                     .SetValue(freshClient, accountEntry);
                 ConfigureRuntimePlayer(freshClient);
+                using (var reload = Context.CreateChar())
+                {
+                    Manager.HydrateAndClearInvalid(freshClient.Player, reload);
+                    freshClient.Player.StartingExperienceCompleted =
+                        Rasa.Game.Missions.Persistence.MissionRequirementFactsAdapter.HasCompletedStartingExperience(reload, characterId);
+                }
                 freshClient.Player.Class = Client.Player.Class;
                 new InventoryManager(Context, Manager).InitCharacterInventory(freshClient);
                 freshClient.Player.Skills = Maps.GetPlayerSkills(characterId);
                 freshClient.Player.Abilities = Maps.GetPlayerAbilities(characterId);
                 MoveClientToMap(freshClient, freshClient.Player.MapChannel, BootcampMap);
                 freshClient.State = RasaGame::Rasa.Data.ClientState.Ingame;
+                MissionApplication.Instance.Scenes.Resume(freshClient);
                 Client = freshClient;
                 MissionTestContext.Drain(freshClient);
             }
@@ -1084,6 +1103,7 @@ namespace Rasa.Test.Missions
             private void AddNpcToCurrentMap(uint dbId, uint? npcPackageId, Vector3 position)
             {
                 var npc = Context.AddNpc(dbId, BootcampMap, npcPackageId, position);
+                BindNpcSpawn(npc);
                 npc.AppearanceData ??= new Dictionary<EquipmentData, AppearanceData>();
                 if (npc.Attributes.Count == 0)
                 {
@@ -1099,6 +1119,27 @@ namespace Rasa.Test.Missions
                     npc.Attributes[Attributes.Speed] = new ActorAttributes(Attributes.Speed, 1, 1, 1, 0, 0);
                     npc.Attributes[Attributes.Regen] = new ActorAttributes(Attributes.Regen, 0, 0, 0, 0, 0);
                 }
+            }
+
+            private void BindNpcSpawn(Creature npc)
+            {
+                var spawn = WorldContext.SpawnPoolEntries.AsNoTracking().SingleOrDefault(entry => entry.Id == npc.DbId);
+                if (spawn == null)
+                    return;
+                var pool = BootcampMap.SpawnPools.SingleOrDefault(entry => entry.DbId == spawn.Id);
+                if (pool == null)
+                {
+                    pool = new SpawnPool
+                    {
+                        DbId = spawn.Id, MapContextId = BootcampMap.MapInfo.MapContextId,
+                        RuntimeMapChannel = BootcampMap, Position = npc.Position, Rotation = npc.Rotation
+                    };
+                    BootcampMap.SpawnPools.Add(pool);
+                }
+                npc.SpawnPool = pool;
+                var template = WorldContext.CreatureEntries.AsNoTracking().Single(entry => entry.Id == npc.DbId);
+                npc.RunSpeed = template.RunSpeed;
+                npc.WalkSpeed = template.WalkSpeed;
             }
 
             private static GameAccountEntry CloneAccountEntry(GameAccountEntry source) =>
@@ -1175,7 +1216,7 @@ namespace Rasa.Test.Missions
             internal Bootstrap(
                 MissionTestContext context,
                 SqliteWorldContext worldContext,
-                MissionManager manager,
+                MissionApplication manager,
                 CharacterManager characters,
                 MapChannelManager maps,
                 ManagerInstances singletons,
@@ -1192,7 +1233,7 @@ namespace Rasa.Test.Missions
 
             internal MissionTestContext Context { get; }
             internal SqliteWorldContext WorldContext { get; }
-            internal MissionManager Manager { get; }
+            internal MissionApplication Manager { get; }
             internal CharacterManager Characters { get; }
             internal MapChannelManager Maps { get; }
             internal ManagerInstances Singletons { get; }
@@ -1287,7 +1328,7 @@ namespace Rasa.Test.Missions
                 .GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
             private readonly FieldInfo _creaturesField = typeof(CreatureManager)
                 .GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
-            private readonly FieldInfo _missionsField = typeof(MissionManager)
+            private readonly FieldInfo _missionsField = typeof(MissionApplication)
                 .GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
             private readonly FieldInfo _inventoryField = typeof(InventoryManager)
                 .GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
@@ -1323,7 +1364,7 @@ namespace Rasa.Test.Missions
                 MapChannelManager maps,
                 DynamicObjectManager objects,
                 CreatureManager creatures,
-                MissionManager missions,
+                MissionApplication missions,
                 InventoryManager inventory,
                 ManifestationManager manifestation,
                 object clan,

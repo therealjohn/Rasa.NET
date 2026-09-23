@@ -113,7 +113,7 @@ namespace Rasa.Managers
             if (creature.State == CharacterState.Dead)
                 return;
 
-            if (BootcampCombat.IsBaseDefender(creature))
+            if (Game.Missions.World.CreatureGameplayRules.IsInvulnerable(creature))
             {
                 foreach (var hit in missile.Args.HitData)
                     if (hit.EntityId == creature.EntityId)
@@ -425,7 +425,7 @@ namespace Rasa.Managers
             else if (missile.TargetEntityId != 0 && !IsOnMap(mapChannel, missile.TargetActor))
                 targetType = 0;
             if (missile.Source is Creature companion &&
-                (companion.SpawnPool?.FollowOwnerCharacterId > 0 || BootcampCombat.IsBaseDefender(companion)) &&
+                (companion.SpawnPool?.FollowOwnerCharacterId > 0 || Game.Missions.World.CreatureGameplayRules.IsDefender(companion)) &&
                 missile.TargetActor is Creature enemy &&
                 !CreatureManager.IsHostileTarget(mapChannel, companion, enemy))
                 targetType = 0;

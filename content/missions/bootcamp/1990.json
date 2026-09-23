@@ -1,0 +1,297 @@
+{
+  "schemaVersion": 1,
+  "release": "bootcamp-modular-v1",
+  "enabled": true,
+  "synthetic": false,
+  "definition": {
+    "missionId": 1990,
+    "contentRevision": "deployment_11",
+    "requirement": "Required",
+    "abandonmentPolicy": "Prohibited",
+    "clientNameTextId": 21132,
+    "giverId": 510203,
+    "receiverId": 510203,
+    "level": 1,
+    "groupType": 1,
+    "categoryId": 1,
+    "shareable": false,
+    "radioCompleteable": false,
+    "comment": "Initiation"
+  },
+  "prerequisites": [],
+  "objectives": [
+    {
+      "missionId": 1990,
+      "contentRevision": "deployment_11",
+      "objectiveId": 1,
+      "requirement": "Required",
+      "clientNameTextId": 21148,
+      "clientBodyTextId": 21149,
+      "ordinal": 1,
+      "initialState": 1,
+      "isRequired": true,
+      "comment": "Approach the Eloh Hologram"
+    },
+    {
+      "missionId": 1990,
+      "contentRevision": "deployment_11",
+      "objectiveId": 2,
+      "requirement": "Required",
+      "clientNameTextId": 21150,
+      "clientBodyTextId": 21151,
+      "ordinal": 2,
+      "initialState": 4,
+      "isRequired": true,
+      "comment": "Approach the Eloh Hologram"
+    }
+  ],
+  "transitions": [
+    {
+      "missionId": 1990,
+      "contentRevision": "deployment_11",
+      "objectiveId": 1,
+      "transitionId": 1,
+      "requirement": "Required",
+      "sequence": 1,
+      "fromState": 1,
+      "toState": 2,
+      "comment": "Bridge approach"
+    },
+    {
+      "missionId": 1990,
+      "contentRevision": "deployment_11",
+      "objectiveId": 2,
+      "transitionId": 1,
+      "requirement": "Required",
+      "sequence": 1,
+      "fromState": 1,
+      "toState": 2,
+      "comment": "Terrace approach"
+    }
+  ],
+  "triggers": [
+    {
+      "missionId": 1990,
+      "contentRevision": "deployment_11",
+      "objectiveId": 1,
+      "transitionId": 1,
+      "triggerId": 1,
+      "requirement": "Required",
+      "kind": "AreaEntered",
+      "sequence": 1,
+      "areaId": 430,
+      "comment": "Approach marker 430"
+    },
+    {
+      "missionId": 1990,
+      "contentRevision": "deployment_11",
+      "objectiveId": 2,
+      "transitionId": 1,
+      "triggerId": 1,
+      "requirement": "Required",
+      "kind": "AreaEntered",
+      "sequence": 1,
+      "areaId": 431,
+      "comment": "Approach marker 431"
+    }
+  ],
+  "actions": [
+    {
+      "missionId": 1990,
+      "contentRevision": "deployment_11",
+      "objectiveId": 1,
+      "transitionId": 1,
+      "actionId": 1,
+      "requirement": "Required",
+      "kind": "CompleteObjective",
+      "sequence": 1,
+      "targetObjectiveId": 1,
+      "objectiveState": 2,
+      "comment": "Complete bridge approach"
+    },
+    {
+      "missionId": 1990,
+      "contentRevision": "deployment_11",
+      "objectiveId": 1,
+      "transitionId": 1,
+      "actionId": 2,
+      "requirement": "Required",
+      "kind": "RevealObjective",
+      "sequence": 2,
+      "targetObjectiveId": 2,
+      "comment": "Reveal terrace approach"
+    },
+    {
+      "missionId": 1990,
+      "contentRevision": "deployment_11",
+      "objectiveId": 1,
+      "transitionId": 1,
+      "actionId": 3,
+      "requirement": "Required",
+      "kind": "ActivateObjective",
+      "sequence": 3,
+      "targetObjectiveId": 2,
+      "objectiveState": 1,
+      "comment": "Activate terrace approach"
+    },
+    {
+      "missionId": 1990,
+      "contentRevision": "deployment_11",
+      "objectiveId": 1,
+      "transitionId": 1,
+      "actionId": 4,
+      "requirement": "Required",
+      "kind": "ShowAmbientConversation",
+      "sequence": 4,
+      "playerFlagId": 1,
+      "npcPackageId": 1634,
+      "comment": "Eloh speaks at the bridge"
+    },
+    {
+      "missionId": 1990,
+      "contentRevision": "deployment_11",
+      "objectiveId": 2,
+      "transitionId": 1,
+      "actionId": 1,
+      "requirement": "Required",
+      "kind": "ShowAmbientConversation",
+      "sequence": 1,
+      "playerFlagId": 1,
+      "npcPackageId": 1636,
+      "comment": "Eloh speaks at the terrace"
+    },
+    {
+      "missionId": 1990,
+      "contentRevision": "deployment_11",
+      "objectiveId": 2,
+      "transitionId": 1,
+      "actionId": 2,
+      "requirement": "Required",
+      "kind": "GrantReward",
+      "sequence": 2,
+      "rewardId": 1,
+      "comment": "Reference mission reward"
+    }
+  ],
+  "rewards": [
+    {
+      "missionId": 1990,
+      "contentRevision": "deployment_11",
+      "rewardId": 1,
+      "requirement": "Required",
+      "experience": 100,
+      "credits": 0,
+      "prestige": 0,
+      "selectionCount": 0,
+      "comment": "1990 completion reward"
+    }
+  ],
+  "rewardItems": [],
+  "indicators": [
+    {
+      "missionId": 1990,
+      "contentRevision": "deployment_11",
+      "objectiveId": 1,
+      "indicatorId": 430,
+      "requirement": "Required",
+      "posX": 389.08984375,
+      "posY": 132.98828125,
+      "posZ": -28.390625,
+      "radius": 10,
+      "show3DEffect": false,
+      "comment": "Eloh approach 1"
+    },
+    {
+      "missionId": 1990,
+      "contentRevision": "deployment_11",
+      "objectiveId": 2,
+      "indicatorId": 431,
+      "requirement": "Required",
+      "posX": 388.80078125,
+      "posY": 132.98828125,
+      "posZ": 6.3046875,
+      "radius": 10,
+      "show3DEffect": false,
+      "comment": "Eloh approach 2"
+    }
+  ],
+  "areas": [
+    {
+      "missionId": 1990,
+      "contentRevision": "deployment_11",
+      "areaId": 430,
+      "requirement": "Required",
+      "mapContextId": 1985,
+      "shape": "Sphere",
+      "posX": 389.08984375,
+      "posY": 132.98828125,
+      "posZ": -28.390625,
+      "radius": 10,
+      "comment": "1990 obj1 area"
+    },
+    {
+      "missionId": 1990,
+      "contentRevision": "deployment_11",
+      "areaId": 431,
+      "requirement": "Required",
+      "mapContextId": 1985,
+      "shape": "Sphere",
+      "posX": 388.80078125,
+      "posY": 132.98828125,
+      "posZ": 6.3046875,
+      "radius": 10,
+      "comment": "1990 obj2 area"
+    }
+  ],
+  "spawnGroups": [],
+  "spawns": [],
+  "scenarios": [],
+  "scenarioSteps": [],
+  "evidence": [
+    {
+      "missionId": 1990,
+      "contentRevision": "deployment_11",
+      "evidenceId": 1,
+      "ownerKind": "Mission",
+      "ownerId": 1990,
+      "sourceKind": "Client",
+      "localClientPath": "C:\\Users\\johmil\\Projects\\trpython\\data\\generated\\client\\missionconversation.pyo_dis",
+      "confidence": 1,
+      "reconstructionNote": "missionconversation offsets 1990/1-6 establish Initiation identity"
+    },
+    {
+      "missionId": 1990,
+      "contentRevision": "deployment_11",
+      "evidenceId": 2,
+      "ownerKind": "Objective",
+      "ownerId": 1,
+      "sourceKind": "Reconstruction",
+      "sourceUri": "https://raw.githubusercontent.com/Blizz127/tabula-rasa-server/2f0cbbdfe4bb8440286261b205f78d75fca85d0c/docs/evidence/bootcamp-d11-positions.json",
+      "localClientPath": "C:\\Users\\johmil\\Projects\\trpython\\data\\generated\\client\\language\\english\\missionobjectiveindicatorlanguage.pyo_dis",
+      "confidence": 0.8,
+      "reconstructionNote": "position_key=area.1990.1 and area.1990.2; measured then snapped to adv_bootcamp navmesh"
+    },
+    {
+      "missionId": 1990,
+      "contentRevision": "deployment_11",
+      "evidenceId": 3,
+      "ownerKind": "Reward",
+      "ownerId": 1,
+      "sourceKind": "Reconstruction",
+      "localClientPath": "no client source: rewards are server-authoritative, never part of the client\u0027s compiled tables",
+      "confidence": 0.3,
+      "reconstructionNote": "placeholder low tutorial-tier experience, no items, pending a real retail reference"
+    }
+  ],
+  "scene": {
+    "script": "bootcamp.initiation",
+    "stateVersion": 1,
+    "recovery": "RestoreCheckpoint",
+    "actors": {},
+    "routes": {},
+    "sequences": {},
+    "names": {},
+    "credit": {},
+    "objectiveRequirements": {}
+  }
+}

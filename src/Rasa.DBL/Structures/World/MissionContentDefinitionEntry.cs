@@ -6,18 +6,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Rasa.Structures.World
 {
-    public enum MissionContentRequirement : byte
-    {
-        Required = 1,
-        Optional = 2
-    }
-
-    public enum MissionAbandonmentPolicy : byte
-    {
-        Allowed = 1,
-        Prohibited = 2
-    }
-
     [Table(TableName)]
     [Index(nameof(ContentRevision), Name = "mission_content_definition_index_content_revision")]
     public class MissionContentDefinitionEntry

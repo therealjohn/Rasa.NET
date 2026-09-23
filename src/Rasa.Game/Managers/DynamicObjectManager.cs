@@ -30,7 +30,7 @@ namespace Rasa.Managers
         private readonly Func<long> _clock;
         private readonly Action<Client, CharacterUpdate, object> _updateCharacter;
         private readonly Action<Client> _disconnect;
-        private readonly MissionManager _missionManager;
+        private readonly MissionApplication _missionManager;
         private readonly CharacterManager _characterManager;
         private MapChannelManager Maps => _maps ?? MapChannelManager.Instance;
         private CharacterManager Characters => _characterManager ?? CharacterManager.Instance;
@@ -104,7 +104,7 @@ namespace Rasa.Managers
             MapChannelManager maps = null, Func<long> clock = null,
             Action<Client, CharacterUpdate, object> updateCharacter = null,
             Action<Client> disconnect = null,
-            MissionManager missionManager = null,
+            MissionApplication missionManager = null,
             CharacterManager characterManager = null)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
@@ -124,7 +124,6 @@ namespace Rasa.Managers
             InitTeleporters();
             LogosManager.Instance.LogosInit();
             KraftwerksManager.Instance.KraftwerksInit();
-            PracticeTargetManager.Initialize(Maps.FindByContextId(1985));
         }
 
         internal void CloneTemplateMap(MapChannel template, MapChannel mapChannel)
@@ -164,7 +163,6 @@ namespace Rasa.Managers
                          .ToArray())
                 CellManager.Instance.AddToWorld(mapChannel, CloneMapLink(link, mapChannel));
 
-            PracticeTargetManager.Initialize(mapChannel);
         }
 
         internal void ForceState(DynamicObject obj, UseObjectState state, int delta)
@@ -640,7 +638,7 @@ namespace Rasa.Managers
                                 0,
                                 10000,
                                 0));
-                        (_missionManager ?? MissionManager.Instance).RecordProgress(
+                        (_missionManager ?? MissionApplication.Instance).RecordProgress(
                             client,
                             MissionProgressEvent.Interaction(
                                 (uint)controlpoint.EntityClassId));
@@ -751,6 +749,7 @@ namespace Rasa.Managers
                                     dropship.Client.Player.MapContextId == dropship.MapContextId)
                                 {
                                     dropship.Client.State = ClientState.Ingame;
+                                    Maps.ResumeMissionScenes(dropship.Client);
                                     ManifestationManager.Instance.ResetInactivity(dropship.Client);
                                 }
                             }
@@ -824,7 +823,7 @@ namespace Rasa.Managers
                             obj.WindupTime == 0 ? DefaultScenarioUseWindupMs : obj.WindupTime,
                             0));
 
-                    (_missionManager ?? MissionManager.Instance).RecordProgress(
+                    (_missionManager ?? MissionApplication.Instance).RecordProgress(
                         client,
                         MissionProgressEvent.Interaction((uint)obj.EntityClassId));
                     return;
@@ -914,7 +913,7 @@ namespace Rasa.Managers
                                         client.Player.Logos.Any(logos => logos == logosId);
                         if (logosId != 0 && !haveLogos)
                             CharacterManager.Instance.UpdateCharacter(client, CharacterUpdate.Logos, logosId);
-                        (_missionManager ?? MissionManager.Instance).RecordProgress(
+                        (_missionManager ?? MissionApplication.Instance).RecordProgress(
                             client,
                             MissionProgressEvent.Interaction((uint)obj.EntityClassId));
 
@@ -1026,7 +1025,7 @@ namespace Rasa.Managers
             Client client,
             CharacterTeleporterEntry waypoint,
             bool recordProgress = false,
-            MissionManager missionManager = null)
+            MissionApplication missionManager = null)
         {
             if (client?.Player == null || waypoint == null)
                 return false;
@@ -1046,7 +1045,7 @@ namespace Rasa.Managers
             Client client,
             CharacterTeleporterEntry waypoint,
             bool recordProgress,
-            MissionManager missionManager)
+            MissionApplication missionManager)
         {
             var waypointType = (WaypointType)waypoint.WaypointType;
             client.CallMethod(
@@ -1059,7 +1058,7 @@ namespace Rasa.Managers
                 waypoint.WaypointId);
             if (recordProgress)
             {
-                (missionManager ?? MissionManager.Instance).RecordProgress(
+                (missionManager ?? MissionApplication.Instance).RecordProgress(
                     client,
                     MissionProgressEvent.Waypoint(waypoint.WaypointId));
             }
@@ -1140,12 +1139,11 @@ namespace Rasa.Managers
 
                 var origin = client.Player.MapChannel;
                 var isDropship = info.WaypointType == WaypointType.Dropship;
-                var isBootcampExitPad =
-                    packet.WaypointId == CharacterManager.BootcampExitPadWaypointId &&
-                    client.Player.MapContextId == CharacterManager.BootcampPrivateMapContextId;
+                var isStartingExperienceExit =
+                    Characters.StartingExperience.IsExitPad(client.Player.MapContextId, packet.WaypointId);
                 if ((packet.MapInstanceId != 0 && packet.MapInstanceId != destinationMap.InstanceId) ||
                     info.Contested ||
-                    (!isBootcampExitPad &&
+                    (!isStartingExperienceExit &&
                         !client.Player.GainedWaypoints.Any(waypoint => waypoint.WaypointId == packet.WaypointId &&
                             waypoint.WaypointType == (byte)info.WaypointType)) ||
                     (!isDropship && info.WaypointType != WaypointType.Waypoint && info.WaypointType != WaypointType.LocalTeleporter) ||
@@ -1155,7 +1153,7 @@ namespace Rasa.Managers
                     return;
                 }
 
-                if (isDropship && !isBootcampExitPad)
+                if (isDropship && !isStartingExperienceExit)
                 {
                     if (Dropships.Values.Any(ship =>
                             ship.DropshipType == DropshipType.Teleporter &&
@@ -1183,10 +1181,10 @@ namespace Rasa.Managers
                     return;
                 }
 
-                if (isBootcampExitPad)
+                if (isStartingExperienceExit)
                 {
-                    if (!Characters.TryDepartBootcampFromExitPad(client))
-                        RejectTravel(client, "Bootcamp departure is not available.");
+                    if (!Characters.StartingExperience.TryDepart(client))
+                        RejectTravel(client, "Starting-experience departure is not available.");
                     return;
                 }
 
@@ -1280,6 +1278,7 @@ namespace Rasa.Managers
 
                 client.PendingTransfer = null;
                 client.State = ClientState.Ingame;
+                Maps.ResumeMissionScenes(client);
                 client.CallMethod(client.Player.EntityId, new TeleportArrivalPacket());
                 client.CallMethod(SysEntity.ClientMethodId, new UnrequestMovementBlockPacket());
             }
@@ -1360,6 +1359,7 @@ namespace Rasa.Managers
                 LootDispenserManager.Instance.RemoveForOwner(transfer.OriginMap, client);
                 CellManager.Instance.RemoveFromWorld(client);
                 transfer.OriginMap.ClientList.RemoveAll(member => member == client);
+                Maps.DetachMissionScenes(client, transfer.OriginMap);
                 transfer.HasDeparted = true;
                 client.Player.MapChannel = transfer.DestinationMap;
                 client.Player.MapContextId = transfer.DestinationMap.MapInfo.MapContextId;

@@ -60,8 +60,8 @@
         [PacketHandler(GameOpcode.AssignRadioMission)]
         private void AssignRadioMission(AssignRadioMissionPacket packet)
         {
-            MissionManager.Instance.TryAcceptRadioMission(
-                Client, packet.MissionId, CharacterManager.CanAcceptStartingExperienceMission);
+            MissionApplication.Instance.TryAcceptRadioMission(
+                Client, packet.MissionId, CharacterManager.Instance.StartingExperience.CanAcceptRadio);
         }
 
         [PacketHandler(GameOpcode.AutoFireKeepAlive)]

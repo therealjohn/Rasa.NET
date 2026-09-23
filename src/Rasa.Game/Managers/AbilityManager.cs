@@ -48,7 +48,7 @@ namespace Rasa.Managers
         private static readonly object InstanceLock = new object();
 
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
-        private readonly MissionManager _missionManager;
+        private readonly MissionApplication _missionManager;
         private readonly Dictionary<ActionId, ActionInfo> _actions = new Dictionary<ActionId, ActionInfo>();
         private readonly Dictionary<uint, (ActionId ActionId, uint Level)> _itemTemplateActions = new Dictionary<uint, (ActionId, uint)>();
         private readonly HashSet<ActionId> _reportedUnsupported = new HashSet<ActionId>();
@@ -129,7 +129,7 @@ namespace Rasa.Managers
 
         private AbilityManager(
             IGameUnitOfWorkFactory gameUnitOfWorkFactory,
-            MissionManager missionManager)
+            MissionApplication missionManager)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
             _missionManager = missionManager;
@@ -877,7 +877,7 @@ namespace Rasa.Managers
                 recovery.Hits.Add(hit);
                 if (taken > 0 &&
                     target.DbId != 0)
-                    (_missionManager ?? MissionManager.Instance).RecordProgress(
+                    (_missionManager ?? MissionApplication.Instance).RecordProgress(
                         client,
                         MissionProgressEvent.AbilityHit(
                             (uint)action.ActionId,

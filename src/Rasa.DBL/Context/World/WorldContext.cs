@@ -99,6 +99,17 @@ namespace Rasa.Context.World
             SetupCreatureClassFlag(modelBuilder);
             SetupSkillCharacter(modelBuilder);
             SetupMissionContent(modelBuilder);
+            modelBuilder.Entity<MissionActiveReleaseEntry>().Property(entry => entry.Id).ValueGeneratedNever();
+            modelBuilder.Entity<MissionReleaseMemberEntry>()
+                .HasKey(entry => new { entry.ReleaseName, entry.MissionId });
+            modelBuilder.Entity<MissionReleaseMemberEntry>().HasOne<MissionContentDefinitionEntry>().WithMany()
+                .HasForeignKey(entry => new { entry.MissionId, entry.ContentRevision }).OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionSceneBindingEntry>()
+                .HasKey(entry => new { entry.MissionId, entry.ContentRevision });
+            modelBuilder.Entity<MissionExperienceBindingEntry>()
+                .HasKey(entry => new { entry.ReleaseName, entry.ExperienceKey });
+            modelBuilder.Entity<MissionSceneBindingEntry>().HasOne<MissionContentDefinitionEntry>().WithMany()
+                .HasForeignKey(entry => new { entry.MissionId, entry.ContentRevision }).OnDelete(DeleteBehavior.Restrict);
         }
 
         /// <summary>

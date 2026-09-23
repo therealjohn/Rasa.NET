@@ -34,7 +34,7 @@ namespace Rasa.Managers
         private readonly Action<Client> _enterMapChannels;
         private readonly PrivateMapInstanceService _privateInstances;
         private readonly MissionDeadlineService _missionDeadlineService;
-        private readonly IMissionScenarioService _missionScenarioService;
+        private readonly IMissionSceneHost _missionScenarioService;
         public static MapChannelManager Instance
         {
             get
@@ -51,15 +51,15 @@ namespace Rasa.Managers
                         // a private instance, Release on losing one, Tick every world tick) was a
                         // silent no-op - scheduled scenario steps never fired and a relog rebuilding a
                         // private instance never restored any scenario-spawned object, dispenser
-                        // included. MissionManager.Instance already builds and exposes the one real
-                        // MissionScenarioService (ScenarioService); share that one instead of leaving
+                        // included. MissionApplication.Instance already builds and exposes the one real
+                        // MissionSceneHost (ScenarioService); share that one instead of leaving
                         // this one unset, since PlanSpawnDynamicObject's runtime registry
                         // (_runtimeByMap) only means anything if Rebuild queries the same instance
                         // that created it.
                         if (_instance == null)
                             _instance = new MapChannelManager(
                                 Server.GameUnitOfWorkFactory,
-                                scenarioService: MissionManager.Instance.ScenarioService);
+                                scenarioService: MissionApplication.Instance.ScenarioService);
                     }
                 }
 
@@ -72,7 +72,7 @@ namespace Rasa.Managers
             Action<Client> assignPlayer = null, Action<Client> enterMapChannels = null,
             PrivateMapInstanceService privateInstances = null,
             MissionDeadlineService missionDeadlineService = null,
-            IMissionScenarioService scenarioService = null)
+            IMissionSceneHost scenarioService = null)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
             _clock = clock ?? (() => Environment.TickCount64);
@@ -326,12 +326,7 @@ namespace Rasa.Managers
                     if (Timer.IsTriggered("Regenerate"))
                         ActorManager.Instance.Regenerate(mapChannel);
 
-                    if (Timer.IsTriggered("MissionDeadlineUpdate"))
-                        foreach (var client in mapChannel.ClientList.ToArray())
-                        {
-                            _missionDeadlineService.Evaluate(client);
-                            _missionScenarioService?.Tick(client);
-                        }
+                    _missionScenarioService?.TickMap(mapChannel);
 
                     // warn idle players and flag long-idle ones for removal below
                     ManifestationManager.Instance.CheckInactivity(mapChannel);
@@ -550,6 +545,7 @@ namespace Rasa.Managers
 
             client.PendingTransfer = null;
             client.State = ClientState.Ingame;
+            ResumeMissionScenes(client);
             ManifestationManager.Instance.ResetInactivity(client);
             client.CallMethod(SysEntity.ClientMethodId, new UnrequestMovementBlockPacket());
             _enterMapChannels(client);
@@ -638,6 +634,7 @@ namespace Rasa.Managers
                 CellManager.Instance.DetachClient(map, client);
                 map.ClientList.RemoveAll(member => member == client);
                 RemoveQueuedClient(map, client);
+                DetachMissionScenes(client, map);
             }
 
             var inventoryIds = player.Inventory.PersonalInventory.Concat(player.Inventory.HomeInventory)
@@ -657,6 +654,11 @@ namespace Rasa.Managers
             ReleaseOwnedPrivateInstances(player.Id);
             player.Disconected = true;
         }
+
+        internal void DetachMissionScenes(Client client, MapChannel map) =>
+            _missionScenarioService?.Detach(client, map);
+
+        internal void ResumeMissionScenes(Client client) => _missionScenarioService?.Resume(client);
 
         /// <summary>
         /// Moves an ingame player to a position on any loaded map by way of the loading screen:
@@ -722,6 +724,7 @@ namespace Rasa.Managers
                 CommunicatorManager.Instance.LeaveMapChannels(client);
                 CellManager.Instance.RemoveFromWorld(client);
                 origin.ClientList.RemoveAll(member => member == client);
+                DetachMissionScenes(client, origin);
 
                 client.Player.MapChannel = destinationMap;
                 client.Player.MapContextId = destinationMap.MapInfo.MapContextId;
@@ -767,6 +770,7 @@ namespace Rasa.Managers
 
         public void RemovePlayer(Client client, bool logout)
         {
+            DetachMissionScenes(client, client.Player.MapChannel);
             ManifestationManager.Instance.RemovePlayerCharacter(client);
             client.RestoreTransferOrigin();
             DynamicObjectManager.Instance.CleanupClientDropships(client);

@@ -149,11 +149,11 @@ namespace Rasa.Test.Missions
             return fixture;
         }
 
-        private static MissionManager LoadManager(
+        private static MissionApplication LoadManager(
             MissionTestContext context,
             MissionContentFixture fixture)
         {
-            var manager = new MissionManager(
+            var manager = new MissionApplication(
                 new MissionContentLoadingFactory(context, fixture.CreateWorldUnitOfWork()),
                 new Dictionary<uint, Mission>());
             var report = manager.LoadMissions();

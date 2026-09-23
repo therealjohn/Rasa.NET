@@ -28,7 +28,7 @@ namespace Rasa.Test.Missions
                 new Dictionary<uint, Mission>());
             var fixture = CreateDeadlineFixture();
             var now = new DateTime(2026, 9, 19, 6, 30, 0, DateTimeKind.Utc);
-            MissionManager manager = null;
+            MissionApplication manager = null;
             var deadlineService = new MissionDeadlineService(
                 () => context,
                 () => manager,
@@ -55,7 +55,7 @@ namespace Rasa.Test.Missions
                 new Dictionary<uint, Mission>());
             var fixture = CreateDeadlineFixture();
             var now = new DateTime(2026, 9, 19, 6, 30, 0, DateTimeKind.Utc);
-            MissionManager manager = null;
+            MissionApplication manager = null;
             var deadlineService = new MissionDeadlineService(
                 () => context,
                 () => manager,
@@ -98,7 +98,7 @@ namespace Rasa.Test.Missions
                 new Dictionary<uint, Mission>());
             var fixture = CreateDeadlineFixture();
             var now = new DateTime(2026, 9, 19, 6, 30, 0, DateTimeKind.Utc);
-            MissionManager manager = null;
+            MissionApplication manager = null;
             var deadlineService = new MissionDeadlineService(
                 () => context,
                 () => manager,
@@ -175,12 +175,12 @@ namespace Rasa.Test.Missions
             return fixture;
         }
 
-        private static MissionManager LoadManager(
+        private static MissionApplication LoadManager(
             MissionTestContext context,
             MissionContentFixture fixture,
             MissionDeadlineService deadlineService)
         {
-            var manager = new MissionManager(
+            var manager = new MissionApplication(
                 new MissionContentLoadingFactory(context, fixture.CreateWorldUnitOfWork()),
                 new Dictionary<uint, Mission>(),
                 deadlineService);

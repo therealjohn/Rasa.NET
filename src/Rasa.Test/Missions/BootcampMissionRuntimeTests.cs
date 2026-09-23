@@ -284,7 +284,7 @@ namespace Rasa.Test.Missions
         }
 
         private static void AssertMissionAdvertised(
-            MissionManager manager,
+            MissionApplication manager,
             Manifestation player,
             Creature npc,
             uint missionId)
@@ -296,7 +296,7 @@ namespace Rasa.Test.Missions
         }
 
         private static void AssertMissionNotAdvertised(
-            MissionManager manager,
+            MissionApplication manager,
             Manifestation player,
             Creature npc,
             uint missionId)
@@ -328,10 +328,11 @@ namespace Rasa.Test.Missions
                 .SingleOrDefault(creature =>
                     creature.Npc?.NpcPackageId == npcPackageId &&
                     (missionId == null ||
-                     creature.SpawnPool?.ScenarioKey?.Contains($"mission:{missionId}", StringComparison.Ordinal) == true));
+                     creature.SpawnPool?.ScenarioMissionId == missionId));
 
         private static DynamicObject FindScenarioObject(MapChannel map, string key) =>
             map.DynamicObjects.SingleOrDefault(dynamicObject =>
+                dynamicObject.SceneActorRole == key ||
                 string.Equals(dynamicObject.ScenarioKey, key, StringComparison.Ordinal) ||
                 dynamicObject.ScenarioKey?.EndsWith($":object:{key}", StringComparison.Ordinal) == true);
 
@@ -379,6 +380,7 @@ namespace Rasa.Test.Missions
             var worldDatabase = Path.Combine(databaseDirectory, "world");
             var worldContext = (SqliteWorldContext)CreateContext(typeof(SqliteWorldContext), worldDatabase);
             worldContext.Database.Migrate();
+            Content.MissionPackTestSupport.PublishBootcamp(worldContext);
 
             var context = MissionTestContext.WithCustomDefinitions(new Dictionary<uint, Mission>());
             context.Map.MapInfo = new MapInfo(BootcampMapContextId, "bootcamp_runtime", 1556, 0);
@@ -387,7 +389,7 @@ namespace Rasa.Test.Missions
             PrepareBootcampScenarioClasses();
 
             RuntimeLoadingFactory factory = null;
-            MissionManager manager = null;
+            MissionApplication manager = null;
             var now = new DateTime(2026, 9, 19, 12, 0, 0, DateTimeKind.Utc);
             var creatures = new CreatureManager(null, new ManifestationManager(context));
             foreach (var creatureId in new[] { 39U, 50U, 510208U, 510209U })
@@ -415,7 +417,7 @@ namespace Rasa.Test.Missions
                 () => factory,
                 () => manager,
                 () => now);
-            var scenarioService = new MissionScenarioService(
+            var scenarioService = new MissionSceneHost(
                 () => factory,
                 () => manager,
                 manifestation,
@@ -437,13 +439,14 @@ namespace Rasa.Test.Missions
             });
             objects = new DynamicObjectManager(null, maps);
             factory = new RuntimeLoadingFactory(context, worldContext);
-            manager = new MissionManager(
+            manager = new MissionApplication(
                 factory,
                 new Dictionary<uint, Mission>(),
                 new Dictionary<uint, MissionRewardDefinition>(),
                 manifestation,
                 deadlineService: deadlineService,
-                scenarioService: scenarioService);
+                scenarioService: scenarioService,
+                utcNow: () => now);
             var report = manager.LoadMissions();
             Assert.IsFalse(report.BlocksReadiness, string.Join(" | ", report.Diagnostics.Select(diagnostic => diagnostic.Code)));
             var singletons = new ManagerInstances(maps, objects, creatures, manager);
@@ -486,7 +489,7 @@ namespace Rasa.Test.Missions
             internal BootcampRuntimeHarness(
                 MissionTestContext context,
                 SqliteWorldContext worldContext,
-                MissionManager manager,
+                MissionApplication manager,
                 MapChannel bootcampMap,
                 IDisposable singletons,
                 Func<DateTime> getUtcNow,
@@ -503,7 +506,7 @@ namespace Rasa.Test.Missions
 
             internal MissionTestContext Context { get; }
             internal SqliteWorldContext WorldContext { get; }
-            internal MissionManager Manager { get; }
+            internal MissionApplication Manager { get; }
             internal MapChannel BootcampMap { get; }
 
             internal DateTime UtcNow
@@ -655,7 +658,7 @@ namespace Rasa.Test.Missions
                 .GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
             private readonly FieldInfo _creaturesField = typeof(CreatureManager)
                 .GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
-            private readonly FieldInfo _missionsField = typeof(MissionManager)
+            private readonly FieldInfo _missionsField = typeof(MissionApplication)
                 .GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
             private readonly object _previousMaps;
             private readonly object _previousObjects;
@@ -666,7 +669,7 @@ namespace Rasa.Test.Missions
                 MapChannelManager maps,
                 DynamicObjectManager objects,
                 CreatureManager creatures,
-                MissionManager missions)
+                MissionApplication missions)
             {
                 _previousMaps = _mapsField.GetValue(null);
                 _previousObjects = _objectsField.GetValue(null);

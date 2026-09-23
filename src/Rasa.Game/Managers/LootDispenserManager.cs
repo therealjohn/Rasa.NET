@@ -42,7 +42,7 @@ namespace Rasa.Managers
         private static LootDispenserManager _instance;
         private static readonly object InstanceLock = new object();
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
-        private readonly MissionManager _missionManager;
+        private readonly MissionApplication _missionManager;
         private readonly Func<Client, double> _distance;
         private readonly Action<Item> _beforeItemPublication;
         private readonly Func<int, int, int> _lootRoll;
@@ -86,7 +86,7 @@ namespace Rasa.Managers
         internal LootDispenserManager(
             IGameUnitOfWorkFactory gameUnitOfWorkFactory,
             Func<Client, double> distance = null,
-            MissionManager missionManager = null,
+            MissionApplication missionManager = null,
             Action<Item> beforeItemPublication = null,
             Func<int, int, int> lootRoll = null)
         {
@@ -235,8 +235,8 @@ namespace Rasa.Managers
 
         private LootDispenser CreateLoot(Client killer, LootDispenser loot)
         {
-            if (BootcampCombat.IsThrax(loot.Corpse))
-                return CreateThraxLoot(killer, loot);
+            if (Game.Missions.World.CreatureGameplayRules.Policy(loot.Corpse).Loot != null)
+                return CreateAuthoredLoot(killer, loot);
 
             int giveLoot;
 
@@ -263,7 +263,7 @@ namespace Rasa.Managers
             return loot;
         }
 
-        private LootDispenser CreateThraxLoot(Client owner, LootDispenser loot)
+        private LootDispenser CreateAuthoredLoot(Client owner, LootDispenser loot)
         {
             var staged = new List<Item>();
             var committed = false;
@@ -272,18 +272,18 @@ namespace Rasa.Managers
                 using var unit = _gameUnitOfWorkFactory.CreateChar();
                 unit.ExecuteTransaction(() =>
                 {
-                    foreach (var drop in BootcampThraxLoot.Roll(_lootRoll))
+                    foreach (var drop in Game.Missions.World.CreatureGameplayRules.Policy(loot.Corpse).Loot.Roll(_lootRoll))
                     {
                         var template = ItemManager.Instance.GetItemTemplateById(drop.TemplateId);
                         var itemClass = template == null ? null :
                             EntityClassManager.Instance.GetClassInfo(template.Class)?.ItemClassInfo;
                         if (itemClass == null || drop.Quantity > itemClass.StackSize)
-                            throw new GameplayRejectionException($"Invalid Bootcamp Thrax loot template {drop.TemplateId}.");
+                            throw new GameplayRejectionException($"Invalid authored loot template {drop.TemplateId}.");
                         var item = ItemManager.StageItem(template, drop.Quantity, string.Empty);
                         staged.Add(item);
                         item.Id = unit.Items.CreateItem(item);
                         if (item.Id == 0)
-                            throw new GameplayRejectionException($"Thrax loot item {drop.TemplateId} was not persisted.");
+                            throw new GameplayRejectionException($"Authored loot item {drop.TemplateId} was not persisted.");
                     }
                 });
                 committed = true;
@@ -358,7 +358,7 @@ namespace Rasa.Managers
                         !EntityManager.Instance.TryGetObject(obj.EntityId, out var registered) ||
                         !ReferenceEquals(obj, registered) ||
                         _gameUnitOfWorkFactory == null || owner.AccountEntry == null ||
-                        !(_missionManager ?? MissionManager.Instance).GetRewardPackages(source.MissionId)
+                        !(_missionManager ?? MissionApplication.Instance).GetRewardPackages(source.MissionId)
                             .TryGetValue(source.RewardId, out var reward))
                         throw new GameplayRejectionException("Reward loot source is unavailable.");
 
@@ -684,9 +684,9 @@ namespace Rasa.Managers
             }
 
             var grant = new InventoryManager.LootGrant(_beforeItemPublication);
-            var missionManager = _missionManager ?? MissionManager.Instance;
+            var missionManager = _missionManager ?? MissionApplication.Instance;
             var progressPlan =
-                MissionManager.MissionProgressPublicationPlan.Empty;
+                MissionProgressPublicationPlan.Empty;
             try
             {
                 var factory = loot.UnitOfWorkFactory ?? _gameUnitOfWorkFactory;
@@ -777,17 +777,17 @@ namespace Rasa.Managers
                 {
                     obj.StateId = UseObjectState.TdStateOpened;
                     obj.IsEnabled = false;
-                    MissionManager.TryPublish(
+                    MissionApplication.TryPublish(
                         () => CellManager.Instance.CellCallMethod(obj, new ForceStatePacket(obj.StateId, 0)),
                         $"object {obj.EntityId} opened state");
-                    MissionManager.TryPublish(
+                    MissionApplication.TryPublish(
                         () => DynamicObjectManager.Instance.SetScenarioInteractionEnabled(loot.Map, obj, false),
                         $"object {obj.EntityId} empty state");
                 }
             }
 
             if (creditsGranted)
-                MissionManager.TryPublish(
+                MissionApplication.TryPublish(
                     () => client.CallMethod(
                         client.Player.EntityId,
                         new UpdateCreditsPacket(
@@ -795,23 +795,23 @@ namespace Rasa.Managers
                             creditsAfter,
                             0)),
                     $"corpse {loot.EntityId} credits");
-            MissionManager.TryPublish(
+            MissionApplication.TryPublish(
                 () => client.CallMethod(
                     loot.EntityId,
                     new ActorGotLootPacket(loot)),
                 $"corpse {loot.EntityId} actor loot result");
-            MissionManager.TryPublish(
+            MissionApplication.TryPublish(
                 () => client.CallMethod(
                     loot.EntityId,
                     new TakenInfoPacket(
                         client.Player.EntityId,
                         Taken(loot))),
                 $"corpse {loot.EntityId} taken state");
-            MissionManager.TryPublish(
+            MissionApplication.TryPublish(
                 () => CanLootItems(client, loot),
                 $"corpse {loot.EntityId} lootability");
             if (!loot.HasLoot)
-                MissionManager.TryPublish(
+                MissionApplication.TryPublish(
                     () => GotLoot(client, loot),
                     $"corpse {loot.EntityId} completion");
 

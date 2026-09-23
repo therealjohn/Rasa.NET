@@ -15,6 +15,7 @@ namespace Rasa.Test.Missions
     using Rasa.Managers;
     using Rasa.Packets;
     using Rasa.Packets.MapChannel.Client;
+    using Rasa.Packets.MapChannel.Server;
     using Rasa.Packets.Mission.Server;
     using Rasa.Repositories.Char.CharacterQualification;
     using Rasa.Repositories.Char.CharacterStartingExperience;
@@ -57,9 +58,76 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
-        public void FreshCharacterTimesOutMission1995ThenCompletes2005AndDepartsWithoutDuplicate1995CompletionOutputs()
+        public void ClearingRewardedCaptureTheFlagPreservesYoungbloodAcrossFreshReconnectForMission1995()
         {
             using var harness = CreateFreshBootcampHarness();
+            AdvanceFreshCharacterToMission1995(harness);
+            var handler = new ClientPacketHandler();
+            handler.RegisterClient(harness.Client);
+            new PacketRouter<ClientPacketHandler, GameOpcode>().RoutePacket(handler,
+                new AbandonMissionPacket { MissionId = MissionCaptureTheFlag });
+            Assert.IsFalse(harness.Client.Player.Missions.ContainsKey(MissionCaptureTheFlag));
+            Assert.AreEqual(MissionState.Completed, harness.Client.Player.MissionHistory[MissionCaptureTheFlag]);
+
+            harness.ReconnectFresh();
+
+            var youngblood = BootcampRuntimeTestHarness.FindCreature(
+                harness.BootcampMap, BootcampRuntimeTestHarness.CaptainYoungbloodCreatureId);
+            Assert.IsNotNull(youngblood, "The next mission's Bootcamp NPC must outlive the previous journal entry.");
+            Assert.IsTrue(youngblood.IsInteractable);
+            harness.Drain();
+            var npcs = new NpcManager(harness.Context, harness.Manager);
+            npcs.RequestNpcConverse(harness.Client, new RequestNPCConversePacket { EntityId = youngblood.EntityId });
+            var conversation = harness.Drain().OfType<ConversePacket>().Single();
+            Assert.IsTrue(conversation.ConvoDataDict.TryGetValue(ConversationType.MissionDispense, out var offers));
+            Assert.IsTrue(((Dictionary<uint, MissionInfo>)offers).ContainsKey(MissionCallingForReinforcements));
+            npcs.AssignNPCMission(harness.Client, new AssignNPCMissionPacket
+            {
+                NpcEntityId = youngblood.EntityId, MissionId = MissionCallingForReinforcements
+            });
+            Assert.AreEqual(MissionState.Active, harness.Client.Player.Missions[MissionCallingForReinforcements].State);
+            using var verify = harness.Context.CreateChar();
+            Assert.IsNull(verify.CharacterMissions.GetByCharacterAndMission(harness.Client.Player.Id, MissionCaptureTheFlag));
+            Assert.IsNotNull(verify.CharacterMissions.GetByCharacterAndMission(harness.Client.Player.Id, MissionCallingForReinforcements));
+            Assert.AreEqual(0U, verify.CharacterMissions.Runtime.Scene(youngblood.SpawnPool.SceneRunId).MissionId);
+        }
+
+        [TestMethod]
+        public void EntitledAccountCanChooseNormalBootcampForANewPendingCharacterWithoutCopiedProgress()
+        {
+            using var harness = CreateFreshBootcampHarness(accountEntitled: true);
+            Assert.IsTrue(harness.Client.AccountEntry.CanSkipBootcamp);
+            Assert.IsFalse(harness.Client.Player.StartingExperienceCompleted);
+            Assert.AreEqual(0, harness.Client.Player.MissionHistory.Count);
+            CollectionAssert.AreEquivalent(
+                new[] { BootcampRuntimeTestHarness.MissionInitiation },
+                harness.Client.Player.Missions.Keys.ToArray());
+            using (var unit = harness.Context.CreateChar())
+            {
+                Assert.AreEqual(0, unit.CharacterMissions.Runtime.History(harness.Client.Player.Id).Count);
+                Assert.IsFalse(unit.CharacterQualifications.HasQualification(
+                    harness.Client.Player.Id, CharacterQualificationKey.BootcampComplete));
+            }
+
+            var youngblood = AdvanceFreshCharacterToMission1995(harness);
+            CompleteCallingForReinforcements(harness, youngblood);
+            AssertMissionChainThroughFinale(harness);
+            using (var unit = harness.Context.CreateChar())
+                Assert.AreEqual(Rasa.Game.Missions.Persistence.MissionRequirementFactsAdapter
+                    .HasCompletedStartingExperience(unit, harness.Client.Player.Id),
+                    harness.Client.Player.StartingExperienceCompleted);
+
+            DepartToAliaDas(harness);
+            AssertDurableBootcampDeparture(harness, MissionCallingForReinforcements);
+            Assert.IsTrue(harness.Client.Player.StartingExperienceCompleted);
+        }
+
+        [TestMethod]
+        [DataRow(false)]
+        [DataRow(true)]
+        public void FreshCharacterTimesOutMission1995ThenCompletes2005AndDepartsWithoutDuplicate1995CompletionOutputs(bool accountEntitled)
+        {
+            using var harness = CreateFreshBootcampHarness(accountEntitled);
             var youngblood = StartTimedFinale(harness);
             harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
             harness.Drain();
@@ -302,9 +370,9 @@ namespace Rasa.Test.Missions
                 new CharacterStartingExperienceRepository(verify).Get(secondCharacterId).State);
         }
 
-        private static BootcampRuntimeTestHarness.Harness CreateFreshBootcampHarness()
+        private static BootcampRuntimeTestHarness.Harness CreateFreshBootcampHarness(bool accountEntitled = false)
         {
-            var harness = BootcampRuntimeTestHarness.CreateFromPendingSelection();
+            var harness = BootcampRuntimeTestHarness.CreateFromPendingSelection(accountEntitled: accountEntitled);
             Assert.AreEqual(RasaGame::Rasa.Data.ClientState.Ingame, harness.Client.State);
             Assert.AreEqual(BootcampRuntimeTestHarness.BootcampMapContextId, harness.Client.Player.MapContextId);
             Assert.IsNotNull(harness.Client.Player.MapChannel);

@@ -194,11 +194,11 @@ namespace Rasa.Managers
             if (target == null || amount <= 0 || target.State == CharacterState.Dead)
                 return 0;
 
-            if (target is Creature defender && BootcampCombat.IsBaseDefender(defender))
+            if (target is Creature defender && Game.Missions.World.CreatureGameplayRules.IsInvulnerable(defender))
                 return 0;
 
             if (source is Creature companion &&
-                (companion.SpawnPool?.FollowOwnerCharacterId > 0 || BootcampCombat.IsBaseDefender(companion)) &&
+                (companion.SpawnPool?.FollowOwnerCharacterId > 0 || Game.Missions.World.CreatureGameplayRules.IsDefender(companion)) &&
                 target is Creature enemy && !CreatureManager.IsHostileTarget(mapChannel, companion, enemy))
                 return 0;
 

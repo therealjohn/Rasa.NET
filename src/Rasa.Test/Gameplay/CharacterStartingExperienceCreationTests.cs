@@ -34,6 +34,7 @@ namespace Rasa.Test.Gameplay
     using Rasa.Repositories.Char.CharacterMissionDeadline;
     using Rasa.Repositories.Char.CharacterMissionProgress;
     using Rasa.Repositories.Char.CharacterMissionScenario;
+    using Rasa.Repositories.Char.CharacterQualification;
     using Rasa.Repositories.Char.CharacterSkills;
     using Rasa.Repositories.Char.CharacterStartingExperience;
     using Rasa.Repositories.Char.CharacterTeleporter;
@@ -341,12 +342,20 @@ namespace Rasa.Test.Gameplay
         }
 
         [TestMethod]
-        public void SwitchingToBootcampCharacterCreatesOwnedPrivate1985Instance()
+        [DataRow(false)]
+        [DataRow(true)]
+        public void SwitchingToBootcampCharacterCreatesOwnedPrivate1985Instance(bool completedQualification)
         {
             using var context = new CharacterCreationContext();
             context.SeedAccount(21);
             var characterId = context.SeedCharacter(21, 1, "Bootcamp", mapContextId: 1985);
             context.SeedStartingExperience(characterId, CharacterStartingExperienceState.Bootcamp);
+            if (completedQualification)
+            {
+                using var unit = context.CreateChar();
+                unit.CharacterQualifications.Add(
+                    new CharacterQualificationEntry(characterId, CharacterQualificationKey.BootcampComplete));
+            }
             var client = context.CreateClient(21);
             var maps = new MapChannelManager(context, privateInstances: new PrivateMapInstanceService());
             maps.MapChannelArray.Add(1985, CreatePublicMap(1985));
@@ -363,6 +372,7 @@ namespace Rasa.Test.Gameplay
             Assert.AreSame(client.Player.MapChannel,
                 maps.FindOwnedPrivateInstance(1985, characterId));
             Assert.AreEqual(ClientState.Loading, client.State);
+            Assert.AreEqual(completedQualification, client.Player.StartingExperienceCompleted);
         }
 
         [TestMethod]
@@ -638,7 +648,7 @@ namespace Rasa.Test.Gameplay
                     characterMissionProgress: new CharacterMissionProgressRepository(context),
                     characterMissionScenario: new CharacterMissionScenarioRepository(context),
                     characterOptions: null,
-                    characterQualifications: null,
+                    characterQualifications: new CharacterQualificationRepository(context),
                     characterSkills: new CharacterSkillsRepository(context),
                     characterStartingExperience: new CharacterStartingExperienceRepository(context),
                     characterTeleporters: new CharacterTeleporterRepository(context),

@@ -388,7 +388,7 @@ namespace Rasa.Test.Gameplay
         internal CharacterManager Characters { get; }
         internal MapChannelManager Maps { get; }
         internal DynamicObjectManager Objects { get; }
-        internal MissionManager Missions { get; }
+        internal MissionApplication Missions { get; }
 
         private string CharDatabase => Path.Combine(_directory, "characters");
         private string WorldDatabase => Path.Combine(_directory, "world");
@@ -405,8 +405,9 @@ namespace Rasa.Test.Gameplay
 
             _worldContext = OpenWorld();
             _worldContext.Database.Migrate();
+            Rasa.Test.Missions.Content.MissionPackTestSupport.PublishBootcamp(_worldContext);
 
-            Missions = new MissionManager(
+            Missions = new MissionApplication(
                 this,
                 new Dictionary<uint, Mission>(),
                 new Dictionary<uint, MissionRewardDefinition>(),

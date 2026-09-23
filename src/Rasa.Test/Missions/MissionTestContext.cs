@@ -75,7 +75,7 @@ namespace Rasa.Test.Missions
         internal Action<string> BeforeCommand { get; set; }
         internal Client Client { get; }
         internal MapChannel Map => _world.Map;
-        internal MissionManager Manager { get; }
+        internal MissionApplication Manager { get; }
         internal Creature Receiver { get; private set; }
         internal MissionRewardDefinition Reward { get; private set; }
 
@@ -90,7 +90,8 @@ namespace Rasa.Test.Missions
             IReadOnlyDictionary<uint, Mission> definitions,
             IReadOnlyDictionary<uint, MissionRewardDefinition> rewards = null,
             Action<Item> beforeRewardItemPublication = null,
-            Action<PythonPacket> beforeMissionPacketPublication = null) : this()
+            Action<PythonPacket> beforeMissionPacketPublication = null,
+            Func<DateTime> utcNow = null) : this()
         {
             SeedCharacter(1, 0, 1);
             _world = new WorldTestContext();
@@ -114,9 +115,9 @@ namespace Rasa.Test.Missions
                 });
             CellManager.Instance.AddToWorld(Client);
             Drain();
-            Manager = new MissionManager(this, definitions, rewards ?? new Dictionary<uint, MissionRewardDefinition>(),
+            Manager = new MissionApplication(this, definitions, rewards ?? new Dictionary<uint, MissionRewardDefinition>(),
                 new ManifestationManager(this), beforeRewardItemPublication,
-                beforeMissionPacketPublication);
+                beforeMissionPacketPublication, utcNow: utcNow);
         }
 
         internal static MissionTestContext WithDefinitions(params uint[] missionIds) =>
@@ -137,7 +138,11 @@ namespace Rasa.Test.Missions
             MissionProgressRule progressRule,
             uint missionId = 321,
             uint objectiveId = 1,
-            IReadOnlyDictionary<uint, MissionObjectiveCounterDefinition> counters = null)
+            IReadOnlyDictionary<uint, MissionObjectiveCounterDefinition> counters = null,
+            global::Rasa.Missions.Runtime.MissionCreditPolicy creditPolicy = null,
+            global::Rasa.Missions.Runtime.MissionRequirement objectiveRequirement = null,
+            Func<DateTime> utcNow = null,
+            Action<PythonPacket> beforeMissionPacketPublication = null)
         {
             counters ??= new Dictionary<uint, MissionObjectiveCounterDefinition>();
             var counterTextIds = new uint?[3];
@@ -157,7 +162,8 @@ namespace Rasa.Test.Missions
                 Array.Empty<uint>(),
                 Array.Empty<uint>(),
                 Array.Empty<MissionIndicator>(),
-                progressRule);
+                progressRule,
+                creditPolicy: creditPolicy);
             var mission = new Mission(
                 missionId,
                 $"Mission {missionId}",
@@ -170,9 +176,13 @@ namespace Rasa.Test.Missions
                 true,
                 false,
                 new[] { objective },
-                true);
+                true,
+                objectiveRequirements: objectiveRequirement == null ? null :
+                    new Dictionary<uint, global::Rasa.Missions.Runtime.MissionRequirement>
+                    { [objectiveId] = objectiveRequirement });
             return new MissionTestContext(
-                new Dictionary<uint, Mission> { [missionId] = mission });
+                new Dictionary<uint, Mission> { [missionId] = mission }, utcNow: utcNow,
+                beforeMissionPacketPublication: beforeMissionPacketPublication);
         }
 
         private static IReadOnlyDictionary<uint, Mission> CreateDefinitions(
@@ -755,7 +765,7 @@ namespace Rasa.Test.Missions
         internal Client CreateAdditionalClient(
             uint characterId,
             uint? accountId = null,
-            MissionManager manager = null)
+            MissionApplication manager = null)
         {
             var durableAccountId = accountId ?? characterId;
             SeedCharacter(durableAccountId, 0, characterId);
@@ -796,7 +806,7 @@ namespace Rasa.Test.Missions
             return client;
         }
 
-        internal Client CreateCompetingClient(MissionManager manager)
+        internal Client CreateCompetingClient(MissionApplication manager)
         {
             foreach (var cell in Map.MapCellInfo.Cells.Values)
                 foreach (var npc in _npcs)

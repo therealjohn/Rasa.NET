@@ -254,6 +254,7 @@ docs/*
 !docs/abilities.md
 !docs/protocol-testing.md
 !docs/world-testing.md
+!docs/missions.md
 
 # Local runtime files
 /log-auth.txt

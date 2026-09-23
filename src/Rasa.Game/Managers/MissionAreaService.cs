@@ -13,7 +13,7 @@ namespace Rasa.Managers
     {
         private static MissionAreaService _instance;
         private static readonly object InstanceLock = new();
-        private readonly Func<MissionManager> _missionManager;
+        private readonly Func<MissionApplication> _missionManager;
 
         internal static MissionAreaService Instance
         {
@@ -31,9 +31,9 @@ namespace Rasa.Managers
             }
         }
 
-        internal MissionAreaService(Func<MissionManager> missionManager = null)
+        internal MissionAreaService(Func<MissionApplication> missionManager = null)
         {
-            _missionManager = missionManager ?? (() => MissionManager.Instance);
+            _missionManager = missionManager ?? (() => MissionApplication.Instance);
         }
 
         internal bool RecordAcceptedMovement(

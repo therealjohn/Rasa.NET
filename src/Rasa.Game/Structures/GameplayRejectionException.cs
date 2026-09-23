@@ -18,7 +18,7 @@ namespace Rasa.Structures
         }
 
         internal static bool IsExpected(Exception error) =>
-            error is GameplayRejectionException or EntityNotFoundException or
+            error is GameplayRejectionException or global::Rasa.Missions.Runtime.MissionRuleException or EntityNotFoundException or
                 DbException or DbUpdateException;
     }
 }

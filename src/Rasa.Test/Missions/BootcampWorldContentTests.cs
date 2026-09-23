@@ -607,7 +607,7 @@ namespace Rasa.Test.Missions
                     .Where(entry => AllMissionIds.Contains(entry.MissionId)).ToArray();
                 Assert.IsTrue(before.Length > 0 && before.All(entry => entry.Show3DEffect));
 
-                migrator.Migrate();
+                migrator.Migrate("20260921204500_BootcampObjectiveIndicators");
 
                 var after = context.MissionIndicatorEntries.AsNoTracking()
                     .Where(entry => AllMissionIds.Contains(entry.MissionId)).ToArray();

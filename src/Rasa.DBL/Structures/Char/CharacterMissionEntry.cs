@@ -36,6 +36,21 @@ namespace Rasa.Structures.Char
         [Required]
         public bool Completeable { get; set; }
 
+        [Column("assignment_id", TypeName = "varchar(32)")]
+        [Required]
+        public string AssignmentId { get; set; } = System.Guid.NewGuid().ToString("N");
+
+        [Column("content_revision", TypeName = "varchar(32)")]
+        [Required]
+        public string ContentRevision { get; set; } = "legacy";
+
+        [Column("generation")]
+        public uint Generation { get; set; } = 1;
+
+        [Column("version")]
+        [ConcurrencyCheck]
+        public long Version { get; set; }
+
         public CharacterMissionDeadlineEntry Deadline { get; set; }
         public ICollection<CharacterMissionObjectiveEntry> Objectives { get; set; } =
             new List<CharacterMissionObjectiveEntry>();

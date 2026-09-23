@@ -12,7 +12,8 @@ namespace Rasa.Managers
 
     internal sealed class MissionContentLoader
     {
-        internal MissionContentSnapshot Load(IMissionContentRepository repository)
+        internal MissionContentSnapshot Load(IMissionContentRepository repository,
+            IReadOnlyDictionary<uint, string> selectedRevisions = null)
         {
             if (repository == null)
                 return new MissionContentSnapshot(
@@ -20,6 +21,15 @@ namespace Rasa.Managers
                     new Dictionary<uint, IReadOnlyList<string>>());
 
             var definitions = repository.GetDefinitions() ?? new List<MissionContentDefinitionEntry>();
+            if (selectedRevisions != null)
+            {
+                definitions = definitions.Where(entry => selectedRevisions.TryGetValue(entry.MissionId, out var revision) &&
+                    entry.ContentRevision == revision).ToList();
+                foreach (var member in selectedRevisions)
+                    if (!definitions.Any(entry => entry.MissionId == member.Key))
+                        throw new InvalidOperationException(
+                            $"Selected mission {member.Key} revision {member.Value} is unavailable; drain/reset or migrate explicitly.");
+            }
             var objectives = repository.GetObjectives() ?? new List<MissionObjectiveDefinitionEntry>();
             var prerequisites = repository.GetPrerequisites() ?? new List<MissionPrerequisiteEntry>();
             var transitions = repository.GetTransitions() ?? new List<MissionObjectiveTransitionEntry>();
@@ -121,7 +131,8 @@ namespace Rasa.Managers
                     enableOperational: true,
                     operationalDiagnostic: objectiveDiagnostics.Count == 0
                         ? null
-                        : string.Join("; ", objectiveDiagnostics));
+                        : string.Join("; ", objectiveDiagnostics),
+                    contentRevision: selectedRevision);
 
                 selectedDefinitions.Add(
                     definition.MissionId,
@@ -160,7 +171,7 @@ namespace Rasa.Managers
             var revisions = missionGroup
                 .Select(entry => entry.ContentRevision)
                 .Distinct(StringComparer.Ordinal)
-                .OrderByDescending(value => value, StringComparer.Ordinal)
+                .OrderBy(value => value, StringComparer.Ordinal)
                 .ToArray();
             var nonLegacy = revisions
                 .Where(revision => !string.Equals(revision, "legacy", StringComparison.OrdinalIgnoreCase))
@@ -198,7 +209,27 @@ namespace Rasa.Managers
                     group => new MissionObjectiveTransitionDefinition(
                         group.First(),
                         missionTriggers[group.Key].Select(entry => new MissionTriggerDefinition(entry)).ToArray(),
-                        missionActions[group.Key].Select(entry => new MissionActionDefinition(entry)).ToArray()));
+                        missionActions[group.Key].Select(entry => new MissionActionDefinition
+                        {
+                            MissionId = entry.MissionId,
+                            ContentRevision = entry.ContentRevision,
+                            ObjectiveId = entry.ObjectiveId,
+                            TransitionId = entry.TransitionId,
+                            ActionId = entry.ActionId,
+                            Requirement = entry.Requirement,
+                            Kind = entry.Kind,
+                            Sequence = entry.Sequence,
+                            TargetObjectiveId = entry.TargetObjectiveId,
+                            ObjectiveStateValue = entry.ObjectiveState,
+                            RewardId = entry.RewardId,
+                            SpawnGroupId = entry.SpawnGroupId,
+                            ScenarioId = entry.ScenarioId,
+                            IndicatorId = entry.IndicatorId,
+                            PlayerFlagId = entry.PlayerFlagId,
+                            PlayerFlagValue = entry.PlayerFlagValue,
+                            NpcPackageId = entry.NpcPackageId,
+                            Comment = entry.Comment
+                        }).ToArray()));
         }
 
         private static IReadOnlyDictionary<uint, MissionObjectiveDefinition> BuildObjectives(

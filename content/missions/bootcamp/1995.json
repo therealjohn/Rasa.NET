@@ -1,0 +1,1254 @@
+{
+  "schemaVersion": 1,
+  "release": "bootcamp-modular-v1",
+  "enabled": true,
+  "synthetic": false,
+  "definition": {
+    "missionId": 1995,
+    "contentRevision": "deployment_11",
+    "requirement": "Required",
+    "abandonmentPolicy": "Allowed",
+    "clientNameTextId": 21240,
+    "giverId": 510207,
+    "receiverId": 100,
+    "level": 2,
+    "groupType": 1,
+    "categoryId": 1,
+    "shareable": false,
+    "radioCompleteable": false,
+    "comment": "Calling for Reinforcements"
+  },
+  "prerequisites": [
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "prerequisiteId": 1,
+      "requirement": "Required",
+      "kind": "MissionCompleted",
+      "requiredMissionId": 1994,
+      "requiredMissionState": 4,
+      "comment": "Requires Capture the Flag"
+    }
+  ],
+  "objectives": [
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 1,
+      "requirement": "Required",
+      "clientNameTextId": 21327,
+      "clientBodyTextId": 21328,
+      "ordinal": 3,
+      "initialState": 4,
+      "isRequired": true,
+      "comment": "Destroy the crashed dropship"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 2,
+      "requirement": "Required",
+      "clientNameTextId": 21556,
+      "clientBodyTextId": 21557,
+      "ordinal": 1,
+      "initialState": 1,
+      "isRequired": true,
+      "comment": "Locate the missing AFS team"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 3,
+      "requirement": "Required",
+      "clientNameTextId": 21559,
+      "clientBodyTextId": 21560,
+      "ordinal": 2,
+      "initialState": 4,
+      "isRequired": true,
+      "comment": "Remove the bomb from Conrad\u0027s corpse"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 4,
+      "requirement": "Required",
+      "clientNameTextId": 21561,
+      "clientBodyTextId": 21562,
+      "ordinal": 4,
+      "initialState": 4,
+      "isRequired": true,
+      "comment": "Check in with Corporal Van Valkenberg"
+    }
+  ],
+  "transitions": [
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 1,
+      "transitionId": 1,
+      "requirement": "Required",
+      "sequence": 1,
+      "fromState": 1,
+      "toState": 1,
+      "comment": "Dropship charge"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 1,
+      "transitionId": 2,
+      "requirement": "Required",
+      "sequence": 1,
+      "fromState": 1,
+      "toState": 3,
+      "comment": "Dropship timeout"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 2,
+      "transitionId": 1,
+      "requirement": "Required",
+      "sequence": 1,
+      "fromState": 1,
+      "toState": 1,
+      "comment": "Wounded survivor"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 2,
+      "transitionId": 2,
+      "requirement": "Required",
+      "sequence": 2,
+      "fromState": 1,
+      "toState": 2,
+      "comment": "Wounded survivor conversation"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 3,
+      "transitionId": 1,
+      "requirement": "Required",
+      "sequence": 1,
+      "fromState": 1,
+      "toState": 2,
+      "comment": "Conrad corpse"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 4,
+      "transitionId": 1,
+      "requirement": "Required",
+      "sequence": 1,
+      "fromState": 1,
+      "toState": 2,
+      "comment": "Van Valkenberg"
+    }
+  ],
+  "triggers": [
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 1,
+      "transitionId": 1,
+      "triggerId": 1,
+      "requirement": "Required",
+      "kind": "ProgressEvent",
+      "sequence": 1,
+      "eventKind": 6,
+      "subjectId": 24586,
+      "comment": "Plant the dropship bomb"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 1,
+      "transitionId": 2,
+      "triggerId": 1,
+      "requirement": "Required",
+      "kind": "TimerElapsed",
+      "sequence": 1,
+      "durationSeconds": 600,
+      "comment": "Dropship timer expired"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 2,
+      "transitionId": 1,
+      "triggerId": 1,
+      "requirement": "Required",
+      "kind": "AreaEntered",
+      "sequence": 1,
+      "areaId": 435,
+      "comment": "Missing-team search area"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 2,
+      "transitionId": 2,
+      "triggerId": 1,
+      "requirement": "Required",
+      "kind": "Conversation",
+      "sequence": 1,
+      "npcPackageId": 2584,
+      "playerFlagId": 1,
+      "comment": "Wounded survivor conversation"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 3,
+      "transitionId": 1,
+      "triggerId": 1,
+      "requirement": "Required",
+      "kind": "ProgressEvent",
+      "sequence": 1,
+      "eventKind": 6,
+      "subjectId": 24990,
+      "comment": "Recover Conrad\u0027s bomb"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 4,
+      "transitionId": 1,
+      "triggerId": 1,
+      "requirement": "Required",
+      "kind": "Conversation",
+      "sequence": 1,
+      "npcPackageId": 2564,
+      "playerFlagId": 1,
+      "comment": "Van Valkenberg handoff"
+    }
+  ],
+  "actions": [
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 1,
+      "transitionId": 1,
+      "actionId": 1,
+      "requirement": "Required",
+      "kind": "StartScenario",
+      "sequence": 1,
+      "scenarioId": 3,
+      "comment": "Begin the extraction fuse"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 1,
+      "transitionId": 2,
+      "actionId": 1,
+      "requirement": "Required",
+      "kind": "StartScenario",
+      "sequence": 1,
+      "scenarioId": 5,
+      "comment": "Reset the failed final attempt"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 2,
+      "transitionId": 1,
+      "actionId": 2,
+      "requirement": "Required",
+      "kind": "StartScenario",
+      "sequence": 2,
+      "scenarioId": 1,
+      "comment": "Start the crash site scene"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 2,
+      "transitionId": 2,
+      "actionId": 1,
+      "requirement": "Required",
+      "kind": "CompleteObjective",
+      "sequence": 1,
+      "targetObjectiveId": 2,
+      "objectiveState": 2,
+      "comment": "Complete reconstructed survivor conversation"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 2,
+      "transitionId": 2,
+      "actionId": 2,
+      "requirement": "Required",
+      "kind": "StartScenario",
+      "sequence": 2,
+      "scenarioId": 7,
+      "comment": "Rebuild the Conrad crash site scene"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 2,
+      "transitionId": 2,
+      "actionId": 3,
+      "requirement": "Required",
+      "kind": "RevealObjective",
+      "sequence": 3,
+      "targetObjectiveId": 3,
+      "comment": "Reveal Conrad corpse"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 2,
+      "transitionId": 2,
+      "actionId": 4,
+      "requirement": "Required",
+      "kind": "ActivateObjective",
+      "sequence": 4,
+      "targetObjectiveId": 3,
+      "objectiveState": 1,
+      "comment": "Activate Conrad corpse"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 3,
+      "transitionId": 1,
+      "actionId": 1,
+      "requirement": "Required",
+      "kind": "CompleteObjective",
+      "sequence": 1,
+      "targetObjectiveId": 3,
+      "objectiveState": 2,
+      "comment": "Complete Conrad corpse"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 3,
+      "transitionId": 1,
+      "actionId": 2,
+      "requirement": "Required",
+      "kind": "RevealObjective",
+      "sequence": 2,
+      "targetObjectiveId": 1,
+      "comment": "Reveal dropship charge"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 3,
+      "transitionId": 1,
+      "actionId": 3,
+      "requirement": "Required",
+      "kind": "ActivateObjective",
+      "sequence": 3,
+      "targetObjectiveId": 1,
+      "objectiveState": 1,
+      "comment": "Activate dropship charge"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 4,
+      "transitionId": 1,
+      "actionId": 1,
+      "requirement": "Required",
+      "kind": "CompleteObjective",
+      "sequence": 1,
+      "targetObjectiveId": 4,
+      "objectiveState": 2,
+      "comment": "Complete Van Valkenberg handoff"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 4,
+      "transitionId": 1,
+      "actionId": 2,
+      "requirement": "Required",
+      "kind": "StartScenario",
+      "sequence": 2,
+      "scenarioId": 6,
+      "comment": "Transfer to Alia Das"
+    }
+  ],
+  "rewards": [],
+  "rewardItems": [],
+  "indicators": [
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 1,
+      "indicatorId": 432,
+      "requirement": "Required",
+      "posX": -225,
+      "posY": 101.12099,
+      "posZ": -71,
+      "radius": 12,
+      "show3DEffect": false,
+      "comment": "Dropship debris"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 2,
+      "indicatorId": 435,
+      "requirement": "Required",
+      "posX": -101.2,
+      "posY": 86.40231,
+      "posZ": 70.8,
+      "radius": 12,
+      "show3DEffect": false,
+      "comment": "Missing scout area"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 3,
+      "indicatorId": 436,
+      "requirement": "Required",
+      "posX": -102.4,
+      "posY": 86.10937,
+      "posZ": 66.8,
+      "radius": 8,
+      "show3DEffect": false,
+      "comment": "Conrad corpse"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "objectiveId": 4,
+      "indicatorId": 438,
+      "requirement": "Required",
+      "posX": -223,
+      "posY": 101.269646,
+      "posZ": -76,
+      "radius": 12,
+      "show3DEffect": false,
+      "comment": "Exit pad"
+    }
+  ],
+  "areas": [
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "areaId": 435,
+      "requirement": "Required",
+      "mapContextId": 1985,
+      "shape": "Sphere",
+      "posX": -104.6,
+      "posY": 86.1,
+      "posZ": 70.5,
+      "radius": 12,
+      "comment": "1995 scout party"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "areaId": 438,
+      "requirement": "Required",
+      "mapContextId": 1985,
+      "shape": "Sphere",
+      "posX": -225.35,
+      "posY": 101.1059,
+      "posZ": -70.52,
+      "radius": 12,
+      "comment": "1995 exit pad"
+    }
+  ],
+  "spawnGroups": [
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "spawnGroupId": 1,
+      "requirement": "Required",
+      "areaId": 435,
+      "mapContextId": 1985,
+      "enabled": false,
+      "respawnSeconds": 1,
+      "comment": "Wounded survivor",
+      "spawnPolicy": "OrdinaryRespawn"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "spawnGroupId": 2,
+      "requirement": "Required",
+      "areaId": 438,
+      "mapContextId": 1985,
+      "enabled": false,
+      "respawnSeconds": 1,
+      "comment": "Reinforcement arrival",
+      "spawnPolicy": "OrdinaryRespawn"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "spawnGroupId": 3,
+      "requirement": "Required",
+      "areaId": 438,
+      "mapContextId": 1985,
+      "enabled": false,
+      "respawnSeconds": 1,
+      "comment": "Van Valkenberg",
+      "spawnPolicy": "OrdinaryRespawn"
+    }
+  ],
+  "spawns": [
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "spawnGroupId": 1,
+      "spawnId": 1,
+      "creatureId": 510208,
+      "posX": -101.2,
+      "posY": 86.40231,
+      "posZ": 70.8,
+      "rotation": 0,
+      "quantity": 1
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "spawnGroupId": 2,
+      "spawnId": 1,
+      "creatureId": 39,
+      "posX": -218,
+      "posY": 101.08475,
+      "posZ": -78,
+      "rotation": 0,
+      "quantity": 1
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "spawnGroupId": 2,
+      "spawnId": 2,
+      "creatureId": 50,
+      "posX": -221,
+      "posY": 101.2538,
+      "posZ": -74,
+      "rotation": 0,
+      "quantity": 1
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "spawnGroupId": 3,
+      "spawnId": 1,
+      "creatureId": 510209,
+      "posX": -223,
+      "posY": 101.269646,
+      "posZ": -76,
+      "rotation": 0,
+      "quantity": 1
+    }
+  ],
+  "scenarios": [
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "scenarioId": 1,
+      "requirement": "Required",
+      "startPolicy": "Automatic",
+      "name": "bootcamp-1995-survivor",
+      "comment": "1995 wounded survivor scene"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "scenarioId": 2,
+      "requirement": "Required",
+      "startPolicy": "Automatic",
+      "name": "bootcamp-1995-detonation",
+      "comment": "1995 detonation"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "scenarioId": 3,
+      "requirement": "Required",
+      "startPolicy": "Automatic",
+      "name": "bootcamp-1995-fuse",
+      "comment": "1995 extraction fuse"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "scenarioId": 4,
+      "requirement": "Required",
+      "startPolicy": "Automatic",
+      "name": "bootcamp-1995-exit",
+      "comment": "1995 exit handoff"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "scenarioId": 5,
+      "requirement": "Required",
+      "startPolicy": "Automatic",
+      "name": "bootcamp-1995-reset",
+      "comment": "1995 reset after failure"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "scenarioId": 6,
+      "requirement": "Required",
+      "startPolicy": "PlayerTriggered",
+      "name": "bootcamp-1995-transfer",
+      "comment": "1995 transfer handoff"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "scenarioId": 7,
+      "requirement": "Required",
+      "startPolicy": "Automatic",
+      "name": "bootcamp-1995-crash-site",
+      "comment": "1995 Conrad crash site"
+    }
+  ],
+  "scenarioSteps": [
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "scenarioId": 1,
+      "stepId": 1,
+      "requirement": "Required",
+      "kind": "SpawnGroup",
+      "sequence": 1,
+      "spawnGroupId": 1,
+      "comment": "Spawn wounded survivor"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "scenarioId": 2,
+      "stepId": 1,
+      "requirement": "Required",
+      "kind": "CompleteObjective",
+      "sequence": 1,
+      "targetObjectiveId": 1,
+      "comment": "Complete the detonated dropship objective"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "scenarioId": 2,
+      "stepId": 2,
+      "requirement": "Required",
+      "kind": "ScheduleScenario",
+      "sequence": 2,
+      "targetScenarioId": 4,
+      "delayMilliseconds": 2000,
+      "comment": "Schedule the extraction team"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "scenarioId": 3,
+      "stepId": 1,
+      "requirement": "Required",
+      "kind": "SatisfyDeadline",
+      "sequence": 1,
+      "comment": "Satisfy the planted charge deadline"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "scenarioId": 3,
+      "stepId": 2,
+      "requirement": "Required",
+      "kind": "DisableInteraction",
+      "sequence": 2,
+      "entityClassId": 24586,
+      "comment": "Disable the planted dropship charge"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "scenarioId": 3,
+      "stepId": 3,
+      "requirement": "Required",
+      "kind": "ScheduleScenario",
+      "sequence": 3,
+      "targetScenarioId": 2,
+      "delayMilliseconds": 5000,
+      "comment": "Schedule the detonation"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "scenarioId": 4,
+      "stepId": 1,
+      "requirement": "Required",
+      "kind": "SpawnGroup",
+      "sequence": 1,
+      "spawnGroupId": 2,
+      "comment": "Spawn reinforcements"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "scenarioId": 4,
+      "stepId": 2,
+      "requirement": "Required",
+      "kind": "SpawnGroup",
+      "sequence": 2,
+      "spawnGroupId": 3,
+      "comment": "Spawn Van Valkenberg"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "scenarioId": 4,
+      "stepId": 3,
+      "requirement": "Required",
+      "kind": "RevealObjective",
+      "sequence": 3,
+      "targetObjectiveId": 4,
+      "comment": "Reveal Van Valkenberg handoff"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "scenarioId": 4,
+      "stepId": 4,
+      "requirement": "Required",
+      "kind": "ActivateObjective",
+      "sequence": 4,
+      "targetObjectiveId": 4,
+      "comment": "Activate Van Valkenberg handoff"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "scenarioId": 5,
+      "stepId": 1,
+      "requirement": "Required",
+      "kind": "EnableInteraction",
+      "sequence": 1,
+      "entityClassId": 24586,
+      "comment": "Restore the dropship charge interaction"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "scenarioId": 5,
+      "stepId": 2,
+      "requirement": "Required",
+      "kind": "ResetAttempt",
+      "sequence": 2,
+      "targetScenarioId": 2,
+      "comment": "Clear the detonation state"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "scenarioId": 5,
+      "stepId": 3,
+      "requirement": "Required",
+      "kind": "ResetAttempt",
+      "sequence": 3,
+      "targetScenarioId": 3,
+      "comment": "Clear the planted charge state"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "scenarioId": 5,
+      "stepId": 4,
+      "requirement": "Required",
+      "kind": "ResetAttempt",
+      "sequence": 4,
+      "targetScenarioId": 4,
+      "comment": "Clear the extraction arrival state"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "scenarioId": 6,
+      "stepId": 1,
+      "requirement": "Required",
+      "kind": "TransferPlayer",
+      "sequence": 1,
+      "mapContextId": 1220,
+      "posX": 884.11,
+      "posY": 305.8,
+      "posZ": 347.81,
+      "orientation": 1.5613,
+      "comment": "Transfer to Alia Das"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "scenarioId": 6,
+      "stepId": 2,
+      "requirement": "Required",
+      "kind": "SetQualification",
+      "sequence": 2,
+      "qualificationKey": "BootcampComplete",
+      "qualificationValue": 1,
+      "comment": "Mark Bootcamp complete"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "scenarioId": 6,
+      "stepId": 3,
+      "requirement": "Required",
+      "kind": "SetAccountSkipEntitlement",
+      "sequence": 3,
+      "accountSkipEntitlement": true,
+      "comment": "Unlock account bootcamp skip"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "scenarioId": 7,
+      "stepId": 1,
+      "requirement": "Required",
+      "kind": "DespawnGroup",
+      "sequence": 1,
+      "spawnGroupId": 1,
+      "comment": "Remove the wounded survivor"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "scenarioId": 7,
+      "stepId": 2,
+      "requirement": "Required",
+      "kind": "SpawnDynamicObject",
+      "sequence": 2,
+      "dynamicObjectKey": "bootcamp-conrad-corpse",
+      "entityClassId": 24990,
+      "posX": -102.4,
+      "posY": 86.20677,
+      "posZ": 66.8,
+      "orientation": 0,
+      "initialInteractionEnabled": true,
+      "comment": "Spawn Conrad corpse"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "scenarioId": 7,
+      "stepId": 3,
+      "requirement": "Required",
+      "kind": "SpawnDynamicObject",
+      "sequence": 3,
+      "dynamicObjectKey": "bootcamp-dropship-debris",
+      "entityClassId": 24586,
+      "delayMilliseconds": 1400,
+      "posX": -225,
+      "posY": 101.12099,
+      "posZ": -71,
+      "orientation": 0,
+      "initialInteractionEnabled": true,
+      "comment": "Spawn dropship debris"
+    }
+  ],
+  "evidence": [
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "evidenceId": 1,
+      "ownerKind": "Mission",
+      "ownerId": 1995,
+      "sourceKind": "Client",
+      "localClientPath": "C:\\Users\\johmil\\Projects\\trpython\\data\\generated\\client\\objectiveconversation.pyo_dis",
+      "confidence": 1,
+      "reconstructionNote": "objectiveconversation still binds Van Valkenberg 2564; the missing-team search area drives the survivor reveal and the client exposes no separate survivor-conversation objective id"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "evidenceId": 2,
+      "ownerKind": "Objective",
+      "ownerId": 2,
+      "sourceKind": "Reconstruction",
+      "sourceUri": "https://raw.githubusercontent.com/Blizz127/tabula-rasa-server/2f0cbbdfe4bb8440286261b205f78d75fca85d0c/docs/evidence/bootcamp-d11-positions.json",
+      "localClientPath": "C:\\Users\\johmil\\Projects\\trpython\\data\\generated\\client\\language\\english\\missionobjectiveindicatorlanguage.pyo_dis",
+      "confidence": 0.7,
+      "reconstructionNote": "Entering the missing-team search area reveals survivor package 2584 while objective 2 remains incomplete until dialogue."
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "evidenceId": 3,
+      "ownerKind": "Objective",
+      "ownerId": 2,
+      "sourceKind": "Reconstruction",
+      "localClientPath": "C:\\Users\\johmil\\Projects\\trpython\\data\\generated\\client\\objectiveconversation.pyo_dis",
+      "confidence": 0.8,
+      "reconstructionNote": "Client objective 2 includes locating the missing team and speaking to wounded survivor package 2584; no client objective 10 exists."
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "evidenceId": 4,
+      "ownerKind": "Objective",
+      "ownerId": 1,
+      "sourceKind": "Documentation",
+      "sourceUri": "https://web.archive.org/web/20081017160137id_/http://www.rgtr.com:80/news/patch_notes/deployment_134_10152008.html",
+      "localClientPath": "C:\\Users\\johmil\\Projects\\trpython\\data\\generated\\client\\missionconversation.pyo_dis",
+      "confidence": 0.95,
+      "reconstructionNote": "D13 notes confirm normal failed-timer retry semantics; client text 21566 preserves the ten-minute retry copy"
+    },
+    {
+      "missionId": 1995,
+      "contentRevision": "deployment_11",
+      "evidenceId": 5,
+      "ownerKind": "Scenario",
+      "ownerId": 2,
+      "sourceKind": "Reconstruction",
+      "sourceUri": "https://raw.githubusercontent.com/Blizz127/tabula-rasa-server/2f0cbbdfe4bb8440286261b205f78d75fca85d0c/docs/evidence/bootcamp-d11-positions.json",
+      "localClientPath": "C:\\Users\\johmil\\Projects\\trpython\\data\\generated\\client\\language\\english\\missiontextlanguage.pyo_dis",
+      "confidence": 0.75,
+      "reconstructionNote": "Alia Das arrival point and Rogers handoff are measured from late-game footage and snapped to the wilderness navmesh"
+    }
+  ],
+  "scene": {
+    "script": "bootcamp.reinforcements",
+    "stateVersion": 1,
+    "recovery": "RestoreCheckpoint",
+    "actors": {
+      "group-1-spawn-1-0": {
+        "role": "group-1-spawn-1-0",
+        "kind": "Creature",
+        "templateId": 510208,
+        "position": {
+          "x": -101.2,
+          "y": 86.40231,
+          "z": 70.8
+        },
+        "orientation": 0,
+        "initiallyInteractable": true,
+        "initialObjectState": 0,
+        "missionId": 1995,
+        "groupId": 1,
+        "spawnId": 1
+      },
+      "group-2-spawn-1-0": {
+        "role": "group-2-spawn-1-0",
+        "kind": "Creature",
+        "templateId": 39,
+        "position": {
+          "x": -218,
+          "y": 101.08475,
+          "z": -78
+        },
+        "orientation": 0,
+        "initiallyInteractable": true,
+        "initialObjectState": 0,
+        "missionId": 1995,
+        "groupId": 2,
+        "spawnId": 1
+      },
+      "group-2-spawn-2-0": {
+        "role": "group-2-spawn-2-0",
+        "kind": "Creature",
+        "templateId": 50,
+        "position": {
+          "x": -221,
+          "y": 101.2538,
+          "z": -74
+        },
+        "orientation": 0,
+        "initiallyInteractable": true,
+        "initialObjectState": 0,
+        "missionId": 1995,
+        "groupId": 2,
+        "spawnId": 2
+      },
+      "group-3-spawn-1-0": {
+        "role": "group-3-spawn-1-0",
+        "kind": "Creature",
+        "templateId": 510209,
+        "position": {
+          "x": -223,
+          "y": 101.269646,
+          "z": -76
+        },
+        "orientation": 0,
+        "initiallyInteractable": true,
+        "initialObjectState": 0,
+        "missionId": 1995,
+        "groupId": 3,
+        "spawnId": 1
+      },
+      "bootcamp-conrad-corpse": {
+        "role": "bootcamp-conrad-corpse",
+        "kind": "Object",
+        "templateId": 24990,
+        "position": {
+          "x": -102.4,
+          "y": 86.20677,
+          "z": 66.8
+        },
+        "orientation": 0,
+        "initiallyInteractable": true,
+        "initialObjectState": 200,
+        "sharedKey": "bootcamp-conrad-corpse",
+        "missionId": 0,
+        "spawnId": 0
+      },
+      "bootcamp-dropship-debris": {
+        "role": "bootcamp-dropship-debris",
+        "kind": "Object",
+        "templateId": 24586,
+        "position": {
+          "x": -225,
+          "y": 101.12099,
+          "z": -71
+        },
+        "orientation": 0,
+        "initiallyInteractable": true,
+        "initialObjectState": 31,
+        "sharedKey": "bootcamp-dropship-debris",
+        "windupMilliseconds": 1400,
+        "missionId": 0,
+        "spawnId": 0
+      }
+    },
+    "routes": {},
+    "sequences": {
+      "1": {
+        "world": [
+          {
+            "$kind": "ensure",
+            "operationKey": "sequence-1-step-1-group-1-spawn-1-0",
+            "role": "group-1-spawn-1-0"
+          }
+        ],
+        "character": [],
+        "signals": [],
+        "timers": []
+      },
+      "2": {
+        "world": [],
+        "character": [
+          {
+            "$kind": "objective",
+            "missionId": 1995,
+            "objectiveId": 1,
+            "state": "Completed",
+            "operationKey": "sequence-2-step-1"
+          }
+        ],
+        "signals": [],
+        "timers": [
+          {
+            "name": "sequence-2-step-2",
+            "milliseconds": 2000,
+            "sequenceId": 4,
+            "clockPolicy": "WallClock",
+            "cancel": false
+          }
+        ]
+      },
+      "3": {
+        "world": [
+          {
+            "$kind": "interaction",
+            "enabled": false,
+            "ifPresent": true,
+            "operationKey": "sequence-3-step-2-bootcamp-dropship-debris",
+            "role": "bootcamp-dropship-debris"
+          }
+        ],
+        "character": [
+          {
+            "$kind": "deadline",
+            "missionId": 1995,
+            "kind": "Satisfy",
+            "milliseconds": 0,
+            "operationKey": "sequence-3-step-1"
+          }
+        ],
+        "signals": [],
+        "timers": [
+          {
+            "name": "sequence-3-step-3",
+            "milliseconds": 5000,
+            "sequenceId": 2,
+            "clockPolicy": "WallClock",
+            "cancel": false
+          }
+        ]
+      },
+      "4": {
+        "world": [
+          {
+            "$kind": "ensure",
+            "operationKey": "sequence-4-step-1-group-2-spawn-1-0",
+            "role": "group-2-spawn-1-0"
+          },
+          {
+            "$kind": "ensure",
+            "operationKey": "sequence-4-step-1-group-2-spawn-2-0",
+            "role": "group-2-spawn-2-0"
+          },
+          {
+            "$kind": "ensure",
+            "operationKey": "sequence-4-step-2-group-3-spawn-1-0",
+            "role": "group-3-spawn-1-0"
+          }
+        ],
+        "character": [
+          {
+            "$kind": "objective",
+            "missionId": 1995,
+            "objectiveId": 4,
+            "state": "NotAssigned",
+            "operationKey": "sequence-4-step-3"
+          },
+          {
+            "$kind": "objective",
+            "missionId": 1995,
+            "objectiveId": 4,
+            "state": "Incomplete",
+            "operationKey": "sequence-4-step-4"
+          }
+        ],
+        "signals": [],
+        "timers": []
+      },
+      "5": {
+        "world": [
+          {
+            "$kind": "interaction",
+            "enabled": true,
+            "ifPresent": true,
+            "operationKey": "sequence-5-step-1-bootcamp-dropship-debris",
+            "role": "bootcamp-dropship-debris"
+          },
+          {
+            "$kind": "remove",
+            "operationKey": "sequence-5-step-4-group-2-spawn-1-0",
+            "role": "group-2-spawn-1-0"
+          },
+          {
+            "$kind": "remove",
+            "operationKey": "sequence-5-step-4-group-2-spawn-2-0",
+            "role": "group-2-spawn-2-0"
+          },
+          {
+            "$kind": "remove",
+            "operationKey": "sequence-5-step-4-group-3-spawn-1-0",
+            "role": "group-3-spawn-1-0"
+          }
+        ],
+        "character": [],
+        "signals": [],
+        "timers": [
+          {
+            "name": "sequence-2-step-2",
+            "milliseconds": 0,
+            "sequenceId": 4,
+            "clockPolicy": "WallClock",
+            "cancel": true
+          },
+          {
+            "name": "sequence-3-step-3",
+            "milliseconds": 0,
+            "sequenceId": 2,
+            "clockPolicy": "WallClock",
+            "cancel": true
+          }
+        ]
+      },
+      "6": {
+        "world": [
+          {
+            "$kind": "transfer",
+            "mapContextId": 1220,
+            "position": {
+              "x": 884.11,
+              "y": 305.8,
+              "z": 347.81
+            },
+            "orientation": 1.5613,
+            "operationKey": "sequence-6-step-1"
+          }
+        ],
+        "character": [
+          {
+            "$kind": "qualification",
+            "qualification": 1,
+            "present": true,
+            "operationKey": "sequence-6-step-2"
+          },
+          {
+            "$kind": "entitlement",
+            "enabled": true,
+            "operationKey": "sequence-6-step-3"
+          }
+        ],
+        "signals": [],
+        "timers": []
+      },
+      "7": {
+        "world": [
+          {
+            "$kind": "remove",
+            "operationKey": "sequence-7-step-1-group-1-spawn-1-0",
+            "role": "group-1-spawn-1-0"
+          },
+          {
+            "$kind": "ensure",
+            "operationKey": "sequence-7-step-2",
+            "role": "bootcamp-conrad-corpse"
+          },
+          {
+            "$kind": "interaction",
+            "enabled": true,
+            "ifPresent": false,
+            "operationKey": "sequence-7-step-2-availability",
+            "role": "bootcamp-conrad-corpse"
+          },
+          {
+            "$kind": "ensure",
+            "operationKey": "sequence-7-step-3",
+            "role": "bootcamp-dropship-debris"
+          },
+          {
+            "$kind": "interaction",
+            "enabled": true,
+            "ifPresent": false,
+            "operationKey": "sequence-7-step-3-availability",
+            "role": "bootcamp-dropship-debris"
+          }
+        ],
+        "character": [],
+        "signals": [],
+        "timers": []
+      }
+    },
+    "names": {
+      "survivor": 1,
+      "detonation": 2,
+      "fuse": 3,
+      "exit": 4,
+      "reset": 5,
+      "transfer": 6,
+      "site": 7
+    },
+    "credit": {},
+    "requirement": {
+      "$kind": "not",
+      "item": {
+        "$kind": "custom",
+        "key": "character.starting-experience-completed"
+      }
+    },
+    "objectiveRequirements": {}
+  }
+}

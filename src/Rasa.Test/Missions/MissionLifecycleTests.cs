@@ -180,7 +180,7 @@ namespace Rasa.Test.Missions
                 if (!readUsedSerializableTransaction)
                     completion.GetAwaiter().GetResult();
             };
-            var singleton = typeof(MissionManager).GetField(
+            var singleton = typeof(MissionApplication).GetField(
                 "_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
             var previous = singleton.GetValue(null);
             singleton.SetValue(null, context.Manager);
@@ -195,7 +195,7 @@ namespace Rasa.Test.Missions
                 singleton.SetValue(null, previous);
             }
 
-            Assert.AreEqual(2, queryCount);
+            Assert.AreEqual(3, queryCount, "Hydration reads completion history, assignments and objective progress in one transaction.");
             Assert.IsTrue(completionAttempted);
             Assert.IsTrue(readUsedSerializableTransaction);
             Assert.IsTrue(context.Client.Player.Missions.TryGetValue(321, out var mission),
@@ -906,7 +906,7 @@ namespace Rasa.Test.Missions
             using var context = MissionTestContext.WithDatabaseDefinitions(321, 429);
             var npc = context.AddNpc(77);
             npc.Npc.NpcMissionIds = new List<uint> { 321, 429 };
-            var singleton = typeof(MissionManager).GetField(
+            var singleton = typeof(MissionApplication).GetField(
                 "_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
             var previous = singleton.GetValue(null);
             singleton.SetValue(null, context.Manager);
@@ -1117,11 +1117,11 @@ namespace Rasa.Test.Missions
             }
         }
 
-        private static MissionManager CreateMissionContentManager(
+        private static MissionApplication CreateMissionContentManager(
             MissionTestContext context,
             MissionContentFixture fixture)
         {
-            var manager = new MissionManager(
+            var manager = new MissionApplication(
                 new MissionContentLoadingFactory(context, fixture.CreateWorldUnitOfWork()),
                 new Dictionary<uint, Mission>());
             manager.LoadMissions();
@@ -1133,7 +1133,7 @@ namespace Rasa.Test.Missions
             out FieldInfo singleton,
             out object previous)
         {
-            singleton = typeof(MissionManager).GetField(
+            singleton = typeof(MissionApplication).GetField(
                 "_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
             previous = singleton.GetValue(null);
             singleton.SetValue(null, context.Manager);

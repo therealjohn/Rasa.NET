@@ -1,0 +1,823 @@
+{
+  "schemaVersion": 1,
+  "release": "bootcamp-modular-v1",
+  "enabled": true,
+  "synthetic": false,
+  "definition": {
+    "missionId": 2005,
+    "contentRevision": "deployment_11",
+    "requirement": "Required",
+    "abandonmentPolicy": "Allowed",
+    "clientNameTextId": 21564,
+    "giverId": 510207,
+    "receiverId": 100,
+    "level": 2,
+    "groupType": 1,
+    "categoryId": 1,
+    "shareable": false,
+    "radioCompleteable": false,
+    "comment": "Calling for Reinforcements Retry"
+  },
+  "prerequisites": [
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "prerequisiteId": 1,
+      "requirement": "Required",
+      "kind": "MissionAccepted",
+      "requiredMissionId": 1995,
+      "requiredMissionState": 2,
+      "comment": "Retry after final mission fails"
+    }
+  ],
+  "objectives": [
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "objectiveId": 1,
+      "requirement": "Required",
+      "clientNameTextId": 21569,
+      "clientBodyTextId": 21570,
+      "ordinal": 1,
+      "initialState": 1,
+      "isRequired": true,
+      "comment": "Destroy the crashed dropship"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "objectiveId": 4,
+      "requirement": "Required",
+      "clientNameTextId": 21571,
+      "clientBodyTextId": 21572,
+      "ordinal": 2,
+      "initialState": 4,
+      "isRequired": true,
+      "comment": "Check in with Corporal Van Valkenberg"
+    }
+  ],
+  "transitions": [
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "objectiveId": 1,
+      "transitionId": 1,
+      "requirement": "Required",
+      "sequence": 1,
+      "fromState": 1,
+      "toState": 1,
+      "comment": "Retry dropship charge"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "objectiveId": 1,
+      "transitionId": 2,
+      "requirement": "Required",
+      "sequence": 1,
+      "fromState": 1,
+      "toState": 3,
+      "comment": "Retry timeout"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "objectiveId": 4,
+      "transitionId": 1,
+      "requirement": "Required",
+      "sequence": 1,
+      "fromState": 1,
+      "toState": 2,
+      "comment": "Retry Van Valkenberg"
+    }
+  ],
+  "triggers": [
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "objectiveId": 1,
+      "transitionId": 1,
+      "triggerId": 1,
+      "requirement": "Required",
+      "kind": "ProgressEvent",
+      "sequence": 1,
+      "eventKind": 6,
+      "subjectId": 24586,
+      "comment": "Retry the dropship bomb"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "objectiveId": 1,
+      "transitionId": 2,
+      "triggerId": 1,
+      "requirement": "Required",
+      "kind": "TimerElapsed",
+      "sequence": 1,
+      "durationSeconds": 600,
+      "comment": "Retry timer expired"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "objectiveId": 4,
+      "transitionId": 1,
+      "triggerId": 1,
+      "requirement": "Required",
+      "kind": "Conversation",
+      "sequence": 1,
+      "npcPackageId": 2564,
+      "playerFlagId": 1,
+      "comment": "Retry Van Valkenberg handoff"
+    }
+  ],
+  "actions": [
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "objectiveId": 1,
+      "transitionId": 1,
+      "actionId": 1,
+      "requirement": "Required",
+      "kind": "StartScenario",
+      "sequence": 1,
+      "scenarioId": 1,
+      "comment": "Begin the retry extraction fuse"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "objectiveId": 1,
+      "transitionId": 2,
+      "actionId": 1,
+      "requirement": "Required",
+      "kind": "StartScenario",
+      "sequence": 1,
+      "scenarioId": 4,
+      "comment": "Reset the failed retry attempt"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "objectiveId": 4,
+      "transitionId": 1,
+      "actionId": 1,
+      "requirement": "Required",
+      "kind": "CompleteObjective",
+      "sequence": 1,
+      "targetObjectiveId": 4,
+      "objectiveState": 2,
+      "comment": "Complete retry handoff"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "objectiveId": 4,
+      "transitionId": 1,
+      "actionId": 2,
+      "requirement": "Required",
+      "kind": "StartScenario",
+      "sequence": 2,
+      "scenarioId": 5,
+      "comment": "Transfer retry to Alia Das"
+    }
+  ],
+  "rewards": [],
+  "rewardItems": [],
+  "indicators": [
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "objectiveId": 1,
+      "indicatorId": 432,
+      "requirement": "Required",
+      "posX": -225,
+      "posY": 101.12099,
+      "posZ": -71,
+      "radius": 12,
+      "show3DEffect": false,
+      "comment": "Retry dropship debris"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "objectiveId": 4,
+      "indicatorId": 438,
+      "requirement": "Required",
+      "posX": -223,
+      "posY": 101.269646,
+      "posZ": -76,
+      "radius": 12,
+      "show3DEffect": false,
+      "comment": "Retry exit pad"
+    }
+  ],
+  "areas": [
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "areaId": 438,
+      "requirement": "Required",
+      "mapContextId": 1985,
+      "shape": "Sphere",
+      "posX": -225.35,
+      "posY": 101.1059,
+      "posZ": -70.52,
+      "radius": 12,
+      "comment": "2005 exit pad"
+    }
+  ],
+  "spawnGroups": [
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "spawnGroupId": 1,
+      "requirement": "Required",
+      "areaId": 438,
+      "mapContextId": 1985,
+      "enabled": false,
+      "respawnSeconds": 1,
+      "comment": "Retry reinforcement arrival",
+      "spawnPolicy": "OrdinaryRespawn"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "spawnGroupId": 2,
+      "requirement": "Required",
+      "areaId": 438,
+      "mapContextId": 1985,
+      "enabled": false,
+      "respawnSeconds": 1,
+      "comment": "Retry Van Valkenberg",
+      "spawnPolicy": "OrdinaryRespawn"
+    }
+  ],
+  "spawns": [
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "spawnGroupId": 1,
+      "spawnId": 1,
+      "creatureId": 39,
+      "posX": -218,
+      "posY": 101.08475,
+      "posZ": -78,
+      "rotation": 0,
+      "quantity": 1
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "spawnGroupId": 1,
+      "spawnId": 2,
+      "creatureId": 50,
+      "posX": -221,
+      "posY": 101.2538,
+      "posZ": -74,
+      "rotation": 0,
+      "quantity": 1
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "spawnGroupId": 2,
+      "spawnId": 1,
+      "creatureId": 510209,
+      "posX": -223,
+      "posY": 101.269646,
+      "posZ": -76,
+      "rotation": 0,
+      "quantity": 1
+    }
+  ],
+  "scenarios": [
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "scenarioId": 1,
+      "requirement": "Required",
+      "startPolicy": "Automatic",
+      "name": "bootcamp-2005-fuse",
+      "comment": "2005 retry fuse"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "scenarioId": 2,
+      "requirement": "Required",
+      "startPolicy": "Automatic",
+      "name": "bootcamp-2005-detonation",
+      "comment": "2005 retry detonation"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "scenarioId": 3,
+      "requirement": "Required",
+      "startPolicy": "Automatic",
+      "name": "bootcamp-2005-exit",
+      "comment": "2005 retry exit handoff"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "scenarioId": 4,
+      "requirement": "Required",
+      "startPolicy": "Automatic",
+      "name": "bootcamp-2005-reset",
+      "comment": "2005 retry reset"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "scenarioId": 5,
+      "requirement": "Required",
+      "startPolicy": "PlayerTriggered",
+      "name": "bootcamp-2005-transfer",
+      "comment": "2005 retry transfer"
+    }
+  ],
+  "scenarioSteps": [
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "scenarioId": 1,
+      "stepId": 1,
+      "requirement": "Required",
+      "kind": "SatisfyDeadline",
+      "sequence": 1,
+      "comment": "Satisfy the retry charge deadline"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "scenarioId": 1,
+      "stepId": 2,
+      "requirement": "Required",
+      "kind": "DisableInteraction",
+      "sequence": 2,
+      "entityClassId": 24586,
+      "comment": "Disable the retry charge interaction"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "scenarioId": 1,
+      "stepId": 3,
+      "requirement": "Required",
+      "kind": "ScheduleScenario",
+      "sequence": 3,
+      "targetScenarioId": 2,
+      "delayMilliseconds": 5000,
+      "comment": "Schedule the retry detonation"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "scenarioId": 2,
+      "stepId": 1,
+      "requirement": "Required",
+      "kind": "CompleteObjective",
+      "sequence": 1,
+      "targetObjectiveId": 1,
+      "comment": "Complete the retry detonation objective"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "scenarioId": 2,
+      "stepId": 2,
+      "requirement": "Required",
+      "kind": "ScheduleScenario",
+      "sequence": 2,
+      "targetScenarioId": 3,
+      "delayMilliseconds": 2000,
+      "comment": "Schedule the retry extraction team"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "scenarioId": 3,
+      "stepId": 1,
+      "requirement": "Required",
+      "kind": "SpawnGroup",
+      "sequence": 1,
+      "spawnGroupId": 1,
+      "comment": "Spawn retry reinforcements"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "scenarioId": 3,
+      "stepId": 2,
+      "requirement": "Required",
+      "kind": "SpawnGroup",
+      "sequence": 2,
+      "spawnGroupId": 2,
+      "comment": "Spawn retry Van Valkenberg"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "scenarioId": 3,
+      "stepId": 3,
+      "requirement": "Required",
+      "kind": "RevealObjective",
+      "sequence": 3,
+      "targetObjectiveId": 4,
+      "comment": "Reveal retry handoff"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "scenarioId": 3,
+      "stepId": 4,
+      "requirement": "Required",
+      "kind": "ActivateObjective",
+      "sequence": 4,
+      "targetObjectiveId": 4,
+      "comment": "Activate retry handoff"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "scenarioId": 4,
+      "stepId": 1,
+      "requirement": "Required",
+      "kind": "EnableInteraction",
+      "sequence": 1,
+      "entityClassId": 24586,
+      "comment": "Restore the retry charge interaction"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "scenarioId": 4,
+      "stepId": 2,
+      "requirement": "Required",
+      "kind": "ResetAttempt",
+      "sequence": 2,
+      "targetScenarioId": 1,
+      "comment": "Clear the retry planted charge state"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "scenarioId": 4,
+      "stepId": 3,
+      "requirement": "Required",
+      "kind": "ResetAttempt",
+      "sequence": 3,
+      "targetScenarioId": 2,
+      "comment": "Clear the retry detonation state"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "scenarioId": 4,
+      "stepId": 4,
+      "requirement": "Required",
+      "kind": "ResetAttempt",
+      "sequence": 4,
+      "targetScenarioId": 3,
+      "comment": "Clear the retry extraction arrival state"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "scenarioId": 5,
+      "stepId": 1,
+      "requirement": "Required",
+      "kind": "TransferPlayer",
+      "sequence": 1,
+      "mapContextId": 1220,
+      "posX": 884.11,
+      "posY": 305.8,
+      "posZ": 347.81,
+      "orientation": 1.5613,
+      "comment": "Transfer retry to Alia Das"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "scenarioId": 5,
+      "stepId": 2,
+      "requirement": "Required",
+      "kind": "SetQualification",
+      "sequence": 2,
+      "qualificationKey": "BootcampComplete",
+      "qualificationValue": 1,
+      "comment": "Mark Bootcamp complete"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "scenarioId": 5,
+      "stepId": 3,
+      "requirement": "Required",
+      "kind": "SetAccountSkipEntitlement",
+      "sequence": 3,
+      "accountSkipEntitlement": true,
+      "comment": "Unlock account bootcamp skip"
+    }
+  ],
+  "evidence": [
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "evidenceId": 1,
+      "ownerKind": "Mission",
+      "ownerId": 2005,
+      "sourceKind": "Client",
+      "localClientPath": "C:\\Users\\johmil\\Projects\\trpython\\data\\generated\\client\\missionconversation.pyo_dis",
+      "confidence": 1,
+      "reconstructionNote": "missionconversation 2005/1-6 identifies the retry mission and its two objective ids"
+    },
+    {
+      "missionId": 2005,
+      "contentRevision": "deployment_11",
+      "evidenceId": 2,
+      "ownerKind": "Mission",
+      "ownerId": 2005,
+      "sourceKind": "Documentation",
+      "sourceUri": "https://web.archive.org/web/20090203215348/http://www.playtr.com:80/news/patch_notes/deployment_116_8152008.html",
+      "localClientPath": "C:\\Users\\johmil\\Projects\\trpython\\trpython\\client\\clientmethod.py",
+      "confidence": 0.9,
+      "reconstructionNote": "Boot Camp completion unlocks account-wide skip; runtime uses generic entitlement and qualification steps"
+    }
+  ],
+  "scene": {
+    "script": "bootcamp.bomb-retry",
+    "stateVersion": 1,
+    "recovery": "RestoreCheckpoint",
+    "actors": {
+      "group-1-spawn-1-0": {
+        "role": "group-1-spawn-1-0",
+        "kind": "Creature",
+        "templateId": 39,
+        "position": {
+          "x": -218,
+          "y": 101.08475,
+          "z": -78
+        },
+        "orientation": 0,
+        "initiallyInteractable": true,
+        "initialObjectState": 0,
+        "missionId": 2005,
+        "groupId": 1,
+        "spawnId": 1
+      },
+      "group-1-spawn-2-0": {
+        "role": "group-1-spawn-2-0",
+        "kind": "Creature",
+        "templateId": 50,
+        "position": {
+          "x": -221,
+          "y": 101.2538,
+          "z": -74
+        },
+        "orientation": 0,
+        "initiallyInteractable": true,
+        "initialObjectState": 0,
+        "missionId": 2005,
+        "groupId": 1,
+        "spawnId": 2
+      },
+      "group-2-spawn-1-0": {
+        "role": "group-2-spawn-1-0",
+        "kind": "Creature",
+        "templateId": 510209,
+        "position": {
+          "x": -223,
+          "y": 101.269646,
+          "z": -76
+        },
+        "orientation": 0,
+        "initiallyInteractable": true,
+        "initialObjectState": 0,
+        "missionId": 2005,
+        "groupId": 2,
+        "spawnId": 1
+      },
+      "bootcamp-dropship-debris": {
+        "role": "bootcamp-dropship-debris",
+        "kind": "Object",
+        "templateId": 24586,
+        "position": {
+          "x": -225,
+          "y": 101.12099,
+          "z": -71
+        },
+        "orientation": 0,
+        "initiallyInteractable": true,
+        "initialObjectState": 31,
+        "sharedKey": "bootcamp-dropship-debris",
+        "windupMilliseconds": 1400,
+        "missionId": 0,
+        "spawnId": 0
+      }
+    },
+    "routes": {},
+    "sequences": {
+      "1": {
+        "world": [
+          {
+            "$kind": "interaction",
+            "enabled": false,
+            "ifPresent": true,
+            "operationKey": "sequence-1-step-2-bootcamp-dropship-debris",
+            "role": "bootcamp-dropship-debris"
+          }
+        ],
+        "character": [
+          {
+            "$kind": "deadline",
+            "missionId": 2005,
+            "kind": "Satisfy",
+            "milliseconds": 0,
+            "operationKey": "sequence-1-step-1"
+          }
+        ],
+        "signals": [],
+        "timers": [
+          {
+            "name": "sequence-1-step-3",
+            "milliseconds": 5000,
+            "sequenceId": 2,
+            "clockPolicy": "WallClock",
+            "cancel": false
+          }
+        ]
+      },
+      "2": {
+        "world": [],
+        "character": [
+          {
+            "$kind": "objective",
+            "missionId": 2005,
+            "objectiveId": 1,
+            "state": "Completed",
+            "operationKey": "sequence-2-step-1"
+          }
+        ],
+        "signals": [],
+        "timers": [
+          {
+            "name": "sequence-2-step-2",
+            "milliseconds": 2000,
+            "sequenceId": 3,
+            "clockPolicy": "WallClock",
+            "cancel": false
+          }
+        ]
+      },
+      "3": {
+        "world": [
+          {
+            "$kind": "ensure",
+            "operationKey": "sequence-3-step-1-group-1-spawn-1-0",
+            "role": "group-1-spawn-1-0"
+          },
+          {
+            "$kind": "ensure",
+            "operationKey": "sequence-3-step-1-group-1-spawn-2-0",
+            "role": "group-1-spawn-2-0"
+          },
+          {
+            "$kind": "ensure",
+            "operationKey": "sequence-3-step-2-group-2-spawn-1-0",
+            "role": "group-2-spawn-1-0"
+          }
+        ],
+        "character": [
+          {
+            "$kind": "objective",
+            "missionId": 2005,
+            "objectiveId": 4,
+            "state": "NotAssigned",
+            "operationKey": "sequence-3-step-3"
+          },
+          {
+            "$kind": "objective",
+            "missionId": 2005,
+            "objectiveId": 4,
+            "state": "Incomplete",
+            "operationKey": "sequence-3-step-4"
+          }
+        ],
+        "signals": [],
+        "timers": []
+      },
+      "4": {
+        "world": [
+          {
+            "$kind": "interaction",
+            "enabled": true,
+            "ifPresent": true,
+            "operationKey": "sequence-4-step-1-bootcamp-dropship-debris",
+            "role": "bootcamp-dropship-debris"
+          },
+          {
+            "$kind": "remove",
+            "operationKey": "sequence-4-step-4-group-1-spawn-1-0",
+            "role": "group-1-spawn-1-0"
+          },
+          {
+            "$kind": "remove",
+            "operationKey": "sequence-4-step-4-group-1-spawn-2-0",
+            "role": "group-1-spawn-2-0"
+          },
+          {
+            "$kind": "remove",
+            "operationKey": "sequence-4-step-4-group-2-spawn-1-0",
+            "role": "group-2-spawn-1-0"
+          }
+        ],
+        "character": [],
+        "signals": [],
+        "timers": [
+          {
+            "name": "sequence-1-step-3",
+            "milliseconds": 0,
+            "sequenceId": 2,
+            "clockPolicy": "WallClock",
+            "cancel": true
+          },
+          {
+            "name": "sequence-2-step-2",
+            "milliseconds": 0,
+            "sequenceId": 3,
+            "clockPolicy": "WallClock",
+            "cancel": true
+          }
+        ]
+      },
+      "5": {
+        "world": [
+          {
+            "$kind": "transfer",
+            "mapContextId": 1220,
+            "position": {
+              "x": 884.11,
+              "y": 305.8,
+              "z": 347.81
+            },
+            "orientation": 1.5613,
+            "operationKey": "sequence-5-step-1"
+          }
+        ],
+        "character": [
+          {
+            "$kind": "qualification",
+            "qualification": 1,
+            "present": true,
+            "operationKey": "sequence-5-step-2"
+          },
+          {
+            "$kind": "entitlement",
+            "enabled": true,
+            "operationKey": "sequence-5-step-3"
+          }
+        ],
+        "signals": [],
+        "timers": []
+      },
+      "0": {
+        "world": [
+          {
+            "$kind": "ensure",
+            "operationKey": "retry-wreck",
+            "role": "bootcamp-dropship-debris"
+          },
+          {
+            "$kind": "interaction",
+            "enabled": true,
+            "ifPresent": false,
+            "operationKey": "retry-enable-wreck",
+            "role": "bootcamp-dropship-debris"
+          }
+        ],
+        "character": [],
+        "signals": [],
+        "timers": []
+      }
+    },
+    "names": {
+      "fuse": 1,
+      "detonation": 2,
+      "exit": 3,
+      "reset": 4,
+      "transfer": 5
+    },
+    "credit": {},
+    "requirement": {
+      "$kind": "not",
+      "item": {
+        "$kind": "custom",
+        "key": "character.starting-experience-completed"
+      }
+    },
+    "objectiveRequirements": {}
+  }
+}

@@ -28,7 +28,7 @@ namespace Rasa.Managers
         private static readonly object InstanceLock = new object();
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
         private readonly ManifestationManager _currencyManager;
-        private readonly MissionManager _missionManager;
+        private readonly MissionApplication _missionManager;
 
         public static NpcManager Instance
         {
@@ -55,14 +55,14 @@ namespace Rasa.Managers
 
         internal NpcManager(
             IGameUnitOfWorkFactory gameUnitOfWorkFactory,
-            MissionManager missionManager)
+            MissionApplication missionManager)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
             _currencyManager = new ManifestationManager(gameUnitOfWorkFactory);
             _missionManager = missionManager;
         }
 
-        private MissionManager Missions => _missionManager ?? MissionManager.Instance;
+        private MissionApplication Missions => _missionManager ?? MissionApplication.Instance;
 
         #region NPC
 
@@ -290,7 +290,7 @@ namespace Rasa.Managers
         public void UpdateConversationStatus(
             Client client,
             Creature creature,
-            MissionManager missionManager = null)
+            MissionApplication missionManager = null)
         {
             if (creature == null)
                 return;
@@ -321,8 +321,8 @@ namespace Rasa.Managers
             /*
             foreach (var entry in npcData.RelatedMissions)
             {
-                var missionLogEntry = MissionManager.Instance.FindPlayerMission(client, entry.MissionIndex);
-                var mission = MissionManager.Instance.GetById(missionLogEntry.MissionIndex);
+                var missionLogEntry = MissionApplication.Instance.FindPlayerMission(client, entry.MissionIndex);
+                var mission = MissionApplication.Instance.GetById(missionLogEntry.MissionIndex);
 
                 if (missionLogEntry != null)
                 {
@@ -374,10 +374,10 @@ namespace Rasa.Managers
                         }
                     }
                 }
-                else if (MissionManager.Instance.IsCompletedByPlayer(client, mission.MissionIndex) == false)
+                else if (MissionApplication.Instance.IsCompletedByPlayer(client, mission.MissionIndex) == false)
                 {
                     // check if the npc is actually the mission dispenser and not only a objective related npc
-                    if (MissionManager.Instance.IsCreatureMissionDispenser(MissionManager.Instance.GetByIndex(mission.MissionIndex), creature))
+                    if (MissionApplication.Instance.IsCreatureMissionDispenser(MissionApplication.Instance.GetByIndex(mission.MissionIndex), creature))
                     {
                         // mission available overwrites any other converse state
                         client.SendPacket(creature.Actor.EntityId, new NPCConversationStatusPacket(ConversationStatus.Available, new List<int> { })); // status - available

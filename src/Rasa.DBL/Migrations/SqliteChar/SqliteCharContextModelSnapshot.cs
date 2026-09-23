@@ -57,46 +57,6 @@ namespace Rasa.Migrations.SqliteChar
                     b.ToTable("auction");
                 });
 
-            modelBuilder.Entity("Rasa.Structures.Char.AuctionEntry", b =>
-                {
-                    b.Property<uint>("ItemId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("item_id");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("created_at");
-
-                    b.Property<uint>("Deposit")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("deposit");
-
-                    b.Property<uint>("DurationHours")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("duration_hours");
-
-                    b.Property<uint>("Price")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("price");
-
-                    b.Property<uint>("SellerId")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("seller_id");
-
-                    b.Property<string>("SellerName")
-                        .IsRequired()
-                        .HasColumnType("varchar(64)")
-                        .HasColumnName("seller_name");
-
-                    b.HasKey("ItemId");
-
-                    b.HasIndex("SellerId")
-                        .HasDatabaseName("auction_index_seller_id");
-
-                    b.ToTable("auction");
-                });
-
             modelBuilder.Entity("Rasa.Structures.Char.CensorWordsEntry", b =>
                 {
                     b.Property<uint>("Id")
@@ -411,19 +371,76 @@ namespace Rasa.Migrations.SqliteChar
                         .HasColumnType("INTEGER")
                         .HasColumnName("mission_id");
 
+                    b.Property<string>("AssignmentId")
+                        .IsRequired()
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("assignment_id");
+
                     b.Property<bool>("Completeable")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER")
                         .HasDefaultValue(false)
                         .HasColumnName("completeable");
 
+                    b.Property<string>("ContentRevision")
+                        .IsRequired()
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("content_revision");
+
+                    b.Property<uint>("Generation")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("generation");
+
                     b.Property<uint>("MissionState")
                         .HasColumnType("INTEGER")
                         .HasColumnName("mission_state");
 
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("version");
+
                     b.HasKey("CharacterId", "MissionId");
 
+                    b.HasIndex("AssignmentId")
+                        .IsUnique();
+
                     b.ToTable("character_mission");
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionHistoryEntry", b =>
+                {
+                    b.Property<uint>("CharacterId")
+                        .HasColumnType("integer")
+                        .HasColumnName("character_id");
+
+                    b.Property<uint>("MissionId")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("mission_id");
+
+                    b.Property<string>("AssignmentId")
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("assignment_id");
+
+                    b.Property<DateTime>("CompletedAtUtc")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("completed_at_utc");
+
+                    b.Property<string>("ContentRevision")
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("content_revision");
+
+                    b.Property<uint>("Outcome")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("outcome");
+
+                    b.Property<bool>("Rewarded")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("rewarded");
+
+                    b.HasKey("CharacterId", "MissionId");
+
+                    b.ToTable("character_mission_history");
                 });
 
             modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionObjectiveCounterEntry", b =>
@@ -703,63 +720,6 @@ namespace Rasa.Migrations.SqliteChar
                     b.ToTable("clan");
                 });
 
-            modelBuilder.Entity("Rasa.Structures.Char.ClanLockboxLogEntry", b =>
-                {
-                    b.Property<uint>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("id");
-
-                    b.Property<long>("Amount")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("amount");
-
-                    b.Property<uint>("CharacterId")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("character_id");
-
-                    b.Property<string>("CharacterName")
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("character_name");
-
-                    b.Property<uint>("ClanId")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("clan_id");
-
-                    b.Property<byte>("CreditType")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("credit_type");
-
-                    b.Property<uint>("ItemTemplateId")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("item_template_id");
-
-                    b.Property<uint>("Quantity")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("quantity");
-
-                    b.Property<long>("TransactionTime")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("transaction_time");
-
-                    b.Property<byte>("TransactionType")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("transaction_type");
-
-                    b.Property<string>("UserName")
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("user_name");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ClanId", "TransactionTime")
-                        .HasDatabaseName("clan_lockbox_log_index_clan_id_time");
-
-                    b.ToTable("clan_lockbox_log");
-                });
-
             modelBuilder.Entity("Rasa.Structures.Char.ClanInventoryEntry", b =>
                 {
                     b.Property<uint>("ItemId")
@@ -1003,6 +963,404 @@ namespace Rasa.Migrations.SqliteChar
                     b.ToTable("items");
                 });
 
+            modelBuilder.Entity("Rasa.Structures.Char.MissionActorLeaseEntry", b =>
+                {
+                    b.Property<string>("MapKey")
+                        .HasColumnType("varchar(64)")
+                        .HasColumnName("map_key");
+
+                    b.Property<string>("SpawnKey")
+                        .HasColumnType("varchar(64)")
+                        .HasColumnName("spawn_key");
+
+                    b.Property<string>("ActorRole")
+                        .HasColumnType("varchar(64)")
+                        .HasColumnName("actor_role");
+
+                    b.Property<uint>("Generation")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("generation");
+
+                    b.Property<string>("RunId")
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("run_id");
+
+                    b.Property<string>("State")
+                        .HasColumnType("varchar(16)")
+                        .HasColumnName("state");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("version");
+
+                    b.HasKey("MapKey", "SpawnKey");
+
+                    b.HasIndex("RunId");
+
+                    b.ToTable("mission_actor_lease");
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.MissionActorStateEntry", b =>
+                {
+                    b.Property<string>("RunId")
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("run_id");
+
+                    b.Property<string>("ActorRole")
+                        .HasColumnType("varchar(64)")
+                        .HasColumnName("actor_role");
+
+                    b.Property<uint>("Generation")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("generation");
+
+                    b.Property<uint>("MapContextId")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("map_context_id");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasColumnType("varchar(16)")
+                        .HasColumnName("outcome");
+
+                    b.Property<uint>("OwnerCharacterId")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("owner_character_id");
+
+                    b.Property<string>("SharedKey")
+                        .HasColumnType("varchar(64)")
+                        .HasColumnName("shared_key");
+
+                    b.HasKey("RunId", "ActorRole", "Generation");
+
+                    b.ToTable("mission_actor_state");
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.MissionCreditDeliveryEntry", b =>
+                {
+                    b.Property<string>("EventId")
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("event_id");
+
+                    b.Property<string>("AssignmentId")
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("assignment_id");
+
+                    b.Property<uint>("AssignmentGeneration")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("assignment_generation");
+
+                    b.Property<uint>("CharacterId")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("character_id");
+
+                    b.Property<uint>("MissionId")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("mission_id");
+
+                    b.Property<uint>("ObjectiveId")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("objective_id");
+
+                    b.Property<string>("Payload")
+                        .HasColumnType("text")
+                        .HasColumnName("payload");
+
+                    b.Property<string>("Status")
+                        .HasColumnType("varchar(16)")
+                        .HasColumnName("status");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("version");
+
+                    b.HasKey("EventId", "AssignmentId");
+
+                    b.HasIndex("CharacterId", "Status");
+
+                    b.ToTable("mission_credit_delivery");
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.MissionOutcomeEntry", b =>
+                {
+                    b.Property<string>("EventId")
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("event_id");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<uint>("Generation")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("generation");
+
+                    b.Property<string>("RunId")
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("run_id");
+
+                    b.HasKey("EventId");
+
+                    b.ToTable("mission_outcome");
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.MissionReceiptEntry", b =>
+                {
+                    b.Property<string>("OwnerId")
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("owner_id");
+
+                    b.Property<uint>("Generation")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("generation");
+
+                    b.Property<string>("OperationKey")
+                        .HasColumnType("varchar(96)")
+                        .HasColumnName("operation_key");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("Kind")
+                        .HasColumnType("varchar(16)")
+                        .HasColumnName("kind");
+
+                    b.HasKey("OwnerId", "Generation", "OperationKey");
+
+                    b.ToTable("mission_receipt");
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.MissionSceneEntry", b =>
+                {
+                    b.Property<string>("RunId")
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("run_id");
+
+                    b.Property<string>("AssignmentId")
+                        .IsRequired()
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("assignment_id");
+
+                    b.Property<string>("Checkpoint")
+                        .HasColumnType("text")
+                        .HasColumnName("checkpoint");
+
+                    b.Property<string>("Fault")
+                        .HasColumnType("text")
+                        .HasColumnName("fault");
+
+                    b.Property<uint>("Generation")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("generation");
+
+                    b.Property<string>("MapKey")
+                        .HasColumnType("varchar(64)")
+                        .HasColumnName("map_key");
+
+                    b.Property<uint>("MissionId")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("mission_id");
+
+                    b.Property<uint>("OwnerCharacterId")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("owner_character_id");
+
+                    b.Property<string>("Release")
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("release");
+
+                    b.Property<string>("ScriptKey")
+                        .HasColumnType("varchar(64)")
+                        .HasColumnName("script_key");
+
+                    b.Property<int>("StateVersion")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("state_version");
+
+                    b.Property<string>("Status")
+                        .HasColumnType("varchar(16)")
+                        .HasColumnName("status");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("version");
+
+                    b.HasKey("RunId");
+
+                    b.HasIndex("MapKey", "Status");
+
+                    b.HasIndex("OwnerCharacterId", "MissionId");
+
+                    b.HasIndex("OwnerCharacterId", "MissionId", "ScriptKey", "AssignmentId")
+                        .IsUnique();
+
+                    b.ToTable("mission_scene");
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.MissionSceneMessageEntry", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("id");
+
+                    b.Property<uint>("Generation")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("generation");
+
+                    b.Property<string>("OperationKey")
+                        .IsRequired()
+                        .HasColumnType("varchar(96)")
+                        .HasColumnName("operation_key");
+
+                    b.Property<string>("RunId")
+                        .IsRequired()
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("run_id");
+
+                    b.Property<uint>("SequenceId")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("sequence_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("varchar(16)")
+                        .HasColumnName("status");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RunId", "Generation", "OperationKey")
+                        .IsUnique();
+
+                    b.ToTable("mission_scene_message");
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.MissionSceneParticipantEntry", b =>
+                {
+                    b.Property<string>("RunId")
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("run_id");
+
+                    b.Property<uint>("CharacterId")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("character_id");
+
+                    b.Property<bool>("Active")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("active");
+
+                    b.Property<uint>("AssignmentGeneration")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("assignment_generation");
+
+                    b.Property<string>("AssignmentId")
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("assignment_id");
+
+                    b.HasKey("RunId", "CharacterId");
+
+                    b.ToTable("mission_scene_participant");
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.MissionTimerEntry", b =>
+                {
+                    b.Property<string>("RunId")
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("run_id");
+
+                    b.Property<string>("Name")
+                        .HasColumnType("varchar(64)")
+                        .HasColumnName("name");
+
+                    b.Property<string>("ClockPolicy")
+                        .HasColumnType("varchar(16)")
+                        .HasColumnName("clock_policy");
+
+                    b.Property<string>("Disposition")
+                        .HasColumnType("varchar(16)")
+                        .HasColumnName("disposition");
+
+                    b.Property<DateTime?>("DueAtUtc")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("due_at_utc");
+
+                    b.Property<uint>("Generation")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("generation");
+
+                    b.Property<uint?>("MissionId")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("mission_id");
+
+                    b.Property<uint?>("ObjectiveId")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("objective_id");
+
+                    b.Property<long?>("RemainingTicks")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("remaining_ticks");
+
+                    b.Property<uint>("SequenceId")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("sequence_id");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("version");
+
+                    b.HasKey("RunId", "Name");
+
+                    b.HasIndex("Disposition", "DueAtUtc");
+
+                    b.ToTable("mission_timer");
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.MissionWorldEffectEntry", b =>
+                {
+                    b.Property<string>("RunId")
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("run_id");
+
+                    b.Property<uint>("Generation")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("generation");
+
+                    b.Property<string>("OperationKey")
+                        .HasColumnType("varchar(96)")
+                        .HasColumnName("operation_key");
+
+                    b.Property<string>("Failure")
+                        .HasColumnType("text")
+                        .HasColumnName("failure");
+
+                    b.Property<string>("Payload")
+                        .HasColumnType("text")
+                        .HasColumnName("payload");
+
+                    b.Property<string>("Status")
+                        .HasColumnType("varchar(16)")
+                        .HasColumnName("status");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("version");
+
+                    b.HasKey("RunId", "Generation", "OperationKey");
+
+                    b.ToTable("mission_world_effect");
+                });
+
             modelBuilder.Entity("Rasa.Structures.Char.PetitionEntry", b =>
                 {
                     b.Property<uint>("Id")
@@ -1134,6 +1492,15 @@ namespace Rasa.Migrations.SqliteChar
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionHistoryEntry", b =>
+                {
+                    b.HasOne("Rasa.Structures.Char.CharacterEntry", null)
+                        .WithMany()
+                        .HasForeignKey("CharacterId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionObjectiveCounterEntry", b =>
                 {
                     b.HasOne("Rasa.Structures.Char.CharacterMissionObjectiveEntry", "Objective")
@@ -1217,6 +1584,68 @@ namespace Rasa.Migrations.SqliteChar
                     b.Navigation("Character");
 
                     b.Navigation("Clan");
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.MissionActorLeaseEntry", b =>
+                {
+                    b.HasOne("Rasa.Structures.Char.MissionSceneEntry", null)
+                        .WithMany()
+                        .HasForeignKey("RunId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.MissionActorStateEntry", b =>
+                {
+                    b.HasOne("Rasa.Structures.Char.MissionSceneEntry", null)
+                        .WithMany()
+                        .HasForeignKey("RunId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.MissionCreditDeliveryEntry", b =>
+                {
+                    b.HasOne("Rasa.Structures.Char.MissionOutcomeEntry", null)
+                        .WithMany()
+                        .HasForeignKey("EventId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.MissionSceneMessageEntry", b =>
+                {
+                    b.HasOne("Rasa.Structures.Char.MissionSceneEntry", null)
+                        .WithMany()
+                        .HasForeignKey("RunId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.MissionSceneParticipantEntry", b =>
+                {
+                    b.HasOne("Rasa.Structures.Char.MissionSceneEntry", null)
+                        .WithMany()
+                        .HasForeignKey("RunId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.MissionTimerEntry", b =>
+                {
+                    b.HasOne("Rasa.Structures.Char.MissionSceneEntry", null)
+                        .WithMany()
+                        .HasForeignKey("RunId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.MissionWorldEffectEntry", b =>
+                {
+                    b.HasOne("Rasa.Structures.Char.MissionSceneEntry", null)
+                        .WithMany()
+                        .HasForeignKey("RunId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Rasa.Structures.Char.CharacterEntry", b =>

@@ -31,7 +31,7 @@ namespace Rasa.Managers
         public Dictionary<uint, Creature> LoadedCreatures = new();
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
         private readonly ManifestationManager _manifestationManager;
-        private readonly MissionManager _missionManager;
+        private readonly MissionApplication _missionManager;
         public static CreatureManager Instance
         {
             get
@@ -58,7 +58,7 @@ namespace Rasa.Managers
         internal CreatureManager(
             IGameUnitOfWorkFactory gameUnitOfWorkFactory,
             ManifestationManager manifestationManager,
-            MissionManager missionManager = null)
+            MissionApplication missionManager = null)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
             _manifestationManager = manifestationManager;
@@ -134,12 +134,12 @@ namespace Rasa.Managers
 
         internal void HandleCreatureKill(MapChannel mapChannel, Creature creature, Actor killedBy)
         {
-            if (creature.State == CharacterState.Dead || BootcampCombat.IsBaseDefender(creature))
+            if (creature.State == CharacterState.Dead || Game.Missions.World.CreatureGameplayRules.IsInvulnerable(creature))
                 return; // creature already dead
 
             var isScenarioActor = creature?.SpawnPool?.ScenarioKey != null;
             var canReward = creature.Faction != Factions.AFS &&
-                (!isScenarioActor || BootcampCombat.IsThrax(creature));
+                (!isScenarioActor || Game.Missions.World.CreatureGameplayRules.Policy(creature).RewardScenarioKills);
 
             // kill creature
             var stateIds = new List<CharacterState> { CharacterState.Dead };
@@ -158,7 +158,8 @@ namespace Rasa.Managers
             {
                 SpawnPoolManager.Instance.DecreaseAliveCreatureCount(mapChannel, creature.SpawnPool);
                 SpawnPoolManager.Instance.IncreaseDeadCreatureCount(creature.SpawnPool);
-                (_missionManager ?? MissionManager.Instance).RecordScenarioCreatureDeath(creature.SpawnPool);
+                if (creature.SpawnPool.SceneRunId == null)
+                    (_missionManager ?? MissionApplication.Instance).RecordScenarioCreatureDeath(creature.SpawnPool);
             }
 
             // todo: How were credits and experience calculated when multiple players attacked the same creature? Did only the player with the first strike get experience?
@@ -175,7 +176,7 @@ namespace Rasa.Managers
             if (client == null && killedBy is Creature killer && killer.Faction != creature.Faction)
                 client = FindEscortOwner(mapChannel, killer);
             if (client == null && killedBy is Creature defender &&
-                BootcampCombat.IsBaseDefender(defender) && BootcampCombat.IsThrax(creature) &&
+                Game.Missions.World.CreatureGameplayRules.IsDefender(defender) && Game.Missions.World.CreatureGameplayRules.TracksParticipation(creature) &&
                 defender.Faction != creature.Faction && IsLivingOnMap(mapChannel, defender))
                 client = FindCombatPlayer(mapChannel, creature.CombatParticipant);
             creature.CombatParticipant = null;
@@ -226,11 +227,15 @@ namespace Rasa.Managers
             }
 
             var progressClient = client;
-            if (progressClient != null &&
-                CanCreditScenarioProgress(mapChannel, creature, progressClient))
-                (_missionManager ?? MissionManager.Instance).RecordProgress(
+            if (creature.SpawnPool?.SceneRunId != null)
+                (_missionManager ?? MissionApplication.Instance).Scenes.RecordDefeat(mapChannel, creature,
+                    progressClient != null && CanCreditScenarioProgress(mapChannel, creature, progressClient)
+                        ? progressClient : null);
+            else if (progressClient != null && CanCreditScenarioProgress(mapChannel, creature, progressClient))
+                (_missionManager ?? MissionApplication.Instance).Credit.Record(
                     progressClient,
-                    MissionProgressEvent.Creature(creature.DbId));
+                    MissionProgressEvent.Creature(creature.DbId),
+                    creature.Position);
         }
 
         internal static Client FindEscortOwner(MapChannel mapChannel, Creature escort)
@@ -292,7 +297,7 @@ namespace Rasa.Managers
 
         internal static void RecordCombatDamage(MapChannel map, Creature target, Actor source, int damage)
         {
-            if (damage <= 0 || !BootcampCombat.IsThrax(target) || !IsHostileTarget(map, source, target))
+            if (damage <= 0 || !Game.Missions.World.CreatureGameplayRules.TracksParticipation(target) || !IsHostileTarget(map, source, target))
                 return;
             var client = source is Manifestation player
                 ? FindCombatPlayer(map, player)
@@ -357,6 +362,13 @@ namespace Rasa.Managers
             var creature = (Creature)creatureEntry.Clone();
 
             creature.SpawnPool = spawnPool;
+            if (spawnPool?.RuntimeMapChannel != null)
+            {
+                var leases = (_missionManager ?? MissionApplication.Instance).PublicActors;
+                leases.Recover(spawnPool.RuntimeMapChannel);
+                if (leases.IsReserved(spawnPool.RuntimeMapChannel, spawnPool.DbId))
+                    creature.IsInteractable = false;
+            }
 
             creature.State = CharacterState.Idle;
             creature.Name = entityClass.ClassName;
@@ -653,7 +665,7 @@ namespace Rasa.Managers
                 }
 
                 // add mission data to npc's
-                foreach (var entry in MissionManager.Instance.LoadedMissions)
+                foreach (var entry in MissionApplication.Instance.LoadedMissions)
                 {
                     var mission = entry.Value;
 

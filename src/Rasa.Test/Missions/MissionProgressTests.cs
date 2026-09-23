@@ -632,6 +632,10 @@ namespace Rasa.Test.Missions
                         MissionProgressEvent.Scenario(subject, subject, subject),
                     MissionProgressEventKind.DeadlineElapsed =>
                         MissionProgressEvent.Deadline(subject, subject),
+                    MissionProgressEventKind.ObjectiveStateReached =>
+                        MissionProgressEvent.ObjectiveState(subject, subject, (byte)MissionObjectiveState.Completed),
+                    MissionProgressEventKind.ObjectHit =>
+                        MissionProgressEvent.ObjectHit(subject, subject),
                     _ => throw new AssertFailedException()
                 };
                 Assert.IsFalse(context.Manager.RecordProgress(context.Client, progress),

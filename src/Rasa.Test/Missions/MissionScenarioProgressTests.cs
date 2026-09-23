@@ -136,11 +136,8 @@ namespace Rasa.Test.Missions
                 context.Drain().OfType<ObjectiveCompletedPacket>().Count());
 
             using var unit = context.CreateChar();
-            CollectionAssert.AreEqual(
-                new[] { "scenario:60:step:10" },
-                unit.CharacterMissionScenario.Get(1, 321)
-                    .Select(entry => entry.StepKey)
-                    .ToArray());
+            var scene = unit.CharacterMissions.Runtime.Scenes(1, 321).Single();
+            Assert.AreEqual(1, unit.CharacterMissions.Runtime.Messages(scene.RunId).Count(message => message.Status == "Handled"));
         }
 
         [TestMethod]
@@ -172,11 +169,8 @@ namespace Rasa.Test.Missions
                 MissionObjectiveState.Incomplete,
                 context.Client.Player.Missions[321].Objectives[11].State);
             using var unit = context.CreateChar();
-            CollectionAssert.AreEquivalent(
-                new[] { "scenario:60:step:1", "scenario:60:step:2" },
-                unit.CharacterMissionScenario.Get(1, 321)
-                    .Select(entry => entry.StepKey)
-                    .ToArray());
+            var scene = unit.CharacterMissions.Runtime.Scenes(1, 321).Single();
+            Assert.AreEqual(1, unit.CharacterMissions.Runtime.Messages(scene.RunId).Count(message => message.Status == "Handled"));
         }
 
         private static MissionContentFixture CreateScenarioFixture(
@@ -311,17 +305,18 @@ namespace Rasa.Test.Missions
             return fixture;
         }
 
-        private static MissionManager LoadManager(
+        private static MissionApplication LoadManager(
             MissionTestContext context,
             MissionContentFixture fixture)
         {
-            var manager = new MissionManager(
+            var manager = new MissionApplication(
                 new MissionContentLoadingFactory(context, fixture.CreateWorldUnitOfWork()),
                 new Dictionary<uint, Mission>());
             var report = manager.LoadMissions();
             Assert.IsFalse(
                 report.BlocksReadiness,
                 string.Join(" | ", report.Diagnostics.Select(diagnostic => diagnostic.Code)));
+            Content.SceneFixtureBindings.Bind(manager, fixture);
             return manager;
         }
 

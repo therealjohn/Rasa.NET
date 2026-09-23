@@ -247,7 +247,7 @@ namespace Rasa.Managers
                 if (!action.IsInrerrupted)
                 {
                     CellManager.Instance.CellCallMethod(station, new UsableInfoPacket(station.IsEnabled, station.StateId, 0, station.WindupTime, station.ActivateMission));
-                    MissionManager.Instance.RecordProgress(
+                    MissionApplication.Instance.RecordProgress(
                         user,
                         MissionProgressEvent.Interaction(
                             (uint)station.EntityClassId));

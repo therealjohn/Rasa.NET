@@ -156,11 +156,11 @@ namespace Rasa.Test.Missions
             return fixture;
         }
 
-        private static MissionManager LoadManager(
+        private static MissionApplication LoadManager(
             MissionTestContext context,
             MissionContentFixture fixture)
         {
-            var manager = new MissionManager(
+            var manager = new MissionApplication(
                 new MissionContentLoadingFactory(context, fixture.CreateWorldUnitOfWork()),
                 new Dictionary<uint, Mission>());
             var report = manager.LoadMissions();
@@ -170,7 +170,7 @@ namespace Rasa.Test.Missions
             return manager;
         }
 
-        private static AbilityManager CreateManager(MissionManager missionManager) =>
+        private static AbilityManager CreateManager(MissionApplication missionManager) =>
             (AbilityManager)typeof(AbilityManager)
                 .GetConstructor(
                     BindingFlags.Instance | BindingFlags.NonPublic,
@@ -178,7 +178,7 @@ namespace Rasa.Test.Missions
                     new[]
                     {
                         typeof(IGameUnitOfWorkFactory),
-                        typeof(MissionManager)
+                        typeof(MissionApplication)
                     },
                     null)!
                 .Invoke(new object[] { null, missionManager });

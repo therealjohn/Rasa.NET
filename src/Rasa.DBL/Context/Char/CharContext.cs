@@ -11,6 +11,9 @@ namespace Rasa.Context.Char
     using Services.DbContext;
     using Structures.Char;
     using System;
+    using System.Linq;
+    using System.Threading;
+    using System.Threading.Tasks;
 
     public abstract class CharContext : RasaDbContextBase
     {
@@ -57,6 +60,44 @@ namespace Rasa.Context.Char
         public DbSet<ItemEntry> ItemEntries { get; set; }
         public DbSet<PetitionEntry> PetitionEntries { get; set; }
         public DbSet<UserOptionEntry> UserOptionEntries { get; set; }
+
+        public override int SaveChanges(bool acceptAllChangesOnSuccess)
+        {
+            AdvanceMissionVersions();
+            return base.SaveChanges(acceptAllChangesOnSuccess);
+        }
+
+        public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+        {
+            AdvanceMissionVersions();
+            return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        }
+
+        private void AdvanceMissionVersions()
+        {
+            var changed = ChangeTracker.Entries()
+                .Where(entry => entry.State is EntityState.Modified or EntityState.Deleted)
+                .Select(entry => entry.Entity switch
+                {
+                    CharacterMissionEntry mission => ((uint, uint)?)(mission.CharacterId, mission.MissionId),
+                    CharacterMissionObjectiveEntry objective => (objective.CharacterId, objective.MissionId),
+                    CharacterMissionObjectiveCounterEntry counter => (counter.CharacterId, counter.MissionId),
+                    CharacterMissionObjectiveItemCounterEntry counter => (counter.CharacterId, counter.MissionId),
+                    _ => null
+                }).Where(key => key.HasValue).Select(key => key.Value).Distinct().ToArray();
+            foreach (var (characterId, missionId) in changed)
+            {
+                var mission = CharacterMissionEntries.Find(characterId, missionId);
+                if (mission == null)
+                    continue;
+                var tracked = Entry(mission);
+                if (tracked.State is EntityState.Added or EntityState.Deleted ||
+                    tracked.Property(entry => entry.Version).IsModified)
+                    continue;
+                mission.Version = checked(mission.Version + 1);
+            }
+        }
+
         protected override DatabaseConnectionConfiguration GetDatabaseConnectionConfiguration()
         {
             return _databaseConfiguration.Value.Char;
@@ -72,6 +113,7 @@ namespace Rasa.Context.Char
             SetupCharacterMissionTable(modelBuilder);
             SetupCharacterMissionObjectiveTables(modelBuilder);
             SetupCharacterMissionDurabilityTables(modelBuilder);
+            MissionRuntimeModel.Configure(modelBuilder);
             SetupCharacterSkillTable(modelBuilder);
             SetupCharacterStartingExperienceTables(modelBuilder);
             SetupCharacterTeleporterTable(modelBuilder);

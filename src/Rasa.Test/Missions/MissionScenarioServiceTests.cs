@@ -77,17 +77,10 @@ namespace Rasa.Test.Missions
             Assert.IsTrue(unit.CharacterQualifications.HasQualification(
                 context.Client.Player.Id,
                 CharacterQualificationKey.BootcampComplete));
-            CollectionAssert.AreEquivalent(
-                new[]
-                {
-                    "scenario:60:step:1",
-                    "scenario:60:step:2",
-                    "scenario:60:step:3",
-                    "scenario:60:step:4"
-                },
-                unit.CharacterMissionScenario.Get(context.Client.Player.Id, 321)
-                    .Select(entry => entry.StepKey)
-                    .ToArray());
+            var run = unit.CharacterMissions.Runtime.Scenes(context.Client.Player.Id, 321).Single();
+            Assert.AreEqual(1, unit.CharacterMissions.Runtime.Messages(run.RunId).Count(message => message.Status == "Handled"));
+            using var verify = context.Open();
+            Assert.AreEqual(4, verify.Set<MissionReceiptEntry>().Count(receipt => receipt.OwnerId == run.RunId));
         }
 
         [TestMethod]
@@ -102,8 +95,8 @@ namespace Rasa.Test.Missions
                 privateInstances: new PrivateMapInstanceService());
             maps.MapChannelArray.Add(context.Map.MapInfo.MapContextId, context.Map);
             using var managers = CreateManagers(maps);
-            MissionManager manager = null;
-            var service = new MissionScenarioService(
+            MissionApplication manager = null;
+            var service = new MissionSceneHost(
                 () => context,
                 () => manager,
                 new ManifestationManager(context),
@@ -147,7 +140,7 @@ namespace Rasa.Test.Missions
             context.Map.MapInfo = new MapInfo(1985, "bootcamp_fixture", 1556, 0);
             context.Client.Player.MapContextId = 1985;
             var now = new DateTime(2026, 9, 19, 12, 0, 0, DateTimeKind.Utc);
-            MissionManager manager = null;
+            MissionApplication manager = null;
             MapChannelManager maps = null;
             var objects = new DynamicObjectManager(null, maps);
             var creatures = new CreatureManager(null, new ManifestationManager(context));
@@ -158,7 +151,7 @@ namespace Rasa.Test.Missions
                 Npc = new Npc { NpcPackageId = 501 },
                 AppearanceData = new Dictionary<EquipmentData, AppearanceData>()
             };
-            var service = new MissionScenarioService(
+            var service = new MissionSceneHost(
                 () => context,
                 () => manager,
                 new ManifestationManager(context),
@@ -207,7 +200,7 @@ namespace Rasa.Test.Missions
             context.Map.MapInfo = new MapInfo(1985, "bootcamp_fixture", 1556, 0);
             context.Client.Player.MapContextId = 1985;
             var now = new DateTime(2026, 9, 19, 12, 0, 0, DateTimeKind.Utc);
-            MissionManager manager = null;
+            MissionApplication manager = null;
             MapChannelManager maps = null;
             var objects = new DynamicObjectManager(null, maps);
             var creatures = new CreatureManager(null, new ManifestationManager(context));
@@ -218,7 +211,7 @@ namespace Rasa.Test.Missions
                 Npc = new Npc { NpcPackageId = 501 },
                 AppearanceData = new Dictionary<EquipmentData, AppearanceData>()
             };
-            var service = new MissionScenarioService(
+            var service = new MissionSceneHost(
                 () => context,
                 () => manager,
                 new ManifestationManager(context),
@@ -269,7 +262,7 @@ namespace Rasa.Test.Missions
             context.Client.Player.MapContextId = 1985;
             context.Client.Player.Class = (uint)CharacterClass.Recruit;
             var now = new DateTime(2026, 9, 19, 12, 0, 0, DateTimeKind.Utc);
-            MissionManager manager = null;
+            MissionApplication manager = null;
             MapChannelManager maps = null;
             var objects = new DynamicObjectManager(null, maps);
             var creatures = new CreatureManager(null, new ManifestationManager(context));
@@ -280,7 +273,7 @@ namespace Rasa.Test.Missions
                 Npc = new Npc { NpcPackageId = 501 },
                 AppearanceData = new Dictionary<EquipmentData, AppearanceData>()
             };
-            var service = new MissionScenarioService(
+            var service = new MissionSceneHost(
                 () => context,
                 () => manager,
                 new ManifestationManager(context),
@@ -333,7 +326,7 @@ namespace Rasa.Test.Missions
             context.Client.Player.MapContextId = 1985;
             context.Client.Player.Class = (uint)CharacterClass.Recruit;
             var now = new DateTime(2026, 9, 19, 12, 0, 0, DateTimeKind.Utc);
-            MissionManager manager = null;
+            MissionApplication manager = null;
             MapChannelManager maps = null;
             var objects = new DynamicObjectManager(null, maps);
             var creatures = new CreatureManager(null, new ManifestationManager(context));
@@ -353,7 +346,7 @@ namespace Rasa.Test.Missions
                 Faction = Factions.Bane,
                 AppearanceData = new Dictionary<EquipmentData, AppearanceData>()
             };
-            var service = new MissionScenarioService(
+            var service = new MissionSceneHost(
                 () => context,
                 () => manager,
                 new ManifestationManager(context),
@@ -452,154 +445,9 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(
                 1,
                 context.Drain().OfType<ObjectiveCompletedPacket>().Count(packet => packet.ObjectiveId == 10));
-            CollectionAssert.Contains(
-                unit.CharacterMissionScenario.Get(context.Client.Player.Id, 321)
-                    .Select(entry => entry.StepKey)
-                    .ToList(),
-                "scenario:60:step:7");
-        }
-
-        [TestMethod]
-        public void ResetScenarioAttemptByTargetScenarioAllowsACompletedScenarioToRunAgain()
-        {
-            using var context = MissionTestContext.WithCustomDefinitions(
-                new Dictionary<uint, Mission>());
-            var fixture = CreateResetFixture();
-            var now = new DateTime(2026, 9, 19, 12, 0, 0, DateTimeKind.Utc);
-            var maps = new MapChannelManager(
-                null,
-                privateInstances: new PrivateMapInstanceService());
-            maps.MapChannelArray.Add(context.Map.MapInfo.MapContextId, context.Map);
-            using var managers = CreateManagers(maps);
-            var manager = LoadManager(context, fixture, () => now, maps);
-            var giver = context.AddNpc(101);
-
-            Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
-            context.Drain();
-
-            Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 61));
-            Assert.IsFalse(manager.TryExecuteScenario(context.Client, 321, 61));
-            Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 60));
-            Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 61));
-
-            using var unit = context.CreateChar();
-            var keys = unit.CharacterMissionScenario.Get(context.Client.Player.Id, 321)
-                .Select(entry => entry.StepKey)
-                .ToArray();
-            Assert.AreEqual(1, keys.Count(key => key == "attempt:scout:scenario:61:step:1"));
-        }
-
-        [TestMethod]
-        public void ResetAttemptByAttemptKeyClearsOnlyMatchingStatePreservesOtherAttemptsAndAllowsRetryAfterReconnect()
-        {
-            using var context = MissionTestContext.WithCustomDefinitions(
-                new Dictionary<uint, Mission>());
-            PrepareScenarioCreatureClass();
-            var fixture = CreateAttemptKeyRuntimeFixture();
-            context.Map.MapInfo = new MapInfo(1985, "bootcamp_fixture", 1556, 0);
-            context.Client.Player.MapContextId = 1985;
-            var now = new DateTime(2026, 9, 19, 12, 0, 0, DateTimeKind.Utc);
-            MissionManager manager = null;
-            MapChannelManager maps = null;
-            var objects = new DynamicObjectManager(null, maps);
-            var creatures = new CreatureManager(null, new ManifestationManager(context));
-            creatures.LoadedCreatures[501] = new Creature
-            {
-                DbId = 501,
-                EntityClass = (EntityClasses)4001,
-                Npc = new Npc { NpcPackageId = 501 },
-                AppearanceData = new Dictionary<EquipmentData, AppearanceData>()
-            };
-            var service = new MissionScenarioService(
-                () => context,
-                () => manager,
-                new ManifestationManager(context),
-                () => maps,
-                () => creatures,
-                () => objects,
-                () => CommunicatorManager.Instance,
-                () => now);
-            maps = new MapChannelManager(
-                null,
-                privateInstances: new PrivateMapInstanceService(),
-                scenarioService: service);
-            maps.MapChannelArray.Add(1985, context.Map);
-            objects = new DynamicObjectManager(null, maps);
-            manager = LoadManager(context, fixture, () => now, maps, objects, creatures, service);
-            using var singletons = new ManagerInstances(maps, objects, creatures, manager);
-            var owned = maps.GetOrCreatePrivateInstance(1985, context.Client.Player.Id);
-            MoveClientToMap(context.Client, context.Map, owned);
-            var giver = context.AddNpc(101, owned);
-
-            Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
-            context.Drain();
-
-            Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 61));
-            Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 63));
-
-            using (var unit = context.CreateChar())
-            {
-                var initialKeys = unit.CharacterMissionScenario.Get(context.Client.Player.Id, 321)
-                    .Select(entry => entry.StepKey)
-                    .ToArray();
-                Assert.IsTrue(initialKeys.Any(key => key == "attempt:scout:scenario:61:step:1"));
-                Assert.IsTrue(initialKeys.Any(key => key == "attempt:scout:scenario:61:step:2"));
-                Assert.IsTrue(initialKeys.Any(key => key.StartsWith("attempt:scout:schedule:61:3:62:", StringComparison.Ordinal)));
-                Assert.IsTrue(initialKeys.Any(key => key == "attempt:medic:scenario:63:step:1"));
-                Assert.IsTrue(initialKeys.Any(key => key == "attempt:medic:scenario:63:step:2"));
-            }
-
-            Assert.AreEqual(2, CountScenarioCreatures(owned));
-            Assert.AreEqual(2, CountScenarioObjects(owned));
-            Assert.AreEqual(1, CountScenarioCreatures(owned, "attempt:scout"));
-            Assert.AreEqual(1, CountScenarioCreatures(owned, "attempt:medic"));
-            Assert.AreEqual(1, CountScenarioObjects(owned, "attempt:scout"));
-            Assert.AreEqual(1, CountScenarioObjects(owned, "attempt:medic"));
-
-            Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 60));
-
-            using (var unit = context.CreateChar())
-            {
-                var afterResetKeys = unit.CharacterMissionScenario.Get(context.Client.Player.Id, 321)
-                    .Select(entry => entry.StepKey)
-                    .ToArray();
-                Assert.IsFalse(afterResetKeys.Any(key => key == "attempt:scout:scenario:61:step:1"));
-                Assert.IsFalse(afterResetKeys.Any(key => key == "attempt:scout:scenario:61:step:2"));
-                Assert.IsFalse(afterResetKeys.Any(key => key.StartsWith("attempt:scout:schedule:61:3:62:", StringComparison.Ordinal)));
-                Assert.IsTrue(afterResetKeys.Any(key => key == "attempt:medic:scenario:63:step:1"));
-                Assert.IsTrue(afterResetKeys.Any(key => key == "attempt:medic:scenario:63:step:2"));
-            }
-
-            Assert.AreEqual(1, CountScenarioCreatures(owned));
-            Assert.AreEqual(1, CountScenarioObjects(owned));
-            Assert.AreEqual(0, CountScenarioCreatures(owned, "attempt:scout"));
-            Assert.AreEqual(1, CountScenarioCreatures(owned, "attempt:medic"));
-
-            maps.ReleaseOwnedPrivateInstances(context.Client.Player.Id);
-            var rebuilt = maps.GetOrCreatePrivateInstance(1985, context.Client.Player.Id);
-
-            Assert.AreEqual(1, CountScenarioCreatures(rebuilt));
-            Assert.AreEqual(1, CountScenarioObjects(rebuilt));
-            Assert.AreEqual(0, CountScenarioCreatures(rebuilt, "attempt:scout"));
-            Assert.AreEqual(1, CountScenarioCreatures(rebuilt, "attempt:medic"));
-            Assert.AreEqual(0, CountScenarioObjects(rebuilt, "attempt:scout"));
-            Assert.AreEqual(1, CountScenarioObjects(rebuilt, "attempt:medic"));
-
-            AttachClientToMap(context.Client, rebuilt);
-
-            Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 61));
-
-            using var retryUnit = context.CreateChar();
-            var retryKeys = retryUnit.CharacterMissionScenario.Get(context.Client.Player.Id, 321)
-                .Select(entry => entry.StepKey)
-                .ToArray();
-            Assert.AreEqual(1, retryKeys.Count(key => key == "attempt:scout:scenario:61:step:1"));
-            Assert.AreEqual(1, retryKeys.Count(key => key == "attempt:scout:scenario:61:step:2"));
-            Assert.AreEqual(1, retryKeys.Count(key => key.StartsWith("attempt:scout:schedule:61:3:62:", StringComparison.Ordinal)));
-            Assert.AreEqual(1, retryKeys.Count(key => key == "attempt:medic:scenario:63:step:1"));
-            Assert.AreEqual(1, retryKeys.Count(key => key == "attempt:medic:scenario:63:step:2"));
-            Assert.AreEqual(2, CountScenarioCreatures(rebuilt));
-            Assert.AreEqual(2, CountScenarioObjects(rebuilt));
+            var scene = unit.CharacterMissions.Runtime.Scenes(context.Client.Player.Id, 321).Single();
+            Assert.AreEqual(1, unit.CharacterMissions.Runtime.Messages(scene.RunId).Count(message =>
+                message.SequenceId == 60 && message.Status == "Handled"));
         }
 
         [TestMethod]
@@ -692,7 +540,7 @@ namespace Rasa.Test.Missions
             PrepareScenarioCreatureClass();
             var fixture = CreateSharedRuntimeFixture(includeSecondMission: true);
             var now = new DateTime(2026, 9, 19, 12, 0, 0, DateTimeKind.Utc);
-            MissionManager manager = null;
+            MissionApplication manager = null;
             var maps = new MapChannelManager(null, privateInstances: new PrivateMapInstanceService());
             maps.MapChannelArray.Add(context.Map.MapInfo.MapContextId, context.Map);
             var objects = new DynamicObjectManager(null, maps);
@@ -704,7 +552,7 @@ namespace Rasa.Test.Missions
                 Npc = new Npc { NpcPackageId = 501 },
                 AppearanceData = new Dictionary<EquipmentData, AppearanceData>()
             };
-            var service = new MissionScenarioService(
+            var service = new MissionSceneHost(
                 () => context,
                 () => manager,
                 new ManifestationManager(context),
@@ -749,7 +597,7 @@ namespace Rasa.Test.Missions
             PrepareScenarioCreatureClass();
             var fixture = CreateSharedRuntimeFixture(includeSecondMission: false);
             var now = new DateTime(2026, 9, 19, 12, 0, 0, DateTimeKind.Utc);
-            MissionManager manager = null;
+            MissionApplication manager = null;
             var maps = new MapChannelManager(null, privateInstances: new PrivateMapInstanceService());
             maps.MapChannelArray.Add(context.Map.MapInfo.MapContextId, context.Map);
             var objects = new DynamicObjectManager(null, maps);
@@ -761,7 +609,7 @@ namespace Rasa.Test.Missions
                 Npc = new Npc { NpcPackageId = 501 },
                 AppearanceData = new Dictionary<EquipmentData, AppearanceData>()
             };
-            var service = new MissionScenarioService(
+            var service = new MissionSceneHost(
                 () => context,
                 () => manager,
                 new ManifestationManager(context),
@@ -806,24 +654,24 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(1, CountScenarioObjects(context.Map, "owner:2"));
         }
 
-        private static MissionManager LoadManager(
+        private static MissionApplication LoadManager(
             MissionTestContext context,
             MissionContentFixture fixture,
             Func<DateTime> utcNow,
             MapChannelManager maps,
             DynamicObjectManager objects = null,
             CreatureManager creatures = null,
-            IMissionScenarioService scenarioService = null,
+            IMissionSceneHost scenarioService = null,
             Action<Item> beforeRewardItemPublication = null,
             Action<PythonPacket> beforeMissionPacketPublication = null)
         {
-            MissionManager manager = null;
+            MissionApplication manager = null;
             var manifestation = new ManifestationManager(context);
             var deadlineService = new MissionDeadlineService(
                 () => context,
                 () => manager,
                 utcNow);
-            manager = new MissionManager(
+            manager = new MissionApplication(
                 new MissionContentLoadingFactory(context, fixture.CreateWorldUnitOfWork()),
                 new Dictionary<uint, Mission>(),
                 new Dictionary<uint, MissionRewardDefinition>(),
@@ -831,12 +679,14 @@ namespace Rasa.Test.Missions
                 beforeRewardItemPublication,
                 beforeMissionPacketPublication,
                 deadlineService,
-                scenarioService);
+                scenarioService,
+                utcNow);
 
             var report = manager.LoadMissions();
             Assert.IsFalse(
                 report.BlocksReadiness,
                 string.Join(" | ", report.Diagnostics.Select(diagnostic => diagnostic.Code)));
+            Content.SceneFixtureBindings.Bind(manager, fixture);
             return manager;
         }
 
@@ -872,38 +722,42 @@ namespace Rasa.Test.Missions
                 .SelectMany(cell => cell.CreatureList)
                 .Count(creature =>
                     !string.IsNullOrWhiteSpace(creature.SpawnPool?.ScenarioKey) &&
-                    HasAllTokens(creature.SpawnPool.ScenarioKey, requiredTokens));
+                    Matches(creature.SpawnPool.ScenarioMissionId, creature.SpawnPool.ScenarioOwnerCharacterId, requiredTokens));
 
         private static int CountScenarioObjects(MapChannel map, params string[] requiredTokens) =>
             map.DynamicObjects.Count(dynamicObject =>
                 !string.IsNullOrWhiteSpace(dynamicObject.ScenarioKey) &&
-                HasAllTokens(dynamicObject.ScenarioKey, requiredTokens));
+                Matches(dynamicObject.SceneMissionId, dynamicObject.SceneOwnerCharacterId, requiredTokens));
 
         private static Creature GetScenarioCreature(MapChannel map, params string[] requiredTokens) =>
             map.MapCellInfo.Cells.Values
                 .SelectMany(cell => cell.CreatureList)
                 .Single(creature =>
                     !string.IsNullOrWhiteSpace(creature.SpawnPool?.ScenarioKey) &&
-                    HasAllTokens(creature.SpawnPool.ScenarioKey, requiredTokens));
+                    Matches(creature.SpawnPool.ScenarioMissionId, creature.SpawnPool.ScenarioOwnerCharacterId, requiredTokens));
 
         private static DynamicObject GetScenarioObject(MapChannel map, string key) =>
             map.DynamicObjects.Single(dynamicObject =>
+                dynamicObject.SceneActorRole == key ||
                 string.Equals(dynamicObject.ScenarioKey, key, StringComparison.Ordinal) ||
                 dynamicObject.ScenarioKey?.EndsWith($":object:{key}", StringComparison.Ordinal) == true);
 
         private static DynamicObject GetScenarioObjectByTokens(MapChannel map, params string[] requiredTokens) =>
             map.DynamicObjects.Single(dynamicObject =>
                 !string.IsNullOrWhiteSpace(dynamicObject.ScenarioKey) &&
-                HasAllTokens(dynamicObject.ScenarioKey, requiredTokens));
+                Matches(dynamicObject.SceneMissionId, dynamicObject.SceneOwnerCharacterId, requiredTokens));
 
-        private static bool HasAllTokens(string value, params string[] requiredTokens)
+        private static bool Matches(uint mission, uint owner, params string[] requiredTokens)
         {
             if (requiredTokens == null || requiredTokens.Length == 0)
                 return true;
 
-            return requiredTokens.All(token =>
-                !string.IsNullOrWhiteSpace(token) &&
-                value?.Contains(token, StringComparison.Ordinal) == true);
+            return requiredTokens.All(token => token switch
+            {
+                _ when token.StartsWith("mission:", StringComparison.Ordinal) => mission == uint.Parse(token.Substring(8)),
+                _ when token.StartsWith("owner:", StringComparison.Ordinal) => owner == uint.Parse(token.Substring(6)),
+                _ => throw new InvalidOperationException("Attempt-string selectors are obsolete; address a scene run explicitly.")
+            });
         }
 
         private static void PrepareScenarioCreatureClass()
@@ -1860,7 +1714,7 @@ namespace Rasa.Test.Missions
                 .GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
             private readonly FieldInfo _creaturesField = typeof(CreatureManager)
                 .GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
-            private readonly FieldInfo _missionsField = typeof(MissionManager)
+            private readonly FieldInfo _missionsField = typeof(MissionApplication)
                 .GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!;
             private readonly object _previousMaps;
             private readonly object _previousObjects;
@@ -1871,7 +1725,7 @@ namespace Rasa.Test.Missions
                 MapChannelManager maps,
                 DynamicObjectManager objects,
                 CreatureManager creatures,
-                MissionManager missions)
+                MissionApplication missions)
             {
                 _previousMaps = _mapsField.GetValue(null);
                 _previousObjects = _objectsField.GetValue(null);

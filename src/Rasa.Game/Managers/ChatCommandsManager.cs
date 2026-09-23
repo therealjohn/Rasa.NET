@@ -125,6 +125,7 @@ namespace Rasa.Managers
             // Observer: reads the world, changes nothing in it.
             RegisterCommand(".getdistance", GmLevel.Observer, GetDistanceCommand);
             RegisterCommand(".maperrors", GmLevel.Observer, MapErrorsCommand);
+            RegisterCommand(".missions", GmLevel.Observer, MissionInspectionCommand);
             RegisterCommand(".gm", GmLevel.Observer, EnterGmModCommand);
             RegisterCommand(".help", GmLevel.Observer, HelpGmCommand);
             RegisterCommand(".links", GmLevel.Observer, LinksCommand);
@@ -448,6 +449,18 @@ namespace Rasa.Managers
 
             communicator.SystemMessage(_client,
                 $"{who} healed for {applied} ({health?.Current} of {health?.CurrentMax}).");
+        }
+
+        private void MissionInspectionCommand(string[] parts)
+        {
+            var characterId = _client.Player.Id;
+            if (parts.Length > 1 && !uint.TryParse(parts[1], out characterId))
+            {
+                CommunicatorManager.Instance.SystemMessage(_client, "Usage: .missions [character-id]");
+                return;
+            }
+            foreach (var line in MissionApplication.Instance.Inspect(characterId))
+                CommunicatorManager.Instance.SystemMessage(_client, line);
         }
 
         private void MapErrorsCommand(string[] parts)
