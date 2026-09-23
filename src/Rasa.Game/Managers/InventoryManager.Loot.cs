@@ -214,7 +214,7 @@ namespace Rasa.Managers
                 foreach (var stack in _existing.Values.Where(stack => stack.Final != stack.Original))
                 {
                     stack.Item.StackSize = stack.Final;
-                    MissionManager.TryPublish(
+                    MissionApplication.TryPublish(
                         () => client.CallMethod(
                             stack.Item.EntityId,
                             new SetStackCountPacket(stack.Final)),
@@ -235,14 +235,14 @@ namespace Rasa.Managers
                     source.Item.OwnerId = client.Player.Id;
                     source.Item.OwnerSlotId = (uint)source.Slot.Value;
                     client.Player.Inventory.PersonalInventory[source.Slot.Value] = source.Item.EntityId;
-                    MissionManager.TryPublish(
+                    MissionApplication.TryPublish(
                         () => _beforeItemPublication?.Invoke(source.Item),
                         $"loot item {source.Item.Id} publication hook");
-                    MissionManager.TryPublish(
+                    MissionApplication.TryPublish(
                         () => ItemManager.Instance.SendItemDataToClient(
                             client, source.Item, false),
                         $"loot item {source.Item.Id} entity data");
-                    MissionManager.TryPublish(
+                    MissionApplication.TryPublish(
                         () => client.CallMethod(
                             SysEntity.ClientInventoryManagerId,
                             new InventoryAddItemPacket(

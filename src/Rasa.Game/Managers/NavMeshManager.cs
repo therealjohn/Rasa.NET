@@ -109,11 +109,9 @@ namespace Rasa.Managers
             if (System.IO.Directory.Exists(configuredPath) ||
                 !string.Equals(directory, DefaultDirectory, StringComparison.Ordinal))
                 return configuredPath;
-
             var deployedPath = Path.Combine(applicationDirectory, DefaultDirectory);
             if (System.IO.Directory.Exists(deployedPath))
                 return deployedPath;
-
             for (var candidate = new DirectoryInfo(applicationDirectory); candidate != null; candidate = candidate.Parent)
                 if (File.Exists(Path.Combine(candidate.FullName, "Rasa.NET.sln")))
                 {
@@ -122,7 +120,6 @@ namespace Rasa.Managers
                         return repositoryPath;
                     break;
                 }
-
             return configuredPath;
         }
 

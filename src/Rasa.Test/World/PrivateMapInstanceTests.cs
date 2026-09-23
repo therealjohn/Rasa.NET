@@ -138,7 +138,8 @@ namespace Rasa.Test.World
             Assert.AreEqual(publicMap.Teleporters.Count, owned.Teleporters.Count);
             Assert.AreEqual(publicMap.DynamicObjects.Count,
                 owned.DynamicObjects.Count(obj => obj.DynamicObjectType != DynamicObjectType.PracticeDummy));
-            Assert.AreEqual(3, owned.DynamicObjects.Count(obj => obj.DynamicObjectType == DynamicObjectType.PracticeDummy));
+            Assert.AreEqual(0, owned.DynamicObjects.Count(obj => obj.DynamicObjectType == DynamicObjectType.PracticeDummy),
+                "The generic private-map cloner must not manufacture tutorial content; the experience host owns it.");
             Assert.AreEqual(publicMap.Kraftwerks.Count, owned.Kraftwerks.Count);
             Assert.AreEqual(
                 publicMap.MapCellInfo.Cells.Values.Sum(cell => cell.MapTriggers.Count),

@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "release": "authoring-examples",
+  "enabled": false,
+  "synthetic": true,
+  "definition": {
+    "missionId": 1994, "contentRevision": "example-ordinary", "requirement": "Optional",
+    "clientNameTextId": 21235, "giverId": 510206, "receiverId": 510207,
+    "level": 1, "groupType": 1, "categoryId": 1, "shareable": false,
+    "radioCompleteable": false, "comment": "Inactive kill collect talk example"
+  },
+  "objectives": [
+    { "missionId": 1994, "contentRevision": "example-ordinary", "objectiveId": 1, "requirement": "Optional", "clientNameTextId": 21313, "clientBodyTextId": 21314, "ordinal": 0, "initialState": 1, "isRequired": true, "comment": "Kill the bound creature" },
+    { "missionId": 1994, "contentRevision": "example-ordinary", "objectiveId": 2, "requirement": "Optional", "clientNameTextId": 21336, "clientBodyTextId": 21337, "ordinal": 1, "initialState": 4, "isRequired": true, "comment": "Collect the bound item class" },
+    { "missionId": 1994, "contentRevision": "example-ordinary", "objectiveId": 3, "requirement": "Optional", "clientNameTextId": 21615, "clientBodyTextId": 21616, "ordinal": 2, "initialState": 4, "isRequired": true, "comment": "Talk to the receiver" }
+  ],
+  "transitions": [
+    { "missionId": 1994, "contentRevision": "example-ordinary", "objectiveId": 1, "transitionId": 1, "requirement": "Optional", "sequence": 1, "fromState": 1, "toState": 2 },
+    { "missionId": 1994, "contentRevision": "example-ordinary", "objectiveId": 2, "transitionId": 1, "requirement": "Optional", "sequence": 1, "fromState": 1, "toState": 2 },
+    { "missionId": 1994, "contentRevision": "example-ordinary", "objectiveId": 3, "transitionId": 1, "requirement": "Optional", "sequence": 1, "fromState": 1, "toState": 2 }
+  ],
+  "triggers": [
+    { "missionId": 1994, "contentRevision": "example-ordinary", "objectiveId": 1, "transitionId": 1, "triggerId": 1, "requirement": "Optional", "kind": "ProgressEvent", "sequence": 1, "eventKind": 2, "subjectId": 510210, "sourceSpawnResolved": true },
+    { "missionId": 1994, "contentRevision": "example-ordinary", "objectiveId": 2, "transitionId": 1, "triggerId": 1, "requirement": "Optional", "kind": "ProgressEvent", "sequence": 1, "eventKind": 4, "subjectId": 3147, "initialValue": 0, "targetValue": 1 },
+    { "missionId": 1994, "contentRevision": "example-ordinary", "objectiveId": 3, "transitionId": 1, "triggerId": 1, "requirement": "Optional", "kind": "Conversation", "sequence": 1, "npcPackageId": 2561, "playerFlagId": 1 }
+  ],
+  "actions": [
+    { "missionId": 1994, "contentRevision": "example-ordinary", "objectiveId": 1, "transitionId": 1, "actionId": 1, "requirement": "Optional", "kind": "RevealObjective", "sequence": 1, "targetObjectiveId": 2 },
+    { "missionId": 1994, "contentRevision": "example-ordinary", "objectiveId": 1, "transitionId": 1, "actionId": 2, "requirement": "Optional", "kind": "ActivateObjective", "sequence": 2, "targetObjectiveId": 2, "objectiveState": 1 },
+    { "missionId": 1994, "contentRevision": "example-ordinary", "objectiveId": 2, "transitionId": 1, "actionId": 1, "requirement": "Optional", "kind": "RevealObjective", "sequence": 1, "targetObjectiveId": 3 },
+    { "missionId": 1994, "contentRevision": "example-ordinary", "objectiveId": 2, "transitionId": 1, "actionId": 2, "requirement": "Optional", "kind": "ActivateObjective", "sequence": 2, "targetObjectiveId": 3, "objectiveState": 1 }
+  ],
+  "rewards": [
+    { "missionId": 1994, "contentRevision": "example-ordinary", "rewardId": 1, "requirement": "Optional", "experience": 10, "credits": 0, "prestige": 0, "selectionCount": 0, "comment": "Synthetic example only" }
+  ],
+  "evidence": [
+    { "missionId": 1994, "contentRevision": "example-ordinary", "evidenceId": 1, "ownerKind": "Mission", "ownerId": 1994, "sourceKind": "Reconstruction", "sourceUri": "repository:docs/missions.md", "confidence": 0.0, "reconstructionNote": "Inactive server example; reuses reviewed client IDs, not a new native mission or translation." }
+  ]
+}

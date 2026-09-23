@@ -273,7 +273,7 @@ namespace Rasa.Game
         private bool ValidateMissionReadiness()
         {
             EntityClassManager.Instance.LoadEntityClasses();
-            var missionValidation = MissionManager.Instance.LoadMissions();
+            var missionValidation = MissionApplication.Instance.LoadMissions();
             return LogMissionValidationAndCheckReadiness(missionValidation);
         }
 

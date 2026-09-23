@@ -1162,7 +1162,7 @@ namespace Rasa.Managers
             SocialManager.Instance.SetSocialContactList(client);
 
             client.CallMethod(player.EntityId, new ActorInfoPacket(player));
-            MissionManager.Instance.PublishInitialState(client);
+            MissionApplication.Instance.PublishInitialState(client);
             _characterManager.OfferStartingExperienceMission(client);
 
             // The regions the player is standing in; re-sent by RegionManager.Worker as they move.

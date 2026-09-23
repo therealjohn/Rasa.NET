@@ -287,7 +287,7 @@ namespace Rasa.Test.Missions
             });
             using var context = MissionTestContext.WithCustomDefinitions(
                 new System.Collections.Generic.Dictionary<uint, Mission>());
-            var manager = new MissionManager(
+            var manager = new MissionApplication(
                 new MissionContentLoadingFactory(context, fixture.CreateWorldUnitOfWork()),
                 new System.Collections.Generic.Dictionary<uint, Mission>());
 
@@ -306,7 +306,7 @@ namespace Rasa.Test.Missions
             var fixture = MissionContentFixture.CreateValid();
             using var context = MissionTestContext.WithCustomDefinitions(
                 new System.Collections.Generic.Dictionary<uint, Mission>());
-            var manager = new MissionManager(
+            var manager = new MissionApplication(
                 new MissionContentLoadingFactory(context, fixture.CreateWorldUnitOfWork()),
                 new System.Collections.Generic.Dictionary<uint, Mission>());
 
@@ -327,7 +327,7 @@ namespace Rasa.Test.Missions
             fixture.Objectives[0].ClientBodyTextId = 0;
             using var context = MissionTestContext.WithCustomDefinitions(
                 new System.Collections.Generic.Dictionary<uint, Mission>());
-            var manager = new MissionManager(
+            var manager = new MissionApplication(
                 new MissionContentLoadingFactory(context, fixture.CreateWorldUnitOfWork()),
                 new System.Collections.Generic.Dictionary<uint, Mission>());
 
@@ -384,7 +384,7 @@ namespace Rasa.Test.Missions
             });
             using var context = MissionTestContext.WithCustomDefinitions(
                 new System.Collections.Generic.Dictionary<uint, Mission>());
-            var manager = new MissionManager(
+            var manager = new MissionApplication(
                 new MissionContentLoadingFactory(context, fixture.CreateWorldUnitOfWork()),
                 new System.Collections.Generic.Dictionary<uint, Mission>());
 
@@ -403,7 +403,7 @@ namespace Rasa.Test.Missions
             var fixture = CreatePureProgressFixture();
             using var context = MissionTestContext.WithCustomDefinitions(
                 new System.Collections.Generic.Dictionary<uint, Mission>());
-            var manager = new MissionManager(
+            var manager = new MissionApplication(
                 new MissionContentLoadingFactory(context, fixture.CreateWorldUnitOfWork()),
                 new System.Collections.Generic.Dictionary<uint, Mission>());
 

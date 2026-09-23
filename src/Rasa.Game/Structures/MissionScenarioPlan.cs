@@ -11,8 +11,8 @@ namespace Rasa.Structures
         private readonly List<Action> _runtimeConvergence = new();
         private readonly List<Action> _publications = new();
         private readonly List<Action> _postCommit = new();
-        private readonly List<MissionManager.MissionProgressPublicationPlan> _progressPlans = new();
-        private readonly List<MissionManager.MissionFailurePublicationPlan> _failurePlans = new();
+        private readonly List<MissionProgressPublicationPlan> _progressPlans = new();
+        private readonly List<MissionFailurePublicationPlan> _failurePlans = new();
         private readonly List<MissionRewardGrant> _rewardGrants = new();
 
         internal List<string> StepKeysToAdd { get; } = new();
@@ -25,6 +25,8 @@ namespace Rasa.Structures
             ExactStepKeysToRemove.Count > 0 ||
             DurableKeyPrefixesToRemove.Count > 0 ||
             _runtimeConvergence.Count > 0 ||
+            _publications.Count > 0 ||
+            _rewardGrants.Count > 0 ||
             _progressPlans.Count > 0 ||
             _failurePlans.Count > 0 ||
             _postCommit.Count > 0;
@@ -53,19 +55,19 @@ namespace Rasa.Structures
                 _postCommit.Add(action);
         }
 
-        internal void AddProgressPlan(MissionManager.MissionProgressPublicationPlan publicationPlan)
+        internal void AddProgressPlan(MissionProgressPublicationPlan publicationPlan)
         {
             if (publicationPlan.HasChanges)
                 _progressPlans.Add(publicationPlan);
         }
 
-        internal void AddFailurePlan(MissionManager.MissionFailurePublicationPlan failurePlan)
+        internal void AddFailurePlan(MissionFailurePublicationPlan failurePlan)
         {
-            if (!ReferenceEquals(failurePlan, MissionManager.MissionFailurePublicationPlan.Empty))
+            if (!ReferenceEquals(failurePlan, MissionFailurePublicationPlan.Empty))
                 _failurePlans.Add(failurePlan);
         }
 
-        internal void ApplyRuntime(Client client, ManifestationManager manifestationManager, MissionManager missionManager)
+        internal void ApplyRuntime(Client client, ManifestationManager manifestationManager, MissionApplication missionManager)
         {
             foreach (var rewardGrant in _rewardGrants)
                 rewardGrant.ConvergeRuntime(client);

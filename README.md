@@ -10,6 +10,9 @@ There are a few required tools and steps to get everything setup before you can 
 ## Contributing
 If you are interested in helping in the development of Rasa.NET, please [join the Discord](https://discord.gg/Ph68FmA) and chat!
 
+Mission contributors should read [mission authoring and operations](docs/missions.md)
+for data packs, typed scripts, public actor leases and the release/cutover workflow.
+
 ## Feedback
 - Ask questions and discuss development on [Discord](https://discord.gg/Ph68FmA)
 - Submit bugs to GitHub Issues

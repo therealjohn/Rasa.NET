@@ -28,6 +28,11 @@ namespace Rasa.Structures
         public int DeadCreatures { get; set; }  // number of spawned creatures that are dead (either killed or spawned dead)
         internal List<Creature> QueuedCreatureList { get; set; }
         public string ScenarioKey { get; set; }
+        public string SceneRunId { get; set; }
+        public string SceneActorRole { get; set; }
+        public string SceneSharedKey { get; set; }
+        public uint SceneGeneration { get; set; }
+        internal global::Rasa.Missions.Scenes.SceneSpawnPose ScenePose { get; set; }
         public uint ScenarioMissionId { get; set; }
         public uint? ScenarioGroupId { get; set; }
         public string ScenarioAttemptKey { get; set; }

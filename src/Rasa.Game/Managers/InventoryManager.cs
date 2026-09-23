@@ -75,7 +75,7 @@ namespace Rasa.Managers
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
         private readonly ManifestationManager _currencyManager;
         private readonly CharacterManager _characterManager;
-        private readonly MissionManager _missionManager;
+        private readonly MissionApplication _missionManager;
         public static InventoryManager Instance
         {
             get
@@ -96,7 +96,7 @@ namespace Rasa.Managers
 
         internal InventoryManager(
             IGameUnitOfWorkFactory gameUnitOfWorkFactory,
-            MissionManager missionManager = null)
+            MissionApplication missionManager = null)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
             _currencyManager = new ManifestationManager(gameUnitOfWorkFactory);
@@ -2148,7 +2148,7 @@ namespace Rasa.Managers
             var progress = kind == MissionProgressEventKind.ItemAcquired
                 ? MissionProgressEvent.ItemAcquired(itemClassId, quantity)
                 : MissionProgressEvent.ItemConsumed(itemClassId, quantity);
-            (_missionManager ?? MissionManager.Instance).RecordProgress(
+            (_missionManager ?? MissionApplication.Instance).RecordProgress(
                 client,
                 progress);
         }
@@ -2160,7 +2160,7 @@ namespace Rasa.Managers
             if (item?.ItemTemplate == null)
                 return;
 
-            (_missionManager ?? MissionManager.Instance).RecordProgress(
+            (_missionManager ?? MissionApplication.Instance).RecordProgress(
                 client,
                 MissionProgressEvent.ItemEquipped(
                     (uint)item.ItemTemplate.Class,

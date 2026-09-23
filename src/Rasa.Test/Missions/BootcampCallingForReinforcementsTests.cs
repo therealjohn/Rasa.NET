@@ -885,12 +885,14 @@ namespace Rasa.Test.Missions
             uint resetScenarioId,
             uint stepCount)
         {
-            var keys = ReadScenarioKeys(harness, missionId);
-            for (var stepId = 1U; stepId <= stepCount; stepId++)
-                Assert.AreEqual(
-                    1,
-                    keys.Count(key => key == $"scenario:{resetScenarioId}:step:{stepId}"),
-                    $"Expected reset scenario {resetScenarioId} step {stepId} exactly once.");
+            using var unit = harness.Context.CreateChar();
+            var scene = unit.CharacterMissions.Runtime.Scenes(harness.Client.Player.Id, missionId).Single();
+            Assert.AreEqual("Ended", scene.Status);
+            using var checkpoint = System.Text.Json.JsonDocument.Parse(scene.Checkpoint);
+            Assert.AreEqual(resetScenarioId, checkpoint.RootElement.GetProperty("sequence").GetUInt32());
+            Assert.IsFalse(unit.CharacterMissions.Runtime.Timers(scene.RunId).Any(timer => timer.Disposition == "Pending"));
+            var effects = unit.CharacterMissions.Runtime.Effects(scene.RunId);
+            Assert.AreEqual(effects.Count, effects.Select(effect => (effect.Generation, effect.OperationKey)).Distinct().Count());
         }
 
         private static string[] ReadScenarioKeys(

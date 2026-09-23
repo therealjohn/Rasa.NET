@@ -6,6 +6,7 @@ namespace Rasa.Structures
 
     public class MapChannel
     {
+        internal System.Guid MissionEpoch { get; } = System.Guid.NewGuid();
         // ToDo
         public MapInfo MapInfo { get; set; }
         public uint InstanceId { get; set; } = 1;

@@ -10,10 +10,12 @@ namespace Rasa.Repositories.Char.CharacterMission
     public class CharacterMissionRepository : ICharacterMissionRepository
     {
         private readonly CharContext _charContext;
+        public MissionRuntime.MissionRuntimeRepository Runtime { get; }
 
         public CharacterMissionRepository(CharContext charContext)
         {
             _charContext = charContext;
+            Runtime = new MissionRuntime.MissionRuntimeRepository(charContext);
         }
 
         public IReadOnlyList<CharacterMissionEntry> Get(uint characterId)
@@ -36,7 +38,8 @@ namespace Rasa.Repositories.Char.CharacterMission
         }
 
         public int Count(uint characterId) =>
-            _charContext.CharacterMissionEntries.Count(entry => entry.CharacterId == characterId);
+            _charContext.CharacterMissionEntries.Count(entry => entry.CharacterId == characterId &&
+                entry.MissionState != 4);
 
         [CanBeNull]
         public CharacterMissionEntry GetByCharacterAndMission(uint characterId, uint missionId)
@@ -71,6 +74,8 @@ namespace Rasa.Repositories.Char.CharacterMission
             if (mission == null)
                 return;
 
+            if (mission.MissionState is 1 or 2 or 4)
+                Runtime.Archive(mission, System.DateTime.UtcNow);
             _charContext.CharacterMissionEntries.Remove(mission);
             _charContext.SaveChanges();
         }

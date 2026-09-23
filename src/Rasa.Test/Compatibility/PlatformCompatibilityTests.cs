@@ -34,7 +34,7 @@ namespace Rasa.Test.Compatibility
                 .Where(path => path.EndsWith(".csproj", System.StringComparison.OrdinalIgnoreCase))
                 .ToArray();
 
-            Assert.AreEqual(10, projectPaths.Length);
+            Assert.AreEqual(12, projectPaths.Length);
             foreach (var projectPath in projectPaths)
             {
                 var project = XDocument.Load(Path.Combine(

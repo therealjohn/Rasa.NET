@@ -209,7 +209,7 @@ namespace Rasa.Managers
 
             if (IsMissionEscort(creature) && AdvanceEscort(mapChannel, creature, delta))
                 return;
-            if (BootcampCombat.IsBaseDefender(creature) && AdvanceBaseDefender(mapChannel, creature, delta))
+            if (Game.Missions.World.CreatureGameplayRules.IsDefender(creature) && AdvanceBaseDefender(mapChannel, creature, delta))
                 return;
 
             // calculate new cell position
@@ -226,9 +226,9 @@ namespace Rasa.Managers
                 var tCreature = tCell.CreatureList[randomCreatureIndex];
                 // Scripted actors keep their authored path and final pose.
                 if (creature != tCreature && tCreature.Attributes[Attributes.Health].Current > 0 &&
-                    !IsMissionEscort(creature) && !BootcampCombat.IsBaseDefender(creature) &&
+                    !IsMissionEscort(creature) && !Game.Missions.World.CreatureGameplayRules.IsDefender(creature) &&
                     tCreature.Controller.CurrentAction != BehaviorActionScriptedMove &&
-                    !IsMissionEscort(tCreature) && !BootcampCombat.IsBaseDefender(tCreature))
+                    !IsMissionEscort(tCreature) && !Game.Missions.World.CreatureGameplayRules.IsDefender(tCreature))
                 {
                     var difX = creature.Position.X - tCreature.Position.X;
                     var difY = creature.Position.Y - tCreature.Position.Y;
@@ -670,12 +670,13 @@ namespace Rasa.Managers
         {
             var home = creature.HomePos.Position;
             var target = map.MapCellInfo.Cells.Values.SelectMany(cell => cell.CreatureList).Distinct()
-                .Where(candidate => BootcampCombat.IsThrax(candidate) &&
+                .Where(candidate => Game.Missions.World.CreatureGameplayRules.Policy(candidate).Tags.Contains(
+                        Game.Missions.World.CreatureGameplayRules.Policy(creature).DefenseTargetTag) &&
                     CreatureManager.IsHostileTarget(map, creature, candidate) &&
-                    Vector3.Distance(candidate.Position, home) <= BootcampCombat.BaseDefenseRadius)
+                    Vector3.Distance(candidate.Position, home) <= Game.Missions.World.CreatureGameplayRules.Policy(creature).DefenseRadius)
                 .OrderBy(candidate => Vector3.DistanceSquared(candidate.Position, creature.Position))
                 .FirstOrDefault();
-            if (target != null && Vector3.Distance(creature.Position, home) <= BootcampCombat.BaseDefenseRadius)
+            if (target != null && Vector3.Distance(creature.Position, home) <= Game.Missions.World.CreatureGameplayRules.Policy(creature).DefenseRadius)
             {
                 if (creature.Controller.CurrentAction != BehaviorActionFighting ||
                     creature.Controller.ActionFighting.TargetEntityId != target.EntityId)
@@ -875,7 +876,7 @@ namespace Rasa.Managers
             if (path != null && path.Count > 0)
                 creature.Controller.Path.AddRange(path);
             else if (mapChannel.NavMesh == null &&
-                     !IsMissionEscort(creature) && !BootcampCombat.IsBaseDefender(creature))
+                     !IsMissionEscort(creature) && !Game.Missions.World.CreatureGameplayRules.IsDefender(creature))
                 creature.Controller.Path.Add(destination);
             else
                 Logger.WriteLog(LogType.Error,
@@ -1204,6 +1205,25 @@ namespace Rasa.Managers
             PublishMovement(creature,
                 new Movement(creature.Position, 0, 0x08, new Vector2((float)creature.Rotation, 0)));
             CellManager.Instance.CellCallMethod(creature, new IsRunningPacket(false));
+        }
+
+        internal bool RestoreScriptedPose(MapChannel map, Creature creature, Vector3 position, double orientation)
+        {
+            if (!MapInstanceScope.Contains(map, creature) ||
+                !CellManager.TryGetCellCoordinates(position, out _, out _) || !double.IsFinite(orientation))
+                return false;
+            creature.Position = position;
+            creature.Rotation = orientation;
+            creature.HomePos.Position = position;
+            creature.IsRunning = false;
+            creature.Controller.Path.Clear();
+            creature.Controller.ScriptedMove = new ScriptedMove
+                { Destination = position, Orientation = orientation, Arrived = true };
+            creature.Controller.CurrentAction = BehaviorActionScriptedMove;
+            SynchronizeMovementCell(map, creature);
+            PublishMovement(creature, new Movement(position, 0, 0x08, new Vector2((float)orientation, 0)));
+            CellManager.Instance.CellCallMethod(creature, new IsRunningPacket(false));
+            return true;
         }
 
         private static void SynchronizeMovementCell(MapChannel mapChannel, Creature creature)

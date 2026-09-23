@@ -591,7 +591,8 @@ namespace Rasa.Test.Database
         {
             WithDisposableSqlite((context, database) =>
             {
-                context.Database.Migrate();
+                context.GetService<IMigrator>()
+                    .Migrate("20260917200225_MissionCharacterState");
                 SeedCharacter(context, 17, 123, 1);
                 context.Database.ExecuteSqlRaw(
                     "INSERT INTO character_mission " +
@@ -606,6 +607,35 @@ namespace Rasa.Test.Database
                     "WHERE character_id = 123 AND mission_id = 429 AND mission_state = 4").Single());
                 Assert.AreEqual(
                     "20260917130621_AbilityTraySelection",
+                    context.Database.GetAppliedMigrations().Last());
+            });
+        }
+
+        [TestMethod]
+        public void SqliteModularMissionMigrationsDowngradeToHistoricalContentBoundary()
+        {
+            WithDisposableSqlite((context, database) =>
+            {
+                context.Database.Migrate();
+                SeedCharacter(context, 17, 123, 1);
+                context.Database.ExecuteSqlRaw(
+                    "INSERT INTO character_mission " +
+                    "(character_id, mission_id, mission_state, completeable) " +
+                    "VALUES (123, 429, 4, 1)");
+
+                context.GetService<IMigrator>()
+                    .Migrate("20260922161000_BootcampReinforcements");
+
+                Assert.AreEqual(1, context.Database.SqlQueryRaw<int>(
+                    "SELECT COUNT(*) AS Value FROM character_mission " +
+                    "WHERE character_id = 123 AND mission_id = 429 AND mission_state = 4 AND completeable = 1").Single());
+                Assert.AreEqual(0, context.Database.SqlQueryRaw<int>(
+                    "SELECT COUNT(*) AS Value FROM pragma_table_info('character_mission') " +
+                    "WHERE name IN ('assignment_id', 'content_revision', 'generation', 'version')").Single());
+                Assert.AreEqual(0, context.Database.SqlQueryRaw<int>(
+                    "SELECT COUNT(*) AS Value FROM sqlite_master WHERE type = 'table' " +
+                    "AND name IN ('mission_scene', 'mission_outcome', 'mission_receipt')").Single());
+                Assert.AreEqual("20260922161000_BootcampReinforcements",
                     context.Database.GetAppliedMigrations().Last());
             });
         }

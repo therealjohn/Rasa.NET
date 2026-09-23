@@ -39,6 +39,8 @@ namespace Rasa.Structures
         public uint CurrentTitle { get; set; }
         public int CurrentAbilityDrawer { get; set; }
         public Dictionary<uint, MissionLog> Missions { get; set; } = new();
+        public Dictionary<uint, MissionState> MissionHistory { get; set; } = new();
+        internal bool StartingExperienceCompleted { get; set; }
         public Dictionary<uint, uint> PlayerFlags { get; set; } = new();
         public DateTime LoginTime { get; set; }
         public List<uint> Logos = new();

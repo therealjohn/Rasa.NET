@@ -242,7 +242,8 @@ namespace Rasa.Test.Missions
                 CellManager.Instance.RemoveCreatureFromWorld(harness.BootcampMap, escort);
             var home = youngblood.HomePos.Position;
             var enemy = Actors(harness).First(actor => actor.DbId == 510216);
-            foreach (var other in Actors(harness).Where(actor => actor != enemy && BootcampCombat.IsThrax(actor)))
+            foreach (var other in Actors(harness).Where(actor => actor != enemy &&
+                Rasa.Game.Missions.World.CreatureGameplayRules.TracksParticipation(actor)))
                 CellManager.Instance.RemoveCreatureFromWorld(harness.BootcampMap, other);
             Place(harness, enemy, home + new Vector3(0, 0, 10));
             enemy.Actions.Clear();
@@ -528,7 +529,7 @@ namespace Rasa.Test.Missions
         {
             using var harness = CreateEscorts();
             var actor = role == "youngblood" ? ReachYoungblood(harness) : Escorts(harness).First();
-            foreach (var enemy in Actors(harness).Where(BootcampCombat.IsThrax))
+            foreach (var enemy in Actors(harness).Where(Rasa.Game.Missions.World.CreatureGameplayRules.TracksParticipation))
                 CellManager.Instance.RemoveCreatureFromWorld(harness.BootcampMap, enemy);
             if (role == "ownerless")
                 actor.SpawnPool.FollowOwnerCharacterId = 999;

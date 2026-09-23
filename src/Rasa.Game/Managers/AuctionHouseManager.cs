@@ -58,7 +58,7 @@ namespace Rasa.Managers
 
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
         private readonly ManifestationManager _currencyManager;
-        private readonly MissionManager _missionManager;
+        private readonly MissionApplication _missionManager;
         private readonly Action<PythonPacket> _beforeBuyoutPublication;
 
         private sealed class BuyoutRejection : Exception
@@ -79,7 +79,7 @@ namespace Rasa.Managers
             internal int BuyerCredits { get; init; }
             internal int SellerCredits { get; init; }
             internal uint InboxSlot { get; init; }
-            internal MissionManager.MissionProgressPublicationPlan ProgressPlan { get; init; }
+            internal MissionProgressPublicationPlan ProgressPlan { get; init; }
         }
 
         private sealed class CancelResult
@@ -139,7 +139,7 @@ namespace Rasa.Managers
 
         internal AuctionHouseManager(
             IGameUnitOfWorkFactory gameUnitOfWorkFactory,
-            MissionManager missionManager,
+            MissionApplication missionManager,
             Action<PythonPacket> beforeBuyoutPublication = null)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
@@ -196,7 +196,7 @@ namespace Rasa.Managers
                     0),
                 $"auction item {item.Id} buyer credits");
             if (result.Seller != null)
-                MissionManager.TryPublish(
+                MissionApplication.TryPublish(
                     () => result.Seller.CallMethod(
                         result.Seller.Player.EntityId,
                         new UpdateCreditsPacket(
@@ -204,7 +204,7 @@ namespace Rasa.Managers
                             result.SellerCredits,
                             0)),
                     $"auction item {item.Id} seller credits");
-            MissionManager.TryPublish(
+            MissionApplication.TryPublish(
                 () => ItemManager.Instance.SendItemDataToClient(
                     client,
                     item,
@@ -217,12 +217,12 @@ namespace Rasa.Managers
                 $"auction item {item.Id} inbox delivery");
             if (seller != null)
             {
-                MissionManager.TryPublish(
+                MissionApplication.TryPublish(
                     () => seller.CallMethod(
                         SysEntity.ClientInventoryManagerId,
                         new RemoveAuctionItemPacket(item.EntityId)),
                     $"auction item {item.Id} seller inventory removal");
-                MissionManager.TryPublish(
+                MissionApplication.TryPublish(
                     () => seller.CallMethod(
                         SysEntity.ClientAuctionHouseManagerId,
                         new AuctionSoldPacket(
@@ -249,7 +249,7 @@ namespace Rasa.Managers
             var sellerAfter = 0;
             var inboxSlot = 0u;
             var progressPlan =
-                MissionManager.MissionProgressPublicationPlan.Empty;
+                MissionProgressPublicationPlan.Empty;
 
             try
             {
@@ -325,7 +325,7 @@ namespace Rasa.Managers
                         throw new BuyoutRejection(
                             PlayerMessage.PmAuctionNoBuyoutInboxFull);
 
-                    progressPlan = (_missionManager ?? MissionManager.Instance)
+                    progressPlan = (_missionManager ?? MissionApplication.Instance)
                         .PlanProgress(
                             client,
                             new[]
@@ -345,7 +345,7 @@ namespace Rasa.Managers
                 };
             }
             catch (Exception error) when (
-                error is GameplayRejectionException ||
+                GameplayRejectionException.IsExpected(error) ||
                 error is OverflowException ||
                 error is System.Data.Common.DbException ||
                 error is Microsoft.EntityFrameworkCore.DbUpdateException)
@@ -375,7 +375,7 @@ namespace Rasa.Managers
             PythonPacket packet,
             string description)
         {
-            MissionManager.TryPublish(
+            MissionApplication.TryPublish(
                 () =>
                 {
                     _beforeBuyoutPublication?.Invoke(packet);

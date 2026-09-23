@@ -400,8 +400,8 @@ namespace Rasa.Test.Missions
         [TestMethod]
         public void IntegerSelectionTurnInApiIsNotPublic()
         {
-            var method = typeof(MissionManager).GetMethod(
-                nameof(MissionManager.TryCompleteNpcMission),
+            var method = typeof(MissionApplication).GetMethod(
+                nameof(MissionApplication.TryCompleteNpcMission),
                 BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
                 null,
                 new[] { typeof(Client), typeof(ulong), typeof(uint), typeof(int) },

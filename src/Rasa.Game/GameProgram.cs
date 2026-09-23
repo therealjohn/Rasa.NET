@@ -52,6 +52,8 @@ namespace Rasa
     {
         public static async Task<int> Main(string[] args)
         {
+            if (args.Length == 1 && args[0] == "--check-mission-assets")
+                return Game.Missions.Integration.MissionAssetCheck.Run(AppContext.BaseDirectory, Environment.CurrentDirectory);
             var hostBuilder = new HostBuilder()
                 .ConfigureAppConfiguration(ConfigureApp)
                 .ConfigureServices(ConfigureServices);
