@@ -351,6 +351,26 @@ ordinary mission as an unknown top-level field does not configure a public map.
 
 ## CLI reference
 
+### Explicit PowerShell wrapper
+
+Use `scripts\Update-MissionPacks.ps1` for validation/diff and optional publication
+without repeating low-level commands. It requires an existing migrated SQLite
+World database and restored build dependencies.
+
+| Parameter | Contract |
+| --- | --- |
+| `-WorldDatabasePath <file.db>` | Required physical file, including lowercase `.db`; no configuration inference or automatic creation |
+| `-PackDirectory <directory>` | Optional complete release directory with `client-bindings.json`; defaults to repository Bootcamp packs |
+| `-Publish` | Explicitly publish after successful build, validation and diff; otherwise preview only |
+
+Explicit relative paths are caller-relative. Default assets and the tool project
+are script/repository-relative. The wrapper preserves native failure exit codes
+and uses exit code `1` for its own validation errors. No interactive prompts,
+automatic restore/migration/reset, force publication or startup/build hook is
+provided. See the [local and CI examples](missions.md#update-an-existing-world-database).
+
+### Low-level MissionTool
+
 Invoke with:
 
 ```powershell

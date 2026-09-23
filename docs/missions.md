@@ -44,6 +44,53 @@ Enabled content also needs a referenced turn-in reward and complete validation
 against real World/client bindings. Do not make an example playable by simply
 flipping `enabled` or `synthetic`.
 
+## Update an existing World database
+
+Use [Update-MissionPacks.ps1](../scripts/Update-MissionPacks.ps1) for the routine
+local or CI workflow. It requires a repository checkout, PowerShell 5.1 or 7,
+the pinned .NET SDK, restored repository dependencies, and an existing migrated
+SQLite World database.
+
+```powershell
+# Preview: validate and show changes, without publishing.
+.\scripts\Update-MissionPacks.ps1 -WorldDatabasePath 'D:\RasaData\rasaworld.db'
+
+# Apply explicitly after stopping or draining Game.
+.\scripts\Update-MissionPacks.ps1 -WorldDatabasePath 'D:\RasaData\rasaworld.db' -Publish
+```
+
+Replace the example path with the physical World file Game actually uses.
+Unlike the low-level CLI, the wrapper takes the **filename including lowercase
+`.db`** and converts it to the CLI's base path. It never infers a database from
+Game configuration. Relative explicit paths resolve from the caller's current
+directory; the default packs resolve from the script's repository, not the caller.
+
+The script checks the paths and manifest, incrementally builds MissionTool with
+`--no-restore`, then validates and shows the diff. Only `-Publish` permits
+publication. Missing paths or failed build/validation/diff stop the workflow;
+native tool exit codes are preserved. Restore dependencies using the
+[repository setup](setup.md#applying-migrations) if build assets are missing.
+
+Use `-PackDirectory` to select a complete candidate release, including its
+`client-bindings.json`. CI can use the same noninteractive interface after its
+normal restore/setup stage:
+
+```powershell
+pwsh -NoProfile -NonInteractive -File .\scripts\Update-MissionPacks.ps1 `
+  -WorldDatabasePath 'D:\RasaData\rasaworld.db' `
+  -PackDirectory 'D:\artifacts\mission-release' -Publish
+```
+
+There are no confirmation prompts, force-overwrite, database-creation, migration,
+reset or server-stop switches. The existing publisher still enforces immutable
+revisions/releases. Preview success is not a promise that publication will
+accept a changed immutable binding. The script does not restore packages,
+change package feeds or support MySQL. Neither building nor starting Auth/Game
+runs this script automatically. Restart Game after successful publication.
+
+For a new disposable World database, use the initialization exercise below;
+the wrapper deliberately refuses a missing file.
+
 ## Try the authoring workflow safely
 
 Run PowerShell from the repository root after the SDK/dependency setup in
@@ -382,6 +429,17 @@ An initial authoring check is:
 ```powershell
 dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~MissionPackTests|FullyQualifiedName~MissionAuthoringLocalityTests|FullyQualifiedName~MissionRequirementProductionTests|FullyQualifiedName~MissionReleaseImmutabilityTests"
 ```
+
+The wrapper has separate subprocess-level contract tests using an isolated
+dotnet substitute for command ordering, explicit targets and failure stopping.
+They do not publish to a developer database:
+
+```powershell
+dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~MissionPackScriptTests"
+```
+
+PowerShell must be available to execute those tests. On Windows, host-specific
+cases exercise both PowerShell 7 and Windows PowerShell when installed.
 
 Then run the affected scene/world/mission suites. Exercise a real handler and
 spawn/route path; a definition that loads or a row that persists is not proof

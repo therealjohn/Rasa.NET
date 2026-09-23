@@ -15,7 +15,9 @@ for the new-mission workflow, typed scripts, public encounters and release publi
 The [mission pack and script reference](docs/mission-reference.md) describes the JSON
 fields, trigger/action bindings, requirements and CLI arguments. Applying database
 migrations alone does not activate mission content; publish a validated release
-before starting Game.
+before starting Game. The [explicit PowerShell workflow](docs/missions.md#update-an-existing-world-database)
+previews changes by default and publishes only when passed `-Publish` and the
+target World database path.
 
 ## Feedback
 - Ask questions and discuss development on [Discord](https://discord.gg/Ph68FmA)

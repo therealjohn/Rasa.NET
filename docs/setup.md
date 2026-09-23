@@ -267,20 +267,24 @@ Stop Game and drain encounters before replacing an existing release.
 From the repository root, for a migrated SQLite World database:
 
 ```powershell
-$world = 'C:\RasaData\rasaworld' # Opens C:\RasaData\rasaworld.db; match Game's World.Database.
-$tool = 'src\Rasa.MissionTool\Rasa.MissionTool.csproj'
-dotnet run --project $tool --configuration Release -- validate --database $world --directory content\missions\bootcamp
-dotnet run --project $tool --configuration Release -- diff --database $world --directory content\missions\bootcamp
-dotnet run --project $tool --configuration Release -- publish --database $world --directory content\missions\bootcamp
+$worldFile = 'C:\RasaData\rasaworld.db' # Match the physical World file Game uses.
+.\scripts\Update-MissionPacks.ps1 -WorldDatabasePath $worldFile
+.\scripts\Update-MissionPacks.ps1 -WorldDatabasePath $worldFile -Publish
 ```
 
 Choose the actual path for your setup; the example is not an automatic default.
-For a **new, unused** SQLite World path, add `--initialize-empty` to the first
-`validate` invocation to apply migrations and seed the database. It refuses
-existing files. Never use that flag as an upgrade or reset procedure.
-For existing databases, back up and apply the appropriate migrations first.
+The wrapper requires PowerShell 5.1/7 and restored solution dependencies. The
+first command previews; the second explicitly publishes. It does not infer the
+database, create it or run migrations, and does not run automatically during
+build or server startup.
 
-The CLI supports SQLite only. MySQL requires a provider-aware invocation of
+For a **new, unused** SQLite World path, use the separate
+[disposable initialization workflow](missions.md#try-the-authoring-workflow-safely).
+The low-level tool's `--initialize-empty` refuses existing files; never use it as
+an upgrade or reset procedure. For existing databases, back up and apply the
+appropriate migrations first.
+
+The wrapper and CLI support SQLite only. MySQL requires a provider-aware invocation of
 `MissionPackStore` with the configured `MySqlWorldContext`; there is no
 `--provider MySql` CLI switch or automatic JSON import on server startup.
 See the [release workflow and limitations](missions.md#releases-saved-state-and-rollback)
