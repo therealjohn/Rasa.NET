@@ -11,7 +11,11 @@ There are a few required tools and steps to get everything setup before you can 
 If you are interested in helping in the development of Rasa.NET, please [join the Discord](https://discord.gg/Ph68FmA) and chat!
 
 Mission contributors should read [mission authoring and operations](docs/missions.md)
-for data packs, typed scripts, public actor leases and the release/cutover workflow.
+for the new-mission workflow, typed scripts, public encounters and release publication.
+The [mission pack and script reference](docs/mission-reference.md) describes the JSON
+fields, trigger/action bindings, requirements and CLI arguments. Applying database
+migrations alone does not activate mission content; publish a validated release
+before starting Game.
 
 ## Feedback
 - Ask questions and discuss development on [Discord](https://discord.gg/Ph68FmA)

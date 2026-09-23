@@ -6,6 +6,12 @@ private Bootcamp `1985` first; legacy and skipped characters use their saved map
 The checked-in seed contains 218 spawn pools there: 183 have a nonzero configured
 population and 35 are empty. Empty pools are not populated with invented defaults.
 
+For mission creation, use [mission authoring and operations](missions.md) and
+the [pack/script reference](mission-reference.md). This page describes behavior
+and acceptance checks. Before launching Game, apply provider migrations **and**
+publish the complete mission release; the older Bootcamp migrations mentioned
+below describe asset/data history, not the new content-activation workflow.
+
 ## Run the automated checks
 
 After the SDK/dependency setup in [the setup guide](setup.md), run:
@@ -91,7 +97,7 @@ dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore 
 
 For guidance on authoring new mission content itself - conversation delivery,
 text/position sourcing, real-client verification - see the
-[mission authoring guide](mission-authoring.md).
+[mission authoring guide](missions.md#author-a-new-mission).
 
 ## Mission protocol boundary
 
@@ -363,11 +369,14 @@ crate stays visible in its opened state, including after reconnect and mission
 completion. A character whose crate objective was already completed by the old
 bulk-grant implementation does not receive a second loadout.
 
-Apply the `BootcampCrateLoot` **World** migration before running the updated
-server. It replaces the scripted bulk grant with interaction disablement and
-removes the crate's despawn step. SQLite applies pending migrations at startup;
-for MySQL, follow [Applying migrations](setup.md#applying-migrations).
-No character-schema migration or database reset is required.
+The historical `BootcampCrateLoot` World migration replaces the bulk grant and
+crate despawn. The modular runtime additionally needs the current World/Char
+migrations and the published Bootcamp release; see
+[deployment setup](setup.md#publish-mission-content-before-starting-game).
+The crate's world lifetime now belongs to the experience run. Its per-template
+loot-claim records still use `character_mission_scenario_step`; do not confuse
+that retained compatibility path with the new general scene receipt tables.
+No database reset is required.
 
 Run the focused server regressions with:
 
@@ -386,10 +395,10 @@ check that its existing interaction is unchanged.
 After the committed acceptance of Gearing Up for Battle (`1992`), Major
 McAllister runs along the map's navigation mesh to `(400, 120, 150)`, stops at
 orientation `2.175`, and remains there. Rejected acceptance does not move him.
-The accepted mission is the durable record of this departure: reconnecting
-during or after the run restores him at the destination, not at his original
-post. His movement and spawn position affect only the owning character's
-private map.
+The experience-owned role and committed mission/history facts drive recovery:
+reconnecting during or after the run restores him at the destination, not at his
+original post. His movement and spawn position affect only the owning
+character's private map.
 
 Corporal DeSimone is a static NPC, creature `510206`, conversation package
 `2562`. His corrected spawn is `(391.5, 120.059, 164.8)`. The existing horizontal
@@ -637,7 +646,8 @@ reinforcement arrival. Van Valkenberg's dialogue makes the final handoff
 available through the existing departure interaction.
 
 The bomb target uses tutorial wreck class `24586`, not dropship-crate class
-`24911`. Its scenario key remains stable for reconnect compatibility. The
+`24911`. Its authored shared role and experience-owned effects drive reconnect
+recovery; do not locate it by parsing a legacy scenario-key string. The
 crash-site destination is the user-confirmed `(-225, 101, -71)` near the damaged
 landing pad; authored actors and interactions are grounded against the current
 Bootcamp navmesh. Conrad and the wreck use their shipped usable-state contract,
@@ -662,8 +672,9 @@ before migration; undoing this character-data merge requires restoring a backup.
 
 ### SQLite pass
 
-1. Start from a clean SQLite character/world database.
-2. Launch `Rasa.Auth` and `Rasa.Game`.
+1. Start from disposable SQLite character/world databases and apply migrations.
+2. Publish the complete Bootcamp release to that World database, then launch
+   `Rasa.Auth` and `Rasa.Game`.
 3. Confirm the Game log reaches `Server ready!`.
 4. Create a fresh account and a fresh character.
 5. In a cold client session, validate these ten scenarios and capture the
@@ -683,7 +694,9 @@ before migration; undoing this character-data merge requires restoring a backup.
 
 ### MySQL pass
 
-Repeat the same ten scenarios against a clean MySQL character/world database.
+Repeat the same ten scenarios against disposable MySQL character/world databases
+after provider migrations and explicit provider-aware mission publication.
+The authoring CLI itself is SQLite-only; see [release operations](missions.md#releases-saved-state-and-rollback).
 If your local setup includes opt-in live MySQL verification, use it. Otherwise,
 the automated suites still cover offline MySQL migrations and model parity.
 
@@ -730,64 +743,70 @@ Run the focused mission checks with:
 dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~Rasa.Test.Missions"
 ```
 
-Mission attempts are scoped by persistent character ID. The character database
-uses `(character_id, mission_id)` as the key, so accounts and character slots do
-not share mission state and one character can hold multiple attempts. Existing
-rows survive the additive SQLite and MySQL migration. Character deletion
-cascades to mission rows, and mission deletion cascades through objective rows
-and both counter levels. Objective rows use
-`(character_id, mission_id, objective_id)` and generic/item counters add their
-counter key. Objective states and both counter values are
-optimistic-concurrency tokens; mutation
-callers supply the expected current value so stale contexts reject instead of
-overwriting newer progress.
+Mission progress belongs to persistent character IDs, not account IDs or party
+rosters. The current journal row is keyed by `(character_id, mission_id)` and
+has a separate assignment ID, pinned content revision, generation and version.
+Reacceptance is a new assignment, not permission to consume the previous run's
+timers, signals or grants. Objective rows/counters retain their normalized keys
+and optimistic-concurrency checks.
 
-The objective-progress migrations cannot infer immutable objective definitions
-from legacy mission rows, so they preserve valid character-owned rows for both
-providers. On character hydration, the server maps rows to the current
-operational definition and state inside one character-database transaction.
-Mapped rows are retained. A row with no complete objective graph, an unsupported
-state, or a non-operational definition is logged and removed through the shared
-repository path; its objective children cascade. An Active row is also removed
-when its persisted completable value disagrees with the required objective
-states. Durable terminal Failed and Completed rows are retained when their
-definition and objective graph are valid; hydration normalizes their runtime
-completable value to false according to the terminal state instead of treating
-the legacy bit as an Active-state consistency check. The runtime mission
-dictionary is replaced only after that transaction commits. This keeps MySQL
-and SQLite behavior aligned, frees mission-log capacity, and permits the same
-mission ID to be accepted again without deleting unrelated valid attempts.
+`character_mission_history` retains terminal outcomes and reward claims when a
+journal entry is cleared. Rewarded completions do not consume the 30-slot
+journal limit; non-completed journal rows, including pending reward/failed rows,
+still count. Clearing a rewarded mission cannot permit another nonrepeatable
+reward, and a failed history entry is not a completion/reward claim.
 
-World mission definitions are immutable and inactive by default. Incomplete
-database definitions are not hydrated, advertised by NPCs, accepted, tracked or
-completed. Test definitions must opt in explicitly. This keeps the existing
-partial mission rows, and any newly recovered client metadata, from appearing as
-playable content before their authoritative objective and reward contracts are
-known.
+`MissionJournalAdapter` restores current values against the selected definitions.
+An unavailable or changed pinned revision is quarantined and preserved for an
+explicit migration/reset decision, not silently rebound to the new release.
+Legacy/unversioned or inconsistent state still follows its logged compatibility
+and invalid-row handling; loading old rows does not infer missing objectives.
 
-Mission progress uses a small typed event boundary for successful waypoint,
-Logos, creature-kill, and mission-completion actions. A rule may complete one
-exact Logos, creature, or completed-mission subject; complete a waypoint or
-Logos objective after every distinct authored subject is durably owned; or
-increment one fully specified test-only counter. Generic production counters are
-not inferred. `RecordProgress` validates the active client plus runtime and
-durable mission state, writes all matched changes in one serializable
-transaction, and publishes counter, objective-completed, then
-mission-completable deltas after commit. When one event matches multiple
-objectives, every runtime counter update and counter/item-counter packet is
-published first, followed by every objective-completed packet and then every
-mission-completable packet. Each phase uses mission/objective definition order.
+Production definitions come from an explicitly published World release. Optional
+invalid and source-only content remains non-operational; required-content
+defects block readiness. A new mission is authored as a pack, optionally with a
+registered typed script, not inserted into `MissionApplication` as special code.
 
-The gameplay action commits and publishes first. Waypoint progress follows
-`WaypointGained`, Logos progress follows `LogosStoneAdded`, creature progress
-follows the authoritative killer's XP and loot processing. A later expected mission
-progress persistence failure is logged with its event kind and subject, emits no
-mission delta, and does not roll back the successful waypoint, Logos, kill
-reward. Mission turn-in is different: completion-dependent progress and reward
-item acquisition progress commit in the same transaction as the rewards and
-terminal mission state. A failure rolls back the entire turn-in so it can be
-retried. No login catch-up is synthesized. Programming errors
-remain visible with their original identity and stack.
+The independent `Rasa.Missions` core evaluates typed progress rules and indexes
+only relevant event/NPC bindings. Rules include exact events, waypoint/Logos
+distinct sets and explicitly authored generic/item counters. Counters are not
+test-only and are not inferred from prose. The Game application rechecks durable
+state and stage-specific requirements before persisting changes. Protocol
+adapters publish only after commit, preserving counter, objective and
+mission-completable ordering and hiding only unrevealed `Inactive` objectives.
+
+World scene state is independent of the active journal: `mission_scene`, inbox
+messages, named timers, receipts, pending world effects, actor outcomes and
+per-character credit deliveries preserve their own run/generation identities.
+An authoritative committed objective can recover its queued scene input after
+a crash. This is replay of recorded work, not invented progress for quests
+accepted later.
+
+Public-map logout/transfer detaches the client according to the encounter's
+`Wait`, `Continue` or `Reset` policy. Deliberate default abandonment invalidates
+the exact assignment-owned work in the same transaction as deletion; authored
+failure transitions remain distinct. Generation checks prevent stale callbacks
+or loot/grant intents from affecting a replacement run. Cleanup removes only
+the terminated run's created actors, while a leased static actor completes its
+own return/reset/respawn lifecycle.
+
+Experience-owned actors survive the appropriate mission's journal cleanup.
+Youngblood must still appear after rewarding and clearing `1994`, cold
+reconnecting, then requesting his `1995` conversation. Persisted scene rows
+alone are not sufficient evidence; test the actual actor and client flow.
+
+Group credit is opt-in for supported kill/scenario events. Capture authoritative
+objective requirements, active objective, map/range and participation eligibility
+when the event occurs. Deliver only to those frozen assignments; a later party
+join, acceptance or predicate change neither invents eligibility nor removes
+earned credit. Delivery still checks exact assignment/generation and current
+objective state. Personal actions and reward choices are not shared.
+
+Mission turn-in keeps reward items, currencies, XP, terminal state and dependent
+progress in one character transaction. A failure rolls back that turn-in.
+Public actors remain shared and an exclusive escort may be unavailable to the
+next group until it returns or respawns; there is no personal NPC phasing or
+automatic party acceptance.
 
 The implemented state mapping is:
 
@@ -801,7 +820,8 @@ The implemented state mapping is:
 
 Login sends one `MissionStatusInfo` snapshot from durable state. Acceptance
 validates the active client, registered NPC, persistent giver identity, current
-map instance, duplicate state and the durable 30-mission capacity, then creates
+map instance, stage requirements, duplicate/history state and the durable
+30-slot journal capacity, then creates
 the mission and all definition-authored objective/counter rows in one
 transaction. Hydration combines persisted current values with immutable
 definition metadata. Abandonment reloads the durable attempt and cannot remove

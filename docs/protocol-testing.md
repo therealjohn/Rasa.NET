@@ -18,6 +18,11 @@ or connect to MySQL.
 
 ## Bootcamp mission and departure packet order
 
+For authoring these behaviors, see [mission authoring](missions.md) and the
+[trigger/script reference](mission-reference.md). Packet projection lives in
+the Game protocol adapters; mission scripts return intents/signals and must
+not write Python tuples or call clients directly.
+
 Bootcamp mission order is covered by `BootcampProtocolTests` and the broader
 mission suites. They lock down the client-visible sequence used by the
 Deployment 11 starting experience:
@@ -106,6 +111,12 @@ missions, abilities, travel, or loot. Those systems have their own focused tests
 and production mission definitions remain inactive unless their complete server
 contract is available. Voice and dynamic-map-marker opcode declarations likewise
 do not establish working feature support.
+
+Likewise, `ShareMission`, `AssignSharedMission`, `DeclineSharedMission` and
+`DispenseSharedMission` opcode declarations do not establish an implemented
+native sharing workflow. Public NPC encounters and eligible group credit do not
+automatically accept missions for party members. Keep acceptance and turn-in
+per character, using verified existing client interactions.
 
 ## Bounds established by the code
 

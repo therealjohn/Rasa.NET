@@ -16,6 +16,12 @@ relative `GameDataConfig.NavMeshPath` and `KnowledgeBaseFile` values. Rebuild
 the image after updating source, dependencies, navmeshes, or knowledge-base
 content with `docker compose up --build`.
 
+The image builds `Rasa.MissionTool`, but the current Dockerfile does **not** copy
+the repository's `content\missions` directory. Game reads mission bindings from
+the World database; it does not import loose JSON on startup. Mount the reviewed
+packs for the one-off publisher below. Changing the packs also requires
+publishing a new release and restarting Game, not only rebuilding the image.
+
 To use a different NuGet feed for an image build without changing global configuration, pass `--build-arg NUGET_SOURCE=<feed-url>` to `docker build`.
 
 This guide's Compose example uses SQLite.
@@ -26,17 +32,44 @@ The application also supports MySQL 8.0/8.4, but the supplied Compose configurat
 
 First, clone the git repository like normal, Then make sure to go into the directory.
 
-## Touch DB Files
+## Initialize databases and publish mission content
 
-This step is needed to provide empty database files to mount for the first launch, due to the way docker mounts handle missing files. This will only need to be done once before starting fresh.
+Compose's individual file mounts require host files to exist. For a **new**
+installation, create empty Auth/Char files, but let the mission tool initialize
+and seed the new World file before publishing Bootcamp.
 
-For an upgrade, stop the containers and back up all three database files first. Keep the existing files and their migration history; do not replace them with empty files. SQLite migrations run automatically on startup.
+From PowerShell at the repository root:
 
-```bash
-touch rasaauth.db
-touch rasachar.db
-touch rasaworld.db
+```powershell
+foreach ($file in 'rasaauth.db', 'rasachar.db') {
+    if (-not (Test-Path -LiteralPath $file)) {
+        New-Item -ItemType File -Path $file | Out-Null
+    }
+}
+docker compose build
+
+$mount = 'type=bind,source=' + (Get-Location).Path + ',target=/workspace'
+$missionTool = '/app/src/Rasa.MissionTool/bin/Release/net10.0/Rasa.MissionTool.dll'
+docker run --rm --mount $mount --workdir /workspace rasa_net dotnet $missionTool validate --database /workspace/rasaworld --directory /workspace/content/missions/bootcamp --initialize-empty
+docker run --rm --mount $mount --workdir /workspace rasa_net dotnet $missionTool diff --database /workspace/rasaworld --directory /workspace/content/missions/bootcamp
+docker run --rm --mount $mount --workdir /workspace rasa_net dotnet $missionTool publish --database /workspace/rasaworld --directory /workspace/content/missions/bootcamp
 ```
+
+The `/app` and `/workspace` paths are inside the Linux container. The database
+argument is a base path: the actual mounted file is `rasaworld.db`, not
+`rasaworld.db.db`. Stop if a command exits nonzero.
+
+For an upgrade, stop the containers and back up all three existing database
+files first. Keep their migration history and
+[apply the current provider migrations](setup.md#applying-migrations).
+Do not replace existing files or use `--initialize-empty`; run validation,
+diff and publication against the migrated World copy before deployment.
+SQLite server-startup migrations do not themselves activate a mission release.
+
+See [mission authoring and operations](missions.md) for release immutability,
+new content and rollback rules. The commands above describe the image's actual
+paths; native-client and live container acceptance remain separate from the
+repository's static Docker layout checks.
 
 ## Create App Settings
 
@@ -71,7 +104,10 @@ host `bin` directory as proof of image contents.
 
 Next, run `docker compose up --build`.
 
-Confirm the Game startup log reports loaded navmeshes. This is a server-side asset check; it does not establish native-client movement, collision, or multi-server transfer acceptance.
+Confirm the Game startup log reports loaded navmeshes and reaches `Server ready!`.
+`No active mission release` means the World database mounted by Game has not
+received a validated publication. This is a server-side startup check; it does
+not establish native-client movement, collision or multi-server transfer acceptance.
 
 ## Create a User
 
