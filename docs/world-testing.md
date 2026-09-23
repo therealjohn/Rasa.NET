@@ -340,6 +340,13 @@ Loss of a database commit
 acknowledgement is still ambiguous; there is no durable distributed exactly-once
 claim ledger. Subsequent stale inventory/credit snapshots fail closed.
 
+Inventory loading reserves the character's saved slots by inventory type before
+recovering legacy items stored with an invalid character owner. An orphaned item
+cannot take an occupied saved slot just because it loads first; it stays
+unchanged for later recovery. Already-duplicated personal slots are not repaired
+automatically, and loot claims still reject them before any inventory or credit
+writes.
+
 ## Bootcamp equipment crate
 
 Mission `1992` keeps the existing crate class `29877`. Right-click uses its

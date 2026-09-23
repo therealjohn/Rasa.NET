@@ -14,6 +14,7 @@ namespace Rasa.Test.Missions
     using Rasa.Packets.MapChannel.Client;
     using Rasa.Packets.MapChannel.Server;
     using Rasa.Structures;
+    using Rasa.Structures.Char;
 
     [TestClass]
     [DoNotParallelize]
@@ -99,6 +100,65 @@ namespace Rasa.Test.Missions
             Assert.IsTrue(loot.FullyLooted);
             Assert.AreEqual(MissionObjectiveState.Completed,
                 harness.Client.Player.Missions[1992].Objectives[1].State);
+        }
+
+        [TestMethod]
+        [DataRow(true, 50U)]
+        [DataRow(false, 50U)]
+        [DataRow(true, 51U)]
+        public void OrphanRecoveryRespectsSavedSlotsBeforeCrateLoot(bool orphanFirst, uint ownedSlot)
+        {
+            using var harness = BootcampRuntimeTestHarness.Create();
+            uint orphanItemId = 0;
+            var owners = orphanFirst
+                ? new[] { 0U, harness.Client.Player.Id }
+                : new[] { harness.Client.Player.Id, 0U };
+            using (var database = harness.Context.Open())
+            {
+                foreach (var owner in owners)
+                {
+                    var item = new ItemEntry
+                    {
+                        ItemTemplateId = 28,
+                        StackSize = 1000,
+                        CrafterName = ""
+                    };
+                    database.ItemEntries.Add(item);
+                    database.SaveChanges();
+                    database.CharacterInventoryEntries.Add(new CharacterInventoryEntry(
+                        harness.Client.AccountEntry.Id, owner,
+                        (uint)InventoryType.Personal, owner == 0 ? 50U : ownedSlot, item.ItemId));
+                    database.SaveChanges();
+                    if (owner == 0)
+                        orphanItemId = item.ItemId;
+                }
+            }
+
+            new InventoryManager(harness.Context, harness.Manager).InitCharacterInventory(harness.Client);
+            var crate = ReachCrate(harness);
+            var loot = OpenLoot(harness, crate);
+            var claimedAmmo = loot.LootItems.Single(item => item.ItemTemplateId == 28).ItemQuantity;
+
+            LootDispenserManager.Instance.RequestLootAllFromCorpse(
+                harness.Client,
+                new RequestLootAllFromCorpsePacket { EntityId = loot.EntityId });
+
+            Assert.IsTrue(loot.FullyLooted,
+                "Loading an orphaned item must not create duplicate personal slots that block the crate claim.");
+            Assert.AreEqual(MissionObjectiveState.Completed,
+                harness.Client.Player.Missions[1992].Objectives[1].State);
+            using var verify = harness.Context.Open();
+            var recoveredOrphan = ownedSlot != 50;
+            Assert.AreEqual(recoveredOrphan ? harness.Client.Player.Id : 0U,
+                verify.CharacterInventoryEntries.Single(
+                    row => row.ItemId == orphanItemId).CharacterId,
+                "Only a slot without a saved owner may recover its orphaned item.");
+            Assert.AreEqual(recoveredOrphan ? 1000U + claimedAmmo : 1000U, verify.ItemEntries.Single(
+                item => item.ItemId == orphanItemId).StackSize);
+            Assert.AreEqual(2000L + claimedAmmo,
+                verify.ItemEntries.Where(item => item.ItemTemplateId == 28)
+                    .AsEnumerable().Sum(item => (long)item.StackSize),
+                "Neither loading nor looting may discard existing ammunition.");
         }
 
         [TestMethod]

@@ -1868,6 +1868,12 @@ namespace Rasa.Managers
             // and belongs to nobody, so it would never load again.
             var accountCharacterIds = new HashSet<uint>((client.AccountEntry.Characters ?? new List<CharacterEntry>()).Select(c => c.Id));
 
+            // A saved item reserves its slot even before it has been loaded into runtime.
+            // Otherwise an earlier orphan can be adopted into the same durable slot.
+            var reservedSlots = new HashSet<(uint InventoryType, uint SlotId)>(
+                getInventoryData.Where(item => item.CharacterId == client.Player.Id)
+                    .Select(item => (item.InventoryType, item.SlotId)));
+
             // init for server inventory. Cleared first: this runs again on the manifestation
             // after a summon or .teleport, and used to append another block of slots each
             // time, so the lists grew by 757 entries per zone change.
@@ -1945,10 +1951,12 @@ namespace Rasa.Managers
                     && !accountCharacterIds.Contains(item.CharacterId)
                     && (inventoryType == InventoryType.Personal || inventoryType == InventoryType.EquipedInventory || inventoryType == InventoryType.WeaponDrawerInventory))
                 {
-                    if (IsSlotFree(client, inventoryType, item.SlotId))
+                    if (!reservedSlots.Contains((item.InventoryType, item.SlotId))
+                        && IsSlotFree(client, inventoryType, item.SlotId))
                     {
                         Logger.WriteLog(LogType.Error, $"Account {client.AccountEntry.Id} {inventoryType} slot {item.SlotId} item {item.ItemId} was stored with character id {item.CharacterId}, which is not a character of this account; assigned to {client.Player.Id} ({client.Player.Name}).");
                         unitOfWork.CharacterInventories.MoveInvItem(client.AccountEntry.Id, client.Player.Id, item.InventoryType, item.SlotId, item.ItemId);
+                        reservedSlots.Add((item.InventoryType, item.SlotId));
                         newItem.OwnerId = client.Player.Id;
                         item.CharacterId = client.Player.Id;
                     }

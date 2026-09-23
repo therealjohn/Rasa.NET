@@ -340,10 +340,13 @@ namespace Rasa.Test.Gameplay
         }
 
         [TestMethod]
-        public void CorruptPersonalInventorySlotRejectsTheWholeClaimBeforeWrites()
+        [DataRow(50U)]
+        [DataRow(250U)]
+        public void CorruptPersonalInventorySlotRejectsTheWholeClaimBeforeWrites(uint corruptSlot)
         {
             using var context = new LootFixture();
-            context.Storage.AddCorruptPersonalInventoryRow(250);
+            context.Storage.AddAmmo(1, 50);
+            context.Storage.AddCorruptPersonalInventoryRow(corruptSlot);
             var saves = context.Storage.SaveAttempts;
 
             context.Manager.RequestLootAllFromCorpse(context.Client,
