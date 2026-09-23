@@ -473,6 +473,19 @@ are absent while tracker and NPC interactions continue to work.
 
 ## Native-client Bootcamp acceptance checklist
 
+### Bootcamp startup navigation
+
+`BootcampReportedNavigationTests` runs the normal navigation loader from the
+Game project directory before creating a private instance. It verifies Forean
+entity introduction and following to `(347.66016, 121.69922, 64.625)`, both bridge
+factions fighting across respawn cycles on walkable ground, and refusal of
+unchecked scripted or failed-query movement. Loading the mesh directly inside
+a movement fixture does not cover asset discovery at server startup.
+
+```powershell
+dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~BootcampReportedNavigationTests|FullyQualifiedName~BootcampInitiationTests|FullyQualifiedName~AcceptingGearingUpRunsAlisterToHisFinalPosition"
+```
+
 ### Capture the Flag encounter and escort
 
 Apply the paired `BootcampCaptureTheFlag` World migration before exercising

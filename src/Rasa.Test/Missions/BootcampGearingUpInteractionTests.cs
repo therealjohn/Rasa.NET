@@ -45,7 +45,12 @@ namespace Rasa.Test.Missions
             Accept(harness, actors.McAllister);
 
             var gained = harness.Drain().OfType<MissionGainedPacket>().Single(packet => packet.MissionId == 1992);
-            var indicators = gained.MissionInfo.ObjectivesList.SelectMany(objective => objective.IndicatorList).ToArray();
+            Assert.IsFalse(gained.MissionInfo.ObjectivesList.Any(objective => objective.ObjectiveId == 1),
+                "The crate objective is not visible before Delessio's briefing.");
+            CompleteObjective(harness, actors.Delessio, 4);
+            var revealed = harness.Drain().OfType<ObjectiveRevealedPacket>()
+                .Single(packet => packet.MissionId == 1992 && packet.ObjectiveId == 1);
+            var indicators = revealed.MissionInfo.ObjectivesList.SelectMany(objective => objective.IndicatorList).ToArray();
             Assert.IsTrue(indicators.Length > 0, "Navigation indicators must not be removed.");
             Assert.IsTrue(indicators.Any(indicator => indicator.Position == CratePosition));
             Assert.IsFalse(indicators.Any(indicator => indicator.Show3DEffect),

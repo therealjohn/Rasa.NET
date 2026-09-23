@@ -266,7 +266,9 @@ Use `osx-x64` or `linux-x64` for the other deployment targets.
 
 ### Navigation and navmesh assets
 
-`Rasa.Navigation` is the runtime query library, `Rasa.NavMesh` is the offline builder, and `Rasa.ClientData` reads the installed client's map and mesh data. The repository contains 77 generated `.nav` files under `navmesh`. `Rasa.Game` loads matching files at startup from `GameDataConfig.NavMeshPath`, which defaults to `navmesh` relative to the server working directory. A map without a matching file retains straight-line movement.
+`Rasa.Navigation` is the runtime query library, `Rasa.NavMesh` is the offline builder, and `Rasa.ClientData` reads the installed client's map and mesh data. The repository contains 77 generated `.nav` files under `navmesh`. `Rasa.Game` loads matching files at startup from `GameDataConfig.NavMeshPath`. For the default `navmesh` setting, it checks the working directory, the application's directory, then the repository root when running from a source checkout. Explicit custom paths remain relative to the working directory and are not replaced by this discovery.
+
+Game publishes include the navigation assets. The startup log reports the resolved folder and loaded-map count. Restart the server after updating assets so new private map instances inherit the loaded mesh. Scripted routes such as Alister's move require navigation and refuse to start without it. A failed query on a loaded mesh never becomes a straight line through geometry; ordinary creatures on maps that intentionally have no mesh retain their legacy movement.
 
 To rebuild all navmeshes from a local 1.16.5.0 client installation:
 

@@ -25,6 +25,51 @@ namespace Rasa.Test.Missions
     public class BootcampInitiationTests
     {
         [TestMethod]
+        public void MissionLogDoesNotShowTheUnrevealedSecondElohObjective()
+        {
+            using var harness = BootcampRuntimeTestHarness.CreateFromPendingSelection();
+            harness.Drain();
+            AcceptRadioMission(harness.Client, BootcampRuntimeTestHarness.MissionInitiation);
+            var gained = harness.Drain().OfType<MissionGainedPacket>().Single();
+
+            CollectionAssert.AreEqual(new uint[] { 1 },
+                gained.MissionInfo.ObjectivesList.Select(objective => objective.ObjectiveId).ToArray(),
+                "The native mission window renders every received row, even when its status is Inactive.");
+            Assert.AreEqual(2, harness.Client.Player.Missions[1990].Objectives.Count,
+                "Hiding a future objective must not remove its durable progression state.");
+            harness.ReconnectFromSelection();
+            CollectionAssert.AreEqual(new uint[] { 1 },
+                harness.Manager.BuildStatusSnapshot(harness.Client.Player)[1990].ObjectivesList
+                    .Select(objective => objective.ObjectiveId).ToArray());
+
+            Assert.IsTrue(harness.Manager.RecordProgress(harness.Client, MissionProgressEvent.Area(1990, 430)));
+            var revealed = harness.Drain().OfType<ObjectiveRevealedPacket>().Single();
+            CollectionAssert.AreEqual(new uint[] { 1, 2 },
+                revealed.MissionInfo.ObjectivesList.Select(objective => objective.ObjectiveId).ToArray());
+            Assert.AreEqual(MissionObjectiveState.Completed, revealed.MissionInfo.ObjectivesList[0].State);
+            Assert.AreEqual(MissionObjectiveState.Incomplete, revealed.MissionInfo.ObjectivesList[1].State);
+        }
+
+        [TestMethod]
+        public void RevealedButNotActivatedObjectivesRemainVisibleAfterReconnect()
+        {
+            using var harness = BootcampRuntimeTestHarness.CreateFromPendingSelection();
+            AcceptRadioMission(harness.Client, BootcampRuntimeTestHarness.MissionInitiation);
+            using (var unit = harness.Context.CreateChar())
+            {
+                unit.CharacterMissionProgress.GetTracked(harness.Client.Player.Id, 1990)[2].ObjectiveState =
+                    (byte)MissionObjectiveState.NotAssigned;
+                unit.Complete();
+            }
+            harness.ReconnectFromSelection();
+
+            var info = harness.Manager.BuildStatusSnapshot(harness.Client.Player)[1990];
+            CollectionAssert.AreEqual(new uint[] { 1, 2 },
+                info.ObjectivesList.Select(objective => objective.ObjectiveId).ToArray());
+            Assert.AreEqual(MissionObjectiveState.NotAssigned, info.ObjectivesList[1].State);
+        }
+
+        [TestMethod]
         public void ArrivalOffersInitiationUntilTheClientAcceptsAndAcceptanceSurvivesReconnect()
         {
             using var harness = BootcampRuntimeTestHarness.CreateFromPendingSelection();
@@ -35,7 +80,7 @@ namespace Rasa.Test.Missions
             var offer = arrival.OfType<DispenseRadioMissionPacket>().Single();
             Assert.AreEqual(BootcampRuntimeTestHarness.MissionInitiation, offer.MissionId);
             Assert.IsTrue(offer.ForceDialog);
-            CollectionAssert.AreEqual(new[] { 1U, 2U },
+            CollectionAssert.AreEqual(new[] { 1U },
                 offer.MissionInfo.ObjectivesList.Select(objective => objective.ObjectiveId).ToArray());
             Assert.IsFalse(arrival.OfType<MissionGainedPacket>().Any());
             using (var unit = harness.Context.CreateChar())

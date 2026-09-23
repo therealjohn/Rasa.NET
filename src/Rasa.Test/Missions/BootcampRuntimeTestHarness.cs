@@ -62,9 +62,10 @@ namespace Rasa.Test.Missions
         private const uint FreshPendingCharacterId = 2;
         private const byte FreshPendingSlot = 1;
 
-        internal static Harness Create(bool useWorldContent = false)
+        internal static Harness Create(bool useWorldContent = false, Action<MapChannelManager> initializeMaps = null)
         {
             var bootstrap = CreateBootstrap(useWorldContent);
+            initializeMaps?.Invoke(bootstrap.Maps);
             ConfigureRuntimePlayer(bootstrap.Context.Client);
             var bootcampMap = bootstrap.Maps.GetOrCreatePrivateInstance(
                 BootcampMapContextId,

@@ -109,7 +109,9 @@ namespace Rasa.Structures
             var objectives = new List<MissionObjective>();
             foreach (var definition in Objectives.Values.OrderBy(objective => objective.Ordinal.Value))
             {
-                if (!objectiveLogs.TryGetValue(definition.ObjectiveId, out var log))
+                // Inactive means unrevealed; the native mission log renders every received row.
+                if (!objectiveLogs.TryGetValue(definition.ObjectiveId, out var log) ||
+                    log.State == MissionObjectiveState.Inactive)
                     continue;
                 var objective = definition.CreateRuntime(log.State, log.Counters, log.ItemCounters);
                 objective.TimeRemaining = objectiveTimeRemaining?.Invoke(definition.ObjectiveId);

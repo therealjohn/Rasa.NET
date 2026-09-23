@@ -54,7 +54,7 @@ namespace Rasa.Test.Missions
                 BootcampRuntimeTestHarness.MissionInitiation,
                 snapshot.MissionStatusDict.Single().Key);
             CollectionAssert.AreEqual(
-                new[] { 1U, 2U },
+                new[] { 1U },
                 snapshot.MissionStatusDict[BootcampRuntimeTestHarness.MissionInitiation]
                     .ObjectivesList
                     .Select(objective => objective.ObjectiveId)

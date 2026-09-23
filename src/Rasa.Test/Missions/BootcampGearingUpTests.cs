@@ -92,15 +92,7 @@ namespace Rasa.Test.Missions
             CollectionAssert.AreEqual(
                 new[]
                 {
-                    (4U, (uint)1, MissionObjectiveState.Incomplete),
-                    (1U, (uint)2, MissionObjectiveState.Inactive),
-                    (2U, (uint)3, MissionObjectiveState.Inactive),
-                    (5U, (uint)4, MissionObjectiveState.Inactive),
-                    (6U, (uint)5, MissionObjectiveState.Inactive),
-                    (3U, (uint)6, MissionObjectiveState.Inactive),
-                    (9U, (uint)7, MissionObjectiveState.Inactive),
-                    (8U, (uint)8, MissionObjectiveState.Inactive),
-                    (7U, (uint)9, MissionObjectiveState.Inactive)
+                    (4U, (uint)1, MissionObjectiveState.Incomplete)
                 },
                 gained.MissionInfo.ObjectivesList
                     .Select(objective => (objective.ObjectiveId, objective.Ordinal, objective.State))

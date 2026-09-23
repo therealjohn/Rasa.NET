@@ -48,6 +48,13 @@ It covers fixed and selectable rewards, recovery of older unrewarded `Success`
 rows, and retries after reconnect. `Accept Mission` only starts a mission;
 `Complete Mission` claims its rewards without a second acceptance step.
 
+Mission gains, snapshots, reveals and offers omit unrevealed (`Inactive`)
+objectives. The native mission log creates a row for every received objective
+and does not hide that state itself. Revealed-but-not-activated (`NotAssigned`)
+objectives and completed history remain visible; hidden objectives still exist
+in durable server progress. This prevents Initiation from displaying both
+"Approach the Eloh Hologram" steps before the second is revealed.
+
 Calling for Reinforcements (`1995`) uses the shipped client objective IDs
 `2, 3, 1, 4`. The survivor conversation belongs to objective `2`; the
 server-only reconstruction `10` is no longer sent in mission snapshots or

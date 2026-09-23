@@ -874,11 +874,13 @@ namespace Rasa.Managers
 
             if (path != null && path.Count > 0)
                 creature.Controller.Path.AddRange(path);
-            else if (!IsMissionEscort(creature) && !BootcampCombat.IsBaseDefender(creature))
+            else if (mapChannel.NavMesh == null &&
+                     !IsMissionEscort(creature) && !BootcampCombat.IsBaseDefender(creature))
                 creature.Controller.Path.Add(destination);
             else
                 Logger.WriteLog(LogType.Error,
-                    $"Mission actor {creature.EntityId} has no navmesh route to {destination}.");
+                    $"Actor {creature.EntityId} has no navmesh route from {creature.Position} to {destination} " +
+                    $"on map {mapChannel.MapInfo?.MapContextId} (mesh loaded: {mapChannel.NavMesh != null}).");
         }
 
         /// <summary>
@@ -1157,17 +1159,19 @@ namespace Rasa.Managers
                 current?.Destination == destination && current.Orientation == orientation)
                 return true;
 
-            var path = new List<Vector3> { destination };
-            if (mapChannel.NavMesh != null)
+            if (mapChannel.NavMesh == null)
             {
-                path = mapChannel.NavMesh.FindPath(creature.Position, destination, out var complete);
-                if (!complete || path == null || path.Count == 0 ||
-                    Vector3.Distance(path[^1], destination) > 1)
-                {
-                    Logger.WriteLog(LogType.Error,
-                        $"Cannot move creature {creature.DbId} to {destination}: no complete walkable route.");
-                    return false;
-                }
+                Logger.WriteLog(LogType.Error,
+                    $"Cannot move creature {creature.DbId} to {destination}: map {mapChannel.MapInfo?.MapContextId} has no navmesh loaded.");
+                return false;
+            }
+            var path = mapChannel.NavMesh.FindPath(creature.Position, destination, out var complete);
+            if (!complete || path == null || path.Count == 0 ||
+                Vector3.Distance(path[^1], destination) > 1)
+            {
+                Logger.WriteLog(LogType.Error,
+                    $"Cannot move creature {creature.DbId} to {destination}: no complete walkable route.");
+                return false;
             }
 
             creature.Controller.ScriptedMove = new ScriptedMove

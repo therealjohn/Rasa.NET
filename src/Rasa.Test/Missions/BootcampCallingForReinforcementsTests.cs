@@ -429,12 +429,17 @@ namespace Rasa.Test.Missions
             var supported = new[] { 2U, 3U, 1U, 4U };
             CollectionAssert.AreEquivalent(supported, harness.Client.Player.Missions[1995].Objectives.Keys.ToArray());
             harness.Manager.PublishInitialState(harness.Client);
-            foreach (var packet in harness.Drain())
+            var packets = harness.Drain();
+            foreach (var packet in packets)
             {
                 if (packet is MissionStatusInfoPacket status && status.MissionStatusDict.TryGetValue(1995, out var info))
-                    CollectionAssert.AreEquivalent(supported, info.ObjectivesList.Select(objective => objective.ObjectiveId).ToArray());
+                    AssertVisibleSupportedObjectives(info);
                 if (packet is MissionGainedPacket gained && gained.MissionId == 1995)
-                    CollectionAssert.AreEquivalent(supported, gained.MissionInfo.ObjectivesList.Select(objective => objective.ObjectiveId).ToArray());
+                {
+                    AssertVisibleSupportedObjectives(gained.MissionInfo);
+                    CollectionAssert.AreEqual(new[] { 2U },
+                        gained.MissionInfo.ObjectivesList.Select(objective => objective.ObjectiveId).ToArray());
+                }
                 if (packet is ObjectiveRevealedPacket revealed && revealed.MissionId == 1995)
                     CollectionAssert.Contains(supported, revealed.ObjectiveId);
                 if (packet is ObjectiveActivatedPacket activated && activated.MissionId == 1995)
@@ -450,6 +455,21 @@ namespace Rasa.Test.Missions
                     if (missionId == 1995)
                         CollectionAssert.Contains(supported, objectiveId);
                 }
+            }
+            var latest = packets.OfType<MissionStatusInfoPacket>().Last();
+            if (latest.MissionStatusDict.TryGetValue(1995, out var current))
+                CollectionAssert.AreEquivalent(
+                    harness.Client.Player.Missions[1995].Objectives.Values
+                        .Where(objective => objective.State != MissionObjectiveState.Inactive)
+                        .Select(objective => objective.ObjectiveId).ToArray(),
+                    current.ObjectivesList.Select(objective => objective.ObjectiveId).ToArray());
+
+            void AssertVisibleSupportedObjectives(MissionInfo info)
+            {
+                var ids = info.ObjectivesList.Select(objective => objective.ObjectiveId).ToArray();
+                CollectionAssert.IsSubsetOf(ids, supported);
+                Assert.AreEqual(ids.Length, ids.Distinct().Count());
+                Assert.IsTrue(info.ObjectivesList.All(objective => objective.State != MissionObjectiveState.Inactive));
             }
         }
 
