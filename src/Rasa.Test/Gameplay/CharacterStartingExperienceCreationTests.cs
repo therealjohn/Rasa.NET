@@ -23,7 +23,11 @@ namespace Rasa.Test.Gameplay
     using Rasa.Game.Handlers;
     using Rasa.Managers;
     using Rasa.Packets.Game.Client;
+    using Rasa.Packets.Game.Server;
+    using Rasa.Packets.Inventory.Server;
+    using Rasa.Packets.Protocol;
     using Rasa.Repositories.Char;
+    using Rasa.Repositories.Char.Auction;
     using Rasa.Repositories.Char.Character;
     using Rasa.Repositories.Char.CharacterAbilityDrawer;
     using Rasa.Repositories.Char.CharacterAppearance;
@@ -123,6 +127,273 @@ namespace Rasa.Test.Gameplay
             Assert.AreEqual((uint)InventoryOffset.CategoryConsumable, ammunition.SlotId);
             Assert.AreEqual(1000U, items.GetItem(ammunition.ItemId).StackSize);
             Assert.IsNotNull(new CharacterLockboxRepository(verify).Get(181));
+        }
+
+        [TestMethod]
+        [DataRow((byte)1, false)]
+        [DataRow((byte)1, true)]
+        [DataRow((byte)7, false)]
+        [DataRow((byte)7, true)]
+        public void RecreatingCharacterInDeletedSlotStartsWithOnlyItsOwnPistol(byte slot, bool reconnect)
+        {
+            using var context = new CharacterCreationContext();
+            context.SeedAccount(186);
+            var client = context.CreateClient(186);
+            var characters = new CharacterManager(context);
+            var inventories = new InventoryManager(context);
+            var maps = new MapChannelManager(context, privateInstances: new PrivateMapInstanceService());
+            using var scope = new MapChannelManagerScope(maps);
+
+            characters.RequestCreateCharacterInSlot(
+                client, CreatePacket(slot, familyName: "Fixture", characterName: "OldPistol"));
+            context.LoadInventory(client, slot);
+            var deletedCharacterId = client.Player.Id;
+            var deletedPistolId = EntityManager.Instance.GetItem(
+                client.Player.Inventory.WeaponDrawer[0]).Id;
+
+            inventories.WeaponDrawerInventory_MoveItem(
+                client,
+                new Packets.Inventory.Client.WeaponDrawerInventory_MoveItemPacket
+                {
+                    SrcSlot = 0,
+                    DestSlot = 1
+                });
+            Assert.AreEqual(0UL, client.Player.Inventory.WeaponDrawer[0]);
+            Assert.AreEqual(deletedPistolId, EntityManager.Instance.GetItem(
+                client.Player.Inventory.WeaponDrawer[1]).Id);
+            using (var verifyMove = context.Open())
+            {
+                var location = verifyMove.CharacterInventoryEntries.Single(entry =>
+                    entry.ItemId == deletedPistolId);
+                Assert.AreEqual(deletedCharacterId, location.CharacterId);
+                Assert.AreEqual(1U, location.SlotId);
+            }
+
+            client.State = ClientState.CharacterSelection;
+            characters.RequestDeleteCharacterInSlot(
+                client, new RequestDeleteCharacterInSlotPacket { Slot = slot });
+            Assert.IsNull(client.AccountEntry.GetCharacterBySlot(slot));
+            characters.RequestCreateCharacterInSlot(
+                client, CreatePacket(slot, familyName: "Fixture", characterName: "NewPistol"));
+            if (reconnect)
+                client = context.CreateClient(186);
+            WorldTestContext.Drain(client);
+            context.LoadInventory(client, slot);
+
+            Assert.AreNotEqual(deletedCharacterId, client.Player.Id);
+            Assert.AreNotEqual(0UL, client.Player.Inventory.WeaponDrawer[0]);
+            Assert.AreEqual(0UL, client.Player.Inventory.WeaponDrawer[1],
+                "The new character must not inherit the deleted character's pistol in slot 2.");
+            Assert.AreEqual(1, client.Player.Inventory.WeaponDrawer.Count(entityId => entityId != 0));
+            Assert.AreNotEqual(deletedPistolId, EntityManager.Instance.GetItem(
+                client.Player.Inventory.WeaponDrawer[0]).Id);
+            CollectionAssert.AreEqual(new[] { 0U },
+                WorldTestContext.Drain(client).Select(packet => packet.Message).OfType<CallMethodMessage>()
+                    .Select(message => message.Packet).OfType<InventoryAddItemPacket>()
+                    .Where(packet => packet.Type == InventoryType.WeaponDrawerInventory)
+                    .Select(packet => packet.SlotId).ToArray());
+            using var verify = context.Open();
+            Assert.AreEqual(2, verify.CharacterInventoryEntries.Count(entry =>
+                entry.CharacterId == client.Player.Id));
+            Assert.IsFalse(verify.CharacterInventoryEntries.Any(entry =>
+                entry.CharacterId == deletedCharacterId || entry.ItemId == deletedPistolId));
+        }
+
+        [TestMethod]
+        public void DeletingCharacterRemovesItsItemsWithoutTouchingOtherOwnersOrSharedStorage()
+        {
+            using var context = new CharacterCreationContext();
+            context.SeedAccount(187);
+            context.SeedAccount(188);
+            var characterId = context.SeedCharacter(187, 1, "DeleteInventory");
+            var siblingId = context.SeedCharacter(187, 2, "KeepInventory");
+            var otherAccountCharacterId = context.SeedCharacter(188, 1, "OtherAccount");
+            var inventoryTypes = new[]
+            {
+                InventoryType.Personal, InventoryType.EquipedInventory,
+                InventoryType.WeaponDrawerInventory, InventoryType.InboxInventory,
+                InventoryType.AuctionInventory
+            };
+            var removedItems = inventoryTypes.Select(type =>
+                context.SeedInventoryItem(187, characterId, type, 0)).ToArray();
+            var siblingItem = context.SeedInventoryItem(
+                187, siblingId, InventoryType.WeaponDrawerInventory, 1);
+            var sharedItem = context.SeedInventoryItem(187, 0, InventoryType.HomeInventory, 0);
+            var otherAccountItem = context.SeedInventoryItem(
+                188, otherAccountCharacterId, InventoryType.WeaponDrawerInventory, 0);
+            uint clanItemId;
+            using (var seed = context.Open())
+            {
+                seed.AuctionEntries.Add(new AuctionEntry(
+                    removedItems[^1], characterId, "DeleteInventory", 100, 1, 12));
+                var clanItem = new ItemEntry { ItemTemplateId = 17131, StackSize = 1, CrafterName = "" };
+                seed.ItemEntries.Add(clanItem);
+                seed.SaveChanges();
+                clanItemId = clanItem.ItemId;
+                seed.ClanInventoryEntries.Add(new ClanInventoryEntry(55, 0, clanItemId));
+                seed.SaveChanges();
+            }
+            var client = context.CreateClient(187);
+            var maps = new MapChannelManager(context, privateInstances: new PrivateMapInstanceService());
+            using var scope = new MapChannelManagerScope(maps);
+
+            new CharacterManager(context).RequestDeleteCharacterInSlot(
+                client, new RequestDeleteCharacterInSlotPacket { Slot = 1 });
+
+            using var verify = context.Open();
+            Assert.IsFalse(verify.CharacterEntries.Any(entry => entry.Id == characterId));
+            Assert.IsFalse(verify.CharacterInventoryEntries.Any(entry => entry.CharacterId == characterId),
+                "Deleting a character must remove its inventory ownership rows.");
+            Assert.IsFalse(verify.ItemEntries.Any(entry => removedItems.Contains(entry.ItemId)));
+            Assert.AreEqual(0, verify.AuctionEntries.Count());
+            CollectionAssert.AreEquivalent(
+                new[] { siblingItem, sharedItem, otherAccountItem },
+                verify.CharacterInventoryEntries.Select(entry => entry.ItemId).ToArray());
+            CollectionAssert.AreEquivalent(
+                new[] { siblingItem, sharedItem, otherAccountItem, clanItemId },
+                verify.ItemEntries.Select(entry => entry.ItemId).ToArray());
+            Assert.AreEqual(clanItemId, verify.ClanInventoryEntries.Single().ItemId);
+            Assert.AreEqual(0U, verify.CharacterInventoryEntries.Single(
+                entry => entry.ItemId == sharedItem).CharacterId);
+            CollectionAssert.AreEquivalent(
+                new[] { siblingId, otherAccountCharacterId },
+                verify.CharacterEntries.Select(entry => entry.Id).ToArray());
+            Assert.HasCount(1, WorldTestContext.Drain(client).Select(packet => packet.Message).OfType<CallMethodMessage>()
+                .Select(message => message.Packet).OfType<CharacterDeleteSuccessPacket>());
+        }
+
+        [TestMethod]
+        public void FailedCharacterDeletionRollsBackInventoryItemsAndCharacterBeforeRetry()
+        {
+            using var context = new CharacterCreationContext();
+            context.SeedAccount(189);
+            var client = context.CreateClient(189);
+            var characters = new CharacterManager(context);
+            characters.RequestCreateCharacterInSlot(
+                client, CreatePacket(slot: 1, familyName: "Fixture", characterName: "KeepOnFailure"));
+            context.LoadInventory(client);
+            var characterId = client.Player.Id;
+            uint[] itemIds;
+            using (var read = context.Open())
+                itemIds = read.CharacterInventoryEntries.Select(entry => entry.ItemId).ToArray();
+            var maps = new MapChannelManager(context, privateInstances: new PrivateMapInstanceService());
+            maps.MapChannelArray.Add(1985, CreatePublicMap(1985));
+            var ownedMap = maps.GetOrCreatePrivateInstance(1985, characterId);
+            using var scope = new MapChannelManagerScope(maps);
+            client.State = ClientState.CharacterSelection;
+            WorldTestContext.Drain(client);
+            var reachedSave = false;
+            var removedInventoryBeforeRollback = false;
+            var removedItemsBeforeRollback = false;
+            context.AfterSave = database =>
+            {
+                reachedSave = !database.CharacterEntries.Any(entry => entry.Id == characterId);
+                removedInventoryBeforeRollback = !database.CharacterInventoryEntries.Any(entry =>
+                    entry.CharacterId == characterId);
+                removedItemsBeforeRollback = !database.ItemEntries.Any(entry => itemIds.Contains(entry.ItemId));
+                throw new DbUpdateException("Injected failure after saving character deletion, before commit.");
+            };
+
+            characters.RequestDeleteCharacterInSlot(
+                client, new RequestDeleteCharacterInSlotPacket { Slot = 1 });
+
+            Assert.IsTrue(reachedSave);
+            Assert.IsTrue(removedInventoryBeforeRollback,
+                "The deletion transaction must include inventory rows before commit.");
+            Assert.IsTrue(removedItemsBeforeRollback,
+                "The deletion transaction must include the owned item records before commit.");
+            Assert.AreEqual(characterId, client.Player.Id);
+            Assert.AreEqual(characterId, client.AccountEntry.GetCharacterBySlot(1).Id);
+            Assert.AreSame(ownedMap, maps.FindOwnedPrivateInstance(1985, characterId));
+            using (var verify = context.Open())
+            {
+                Assert.IsTrue(verify.CharacterEntries.Any(entry => entry.Id == characterId));
+                CollectionAssert.AreEquivalent(itemIds,
+                    verify.CharacterInventoryEntries.Select(entry => entry.ItemId).ToArray());
+                CollectionAssert.AreEquivalent(itemIds,
+                    verify.ItemEntries.Select(entry => entry.ItemId).ToArray());
+            }
+            var packets = WorldTestContext.Drain(client).Select(packet => packet.Message).OfType<CallMethodMessage>()
+                .Select(message => message.Packet).ToArray();
+            Assert.HasCount(1, packets.OfType<DeleteCharacterFailedPacket>());
+            Assert.HasCount(0, packets.OfType<CharacterDeleteSuccessPacket>());
+
+            context.AfterSave = null;
+            characters.RequestDeleteCharacterInSlot(
+                client, new RequestDeleteCharacterInSlotPacket { Slot = 1 });
+            using var verifyRetry = context.Open();
+            Assert.AreEqual(0, verifyRetry.CharacterEntries.Count());
+            Assert.AreEqual(0, verifyRetry.CharacterInventoryEntries.Count());
+            Assert.AreEqual(0, verifyRetry.ItemEntries.Count());
+            Assert.IsNull(maps.FindOwnedPrivateInstance(1985, characterId));
+        }
+
+        [TestMethod]
+        [DataRow(0U, InventoryType.Personal)]
+        [DataRow(0U, InventoryType.EquipedInventory)]
+        [DataRow(0U, InventoryType.WeaponDrawerInventory)]
+        [DataRow(999U, InventoryType.Personal)]
+        [DataRow(999U, InventoryType.EquipedInventory)]
+        [DataRow(999U, InventoryType.WeaponDrawerInventory)]
+        [DataRow(999U, InventoryType.InboxInventory)]
+        [DataRow(999U, InventoryType.AuctionInventory)]
+        public void InventoryLoadDoesNotAdoptOrPublishUnknownOwnerItems(uint ownerId, InventoryType type)
+        {
+            using var context = new CharacterCreationContext();
+            context.SeedAccount(190);
+            context.SeedCharacter(190, 1, "KnownOwner");
+            var orphanItemId = context.SeedInventoryItem(190, ownerId, type, 1);
+            var client = context.CreateClient(190);
+            var existingEntities = EntityManager.Instance.Items.Keys.ToArray();
+
+            context.LoadInventory(client);
+
+            Assert.IsTrue(client.Player.Inventory.PersonalInventory.All(entityId => entityId == 0));
+            Assert.IsTrue(client.Player.Inventory.EquippedInventory.All(entityId => entityId == 0));
+            Assert.IsTrue(client.Player.Inventory.WeaponDrawer.All(entityId => entityId == 0));
+            Assert.HasCount(0, client.Player.Inventory.InboxItems);
+            Assert.HasCount(0, client.Player.Inventory.AuctionItems);
+            CollectionAssert.AreEquivalent(existingEntities, EntityManager.Instance.Items.Keys.ToArray(),
+                "Unowned items must not be registered as runtime inventory entities.");
+            Assert.HasCount(0, WorldTestContext.Drain(client).Select(packet => packet.Message).OfType<CallMethodMessage>()
+                .Select(message => message.Packet).OfType<CreatePhysicalEntityPacket>());
+            using var verify = context.Open();
+            var retainedRow = verify.CharacterInventoryEntries.Single();
+            Assert.AreEqual(ownerId, retainedRow.CharacterId);
+            Assert.AreEqual(orphanItemId, retainedRow.ItemId);
+            Assert.AreEqual(1, verify.ItemEntries.Count());
+        }
+
+        [TestMethod]
+        [DataRow(false)]
+        [DataRow(true)]
+        public void InventoryLoadPublishesOnlySelectedCharacterAndSharedHome(bool staleAccountSnapshot)
+        {
+            using var context = new CharacterCreationContext();
+            context.SeedAccount(191);
+            var selectedId = context.SeedCharacter(191, 1, "Selected");
+            var siblingId = context.SeedCharacter(191, 2, "Sibling");
+            var ownItem = context.SeedInventoryItem(191, selectedId, InventoryType.WeaponDrawerInventory, 0);
+            var siblingItem = context.SeedInventoryItem(191, siblingId, InventoryType.WeaponDrawerInventory, 1);
+            var sharedItem = context.SeedInventoryItem(191, 0, InventoryType.HomeInventory, 0);
+            var client = context.CreateClient(191);
+            if (staleAccountSnapshot)
+                client.AccountEntry.Characters.Remove(client.AccountEntry.GetCharacterBySlot(2));
+
+            context.LoadInventory(client);
+
+            Assert.AreEqual(ownItem, EntityManager.Instance.GetItem(client.Player.Inventory.WeaponDrawer[0]).Id);
+            Assert.AreEqual(0UL, client.Player.Inventory.WeaponDrawer[1]);
+            Assert.AreEqual(sharedItem, EntityManager.Instance.GetItem(client.Player.Inventory.HomeInventory[0]).Id);
+            var packets = WorldTestContext.Drain(client).Select(packet => packet.Message).OfType<CallMethodMessage>()
+                .Select(message => message.Packet).ToArray();
+            Assert.HasCount(2, packets.OfType<CreatePhysicalEntityPacket>());
+            CollectionAssert.AreEquivalent(new[] { ownItem, sharedItem },
+                packets.OfType<InventoryAddItemPacket>()
+                    .Select(packet => EntityManager.Instance.GetItem(packet.EntityId).Id).ToArray());
+            using var verify = context.Open();
+            Assert.AreEqual(siblingId, verify.CharacterInventoryEntries.Single(
+                entry => entry.ItemId == siblingItem).CharacterId);
         }
 
         [TestMethod]
@@ -520,6 +791,9 @@ namespace Rasa.Test.Gameplay
 
             private readonly List<uint> _addedTemplates = new();
             private readonly List<EntityClasses> _addedClasses = new();
+            private readonly List<(EntityClasses Class, uint Template)> _addedItemTemplates = new();
+            private readonly HashSet<ulong> _loadedItemEntities = new();
+            internal Action<SqliteCharContext> AfterSave { get; set; }
 
             private string Database => Path.Combine(_directory, "characters");
 
@@ -619,6 +893,19 @@ namespace Rasa.Test.Gameplay
                 context.SaveChanges();
             }
 
+            internal uint SeedInventoryItem(
+                uint accountId, uint characterId, InventoryType type, uint slot)
+            {
+                using var context = Open();
+                var item = new ItemEntry { ItemTemplateId = 17131, StackSize = 1, CrafterName = "" };
+                context.ItemEntries.Add(item);
+                context.SaveChanges();
+                context.CharacterInventoryEntries.Add(
+                    new CharacterInventoryEntry(accountId, characterId, (uint)type, slot, item.ItemId));
+                context.SaveChanges();
+                return item.ItemId;
+            }
+
             internal Client CreateClient(uint accountId)
             {
                 var client = new Client(this, new ClientPacketHandler())
@@ -630,9 +917,28 @@ namespace Rasa.Test.Gameplay
                 return client;
             }
 
+            internal void LoadInventory(Client client, byte slot = 1)
+            {
+                client.Player = new Manifestation(
+                    client.AccountEntry.GetCharacterBySlot(slot),
+                    new Dictionary<EquipmentData, AppearanceData>());
+                client.State = ClientState.Ingame;
+                var existingItems = EntityManager.Instance.Items.Keys.ToHashSet();
+                try
+                {
+                    new InventoryManager(this).InitCharacterInventory(client);
+                }
+                finally
+                {
+                    _loadedItemEntities.UnionWith(
+                        EntityManager.Instance.Items.Keys.Where(id => !existingItems.Contains(id)));
+                }
+            }
+
             public ICharUnitOfWork CreateChar()
             {
                 var context = Open();
+                context.SavedChanges += (_, _) => AfterSave?.Invoke(context);
                 return new CharUnitOfWork(
                     context,
                     gameAccounts: new GameAccountRepository(context),
@@ -653,7 +959,7 @@ namespace Rasa.Test.Gameplay
                     characterStartingExperience: new CharacterStartingExperienceRepository(context),
                     characterTeleporters: new CharacterTeleporterRepository(context),
                     characterTitles: new CharacterTitleRepository(context),
-                    auctions: null,
+                    auctions: new AuctionRepository(context),
                     clans: new ClanRepository(context),
                     clanInventories: null,
                     clanMembers: null,
@@ -674,6 +980,11 @@ namespace Rasa.Test.Gameplay
 
             public void Dispose()
             {
+                foreach (var entityId in _loadedItemEntities)
+                    if (EntityManager.Instance.GetEntityType(entityId) == EntityType.Item)
+                        EntityManager.Instance.ReleaseEntity(entityId, EntityType.Item);
+                foreach (var (classId, templateId) in _addedItemTemplates)
+                    EntityClassManager.Instance.LoadedEntityClasses[classId].ItemTemplates.Remove(templateId);
                 foreach (var templateId in _addedTemplates)
                     ItemManager.Instance.ItemTemplateItemClass.Remove(templateId);
                 foreach (var classId in _addedClasses)
@@ -718,6 +1029,14 @@ namespace Rasa.Test.Gameplay
                         MaxHitPoints = 100,
                         StackSize = 50000
                     });
+                if (EntityClassManager.Instance.LoadedEntityClasses[key].ItemTemplates.TryAdd(
+                    templateId,
+                    new ItemTemplate(new ItemTemplateItemClassEntry
+                    {
+                        ItemTemplateId = templateId,
+                        ItemClass = classId
+                    })))
+                    _addedItemTemplates.Add((key, templateId));
             }
         }
 

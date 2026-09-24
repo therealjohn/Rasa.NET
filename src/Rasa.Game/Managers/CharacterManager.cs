@@ -19,6 +19,7 @@ namespace Rasa.Managers
     using Packets.Communicator.Server;
     using Packets.Manifestation.Server;
     using Packets;
+    using Repositories;
     using Repositories.Char;
     using Repositories.Char.CharacterMissionProgress;
     using Repositories.UnitOfWork;
@@ -744,6 +745,8 @@ namespace Rasa.Managers
                     {
                         unitOfWork.CharacterAppearances.DeleteForChar(charactersBySlot.Id);
                         unitOfWork.CharacterMissions.RemoveAll(charactersBySlot.Id);
+                        unitOfWork.CharacterInventories.DeleteForCharacter(
+                            client.AccountEntry.Id, charactersBySlot.Id);
 
                         // An auction row names its seller by id and carries no foreign key, so a
                         // character deleted with listings running used to leave them standing.
@@ -778,8 +781,11 @@ namespace Rasa.Managers
 
                 SendCharacterInfo(client, packet.Slot, null);
             }
-            catch
+            catch (Exception error) when (
+                error is DbUpdateException || error is DbException || error is EntityNotFoundException)
             {
+                Logger.WriteLog(LogType.Error,
+                    $"Account {client.AccountEntry.Id} could not delete character in slot {packet.Slot}: {error}");
                 client.CallMethod(SysEntity.ClientMethodId, new DeleteCharacterFailedPacket());
             }
         }

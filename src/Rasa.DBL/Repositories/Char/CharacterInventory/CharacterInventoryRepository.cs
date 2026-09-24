@@ -62,6 +62,24 @@ namespace Rasa.Repositories.Char.CharacterInventory
             _charContext.SaveChanges();
         }
 
+        public void DeleteForCharacter(uint accountId, uint characterId)
+        {
+            if (characterId == 0)
+                throw new ArgumentOutOfRangeException(nameof(characterId),
+                    "Shared account inventory is not owned by a character.");
+
+            var inventory = _charContext.CreateTrackingQuery(_charContext.CharacterInventoryEntries)
+                .Where(entry => entry.AccountId == accountId && entry.CharacterId == characterId)
+                .ToArray();
+            var itemIds = inventory.Select(entry => entry.ItemId).ToArray();
+            var items = _charContext.CreateTrackingQuery(_charContext.ItemEntries)
+                .Where(entry => itemIds.Contains(entry.ItemId));
+
+            // Stage both sets for the same commit as the character deletion.
+            _charContext.CharacterInventoryEntries.RemoveRange(inventory);
+            _charContext.ItemEntries.RemoveRange(items);
+        }
+
         public CharacterInventoryEntry FindByItemId(uint itemId)
         {
             var query = _charContext.CreateNoTrackingQuery(

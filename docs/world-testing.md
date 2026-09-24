@@ -67,6 +67,12 @@ Sprint occupy drawer slots `0` and `1` (visible positions 1 and 2). These record
 share the character-creation transaction. They are not granted again on login,
 and existing characters' equipment, allocations and drawer choices are not reset.
 
+Deleting and recreating a character in the same selection pod must start with
+only the new character's loadout. Moving the old pistol to visible weapon slot 2
+before deletion must not leave a second pistol on the replacement character,
+either in the same session or after reconnecting. Selection pod numbers are not
+inventory owner IDs.
+
 Level-1 attributes remain 10 Body / 10 Mind / 10 Spirit, with zero unspent
 attribute or skill points. Later level-ups retain their normal point budgets.
 Login fills Health and Power but starts adrenaline empty. The first Bootcamp
@@ -373,12 +379,21 @@ Loss of a database commit
 acknowledgement is still ambiguous; there is no durable distributed exactly-once
 claim ledger. Subsequent stale inventory/credit snapshots fail closed.
 
-Inventory loading reserves the character's saved slots by inventory type before
-recovering legacy items stored with an invalid character owner. An orphaned item
-cannot take an occupied saved slot just because it loads first; it stays
-unchanged for later recovery. Already-duplicated personal slots are not repaired
-automatically, and loot claims still reject them before any inventory or credit
-writes.
+Inventory loading registers and publishes only the selected character's items
+and the account's shared home inventory (`character_id = 0`). It never adopts an
+item from a deleted, unknown or zero character owner into a character inventory,
+even when the destination slot is empty. Invalid-owner rows are logged and left
+unchanged for explicit repair; another character's valid inventory is not sent
+to the client.
+
+Character deletion removes its inventory ownership rows and item records in the
+same transaction as the character and auction listings. Other characters'
+inventories and shared account/clan storage remain intact. A failed transaction
+retains the character and its items. This requires no schema migration or
+database reset. Items already reassigned by an older build are not removed
+automatically because their former ownership is no longer recorded.
+Already-duplicated personal slots are also not repaired automatically, and loot
+claims still reject them before any inventory or credit writes.
 
 ## Bootcamp equipment crate
 

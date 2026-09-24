@@ -1844,35 +1844,11 @@ namespace Rasa.Managers
             SetupLocalClanInventory(client);
         }
 
-        private static bool IsSlotFree(Client client, InventoryType inventoryType, uint slotId)
-        {
-            var inventory = client.Player.Inventory;
-
-            return inventoryType switch
-            {
-                InventoryType.Personal => slotId < inventory.PersonalInventory.Count && inventory.PersonalInventory[(int)slotId] == 0,
-                InventoryType.EquipedInventory => slotId < inventory.EquippedInventory.Count && inventory.EquippedInventory[(int)slotId] == 0,
-                InventoryType.WeaponDrawerInventory => slotId < inventory.WeaponDrawer.Count && inventory.WeaponDrawer[(int)slotId] == 0,
-                _ => false,
-            };
-        }
-
         public void InitCharacterInventory(Client client)
         {
             using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
             var getInventoryData = unitOfWork.CharacterInventories.GetItems(client.AccountEntry.Id);
-
-            // Every character id a row of this account can legitimately carry. Rows are per
-            // account; one with a character id outside this set (0 from the home lockbox,
-            // a pod number, a depositor on another account) was written by an older build
-            // and belongs to nobody, so it would never load again.
             var accountCharacterIds = new HashSet<uint>((client.AccountEntry.Characters ?? new List<CharacterEntry>()).Select(c => c.Id));
-
-            // A saved item reserves its slot even before it has been loaded into runtime.
-            // Otherwise an earlier orphan can be adopted into the same durable slot.
-            var reservedSlots = new HashSet<(uint InventoryType, uint SlotId)>(
-                getInventoryData.Where(item => item.CharacterId == client.Player.Id)
-                    .Select(item => (item.InventoryType, item.SlotId)));
 
             // init for server inventory. Cleared first: this runs again on the manifestation
             // after a summon or .teleport, and used to append another block of slots each
@@ -1898,6 +1874,17 @@ namespace Rasa.Managers
 
             foreach (var item in getInventoryData)
             {
+                var inventoryType = (InventoryType)item.InventoryType;
+                var sharedHome = item.CharacterId == 0 && inventoryType == InventoryType.HomeInventory;
+                if (item.CharacterId != client.Player.Id && !sharedHome)
+                {
+                    if (!accountCharacterIds.Contains(item.CharacterId))
+                        Logger.WriteLog(LogType.Error,
+                            $"Account {client.AccountEntry.Id} {inventoryType} slot {item.SlotId} item {item.ItemId} "
+                            + $"has owner {item.CharacterId} outside the account's character snapshot; ignored without reassignment.");
+                    continue;
+                }
+
                 var itemData = unitOfWork.Items.GetItem(item.ItemId);
 
                 if (itemData == null)
@@ -1941,31 +1928,6 @@ namespace Rasa.Managers
 
                 // fill invenoty slot
                 ItemManager.Instance.SendItemDataToClient(client, newItem, false);
-
-                var inventoryType = (InventoryType)item.InventoryType;
-
-                // An orphaned character-inventory row is adopted by the first character on
-                // the account to log in with that slot free: the row gets this character's
-                // id, and the item is back. If the slot is taken it is left for a later
-                // login and reported.
-                if (item.CharacterId != client.Player.Id
-                    && !accountCharacterIds.Contains(item.CharacterId)
-                    && (inventoryType == InventoryType.Personal || inventoryType == InventoryType.EquipedInventory || inventoryType == InventoryType.WeaponDrawerInventory))
-                {
-                    if (!reservedSlots.Contains((item.InventoryType, item.SlotId))
-                        && IsSlotFree(client, inventoryType, item.SlotId))
-                    {
-                        Logger.WriteLog(LogType.Error, $"Account {client.AccountEntry.Id} {inventoryType} slot {item.SlotId} item {item.ItemId} was stored with character id {item.CharacterId}, which is not a character of this account; assigned to {client.Player.Id} ({client.Player.Name}).");
-                        unitOfWork.CharacterInventories.MoveInvItem(client.AccountEntry.Id, client.Player.Id, item.InventoryType, item.SlotId, item.ItemId);
-                        reservedSlots.Add((item.InventoryType, item.SlotId));
-                        newItem.OwnerId = client.Player.Id;
-                        item.CharacterId = client.Player.Id;
-                    }
-                    else
-                    {
-                        Logger.WriteLog(LogType.Error, $"Account {client.AccountEntry.Id} {inventoryType} slot {item.SlotId} item {item.ItemId} was stored with character id {item.CharacterId}, which is not a character of this account, and the slot is taken; left as is.");
-                    }
-                }
 
                 if (item.CharacterId == client.Player.Id)
                 {

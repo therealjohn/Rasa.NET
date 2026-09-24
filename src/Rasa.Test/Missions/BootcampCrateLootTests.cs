@@ -106,7 +106,7 @@ namespace Rasa.Test.Missions
         [DataRow(true, 50U)]
         [DataRow(false, 50U)]
         [DataRow(true, 51U)]
-        public void OrphanRecoveryRespectsSavedSlotsBeforeCrateLoot(bool orphanFirst, uint ownedSlot)
+        public void UnownedInventoryIsIgnoredWithoutBlockingCrateLoot(bool orphanFirst, uint ownedSlot)
         {
             using var harness = BootcampRuntimeTestHarness.Create();
             uint orphanItemId = 0;
@@ -148,12 +148,11 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(MissionObjectiveState.Completed,
                 harness.Client.Player.Missions[1992].Objectives[1].State);
             using var verify = harness.Context.Open();
-            var recoveredOrphan = ownedSlot != 50;
-            Assert.AreEqual(recoveredOrphan ? harness.Client.Player.Id : 0U,
+            Assert.AreEqual(0U,
                 verify.CharacterInventoryEntries.Single(
                     row => row.ItemId == orphanItemId).CharacterId,
-                "Only a slot without a saved owner may recover its orphaned item.");
-            Assert.AreEqual(recoveredOrphan ? 1000U + claimedAmmo : 1000U, verify.ItemEntries.Single(
+                "Loading inventory must never assign an unknown owner's item to this character.");
+            Assert.AreEqual(1000U, verify.ItemEntries.Single(
                 item => item.ItemId == orphanItemId).StackSize);
             Assert.AreEqual(2000L + claimedAmmo,
                 verify.ItemEntries.Where(item => item.ItemTemplateId == 28)
