@@ -420,6 +420,15 @@ reconnecting during or after the run restores him at the destination, not at his
 original post. His movement and spawn position affect only the owning
 character's private map.
 
+On reconnect, scene recovery can run before the normal static-NPC spawn worker.
+A valid automatic spawn pool waiting to produce McAllister leaves his scene
+operation pending without an error. His saved final pose is applied to the pool
+before spawning, and the existing actor-available notification completes the
+pending operation. This avoids the repeated `ensure-mcallister` / `Public actor
+spawn 510203 is unavailable` errors during normal map initialization. Missing,
+disabled or invalid spawn definitions still report failures; no NPC is spawned
+early to bypass its normal lifecycle.
+
 Corporal DeSimone is a static NPC, creature `510206`, conversation package
 `2562`. His corrected spawn is `(391.5, 120.059, 164.8)`. The existing horizontal
 position is retained; the height is measured from the checked-in Bootcamp
@@ -681,6 +690,21 @@ usable states are TreasureDispenser closed (`200`) and Door closed (`31`).
 Scenario reconstruction replaces old crate visuals and reapplies interaction
 state after spawning, so a planted bomb does not become usable again on login.
 
+Enabled scene objects are published as mouse-targetable even when their base
+class's target flag is false. The wreck's class `24586` is one such class;
+publishing only its enabled usable state left normal mouse interaction blocked.
+Disabling the planting interaction also updates targetability.
+
+Recovering Conrad's bomb now places one native Explosives Detonator
+(template `11519`, class `20000064`) in Mission inventory. Planting consumes it;
+timeout or abandonment removes it, and accepting retry `2005` supplies one new
+bomb. Item changes share the mission/scene transaction and are published only
+after commit. Full Mission inventory rejects pickup without completing the
+objective. Existing saves already carrying an unplanted bomb in objective state
+receive a one-time inventory backfill on reconnect, preserving the original
+deadline. Planted saves do not receive a replacement. The issuance receipt
+prevents repeated reconnects from granting extra bombs.
+
 The published `deployment_11` Conrad placement `(-102.4, 86.20677, 66.8)` is
 inside the client's static trench wall (class `9707`), despite having a nearby
 navmesh polygon. Game applies a narrowly matched, in-memory Bootcamp compatibility
@@ -698,6 +722,12 @@ the bomb deadline. Also check reconnect before pickup, after pickup and after
 planting. Source-geometry checks cover the full corpse footprint, connected
 ground and an unobstructed sight line from the survivor; native-client rendering
 still needs the manual check.
+
+After rebuilding/restarting Game, check that the rifle image appears on login
+without pressing E, that the bomb appears in the Mission tab, and that the wreck
+can be right-clicked to plant it. Use a Thrax-dropped medpack as well: it must not
+disconnect the client, must consume one item and must heal. No mission
+republish or database reset is required for these corrections.
 
 The paired `BootcampReinforcements` World and Char migrations remove the
 unsupported objective `10`. Existing saves waiting at `10` resume objective `2`

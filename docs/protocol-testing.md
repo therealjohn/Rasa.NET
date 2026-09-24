@@ -105,6 +105,14 @@ Feature requests use the existing server-method router:
 | Loot | `RequestCorpseLooting`, `RequestLootAllFromCorpse` |
 | Chat and contacts | `ChannelChat`, `ClanChat`, `PartyChat`, `RadialChat`, `Whisper`, `AddFriendByName`, `RemoveFriend` |
 
+`RequestPerformAbility` accepts exactly four arguments
+`(actionId, actionArgId, target, sourceItemId)`, or five with the client's yaw
+last. Source item IDs may be Python longs (`0x2F` plus eight bytes), integer-form
+IDs or the existing absent-value markers. They remain 64-bit entity IDs through
+ability recovery; a legitimate consumable request must not be decoded as a null
+marker or truncated to 32 bits. Unsupported tuple sizes and source types remain
+invalid. The target retains its entity, absent or location forms.
+
 Registration does not establish gameplay completeness. This suite uses
 `RequestFamilyName` as a representative RPC payload; it does not certify cloning,
 missions, abilities, travel, or loot. Those systems have their own focused tests,

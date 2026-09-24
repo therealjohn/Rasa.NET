@@ -1923,6 +1923,7 @@ namespace Rasa.Managers
                     OwnerId = item.CharacterId,
                     OwnerSlotId = item.SlotId,
                     ItemTemplate = itemTemplate,
+                    ItemTemplateId = itemTemplate.ItemTemplateId,
                     StackSize = itemData.StackSize,
                     CurrentHitPoints = itemData.CurrentHitPoints,
                     Color = itemData.Color,

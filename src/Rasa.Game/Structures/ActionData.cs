@@ -16,7 +16,7 @@ namespace Rasa.Structures
         /// <summary>Where a ground-targeted ability was aimed, when it had no target entity.</summary>
         public Vector3? TargetLocation { get; set; }
 
-        public int ItemId { get; set; }
+        public ulong ItemId { get; set; }
         public long WaitTime { get; set; }
         public long PassedTime { get; set; }
 

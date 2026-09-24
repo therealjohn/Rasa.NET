@@ -527,6 +527,7 @@ namespace Rasa.Managers
                     objectiveLogs);
                 var accepted = false;
                 var durableLogFull = false;
+                Action<Client> inventoryPublication = null;
                 try
                 {
                     using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
@@ -603,6 +604,7 @@ namespace Rasa.Managers
                             unitOfWork.CharacterMissionProgress.GetTracked(
                                 client.Player.Id,
                                 missionId));
+                        inventoryPublication = MissionSaveCompatibility.PlanInventory(client, unitOfWork, this, missionId);
                         accepted = true;
                     });
                 }
@@ -624,6 +626,7 @@ namespace Rasa.Managers
                         : $"Rejected mission {missionId}: {prerequisiteFailure}");
 
                 admission?.Commit();
+                inventoryPublication?.Invoke(client);
                 client.Player.Missions.Add(missionId, log);
                 client.CallMethod(
                     client.Player.EntityId,
@@ -1180,7 +1183,8 @@ namespace Rasa.Managers
                             publishMissionStatus:
                                 objectiveDefinition.GetExecutableTransitionsOrLegacyDefault()
                                     .Any(transition =>
-                                        transition.ProgressRule?.Kind == MissionProgressEventKind.DeadlineElapsed));
+                                        transition.ProgressRule?.Kind == MissionProgressEventKind.DeadlineElapsed),
+                            inventoryPublication: MissionSaveCompatibility.PlanInventory(client, unitOfWork, this, missionId));
                     });
                 }
                 catch (Exception error) when (GameplayRejectionException.IsExpected(error))
@@ -1209,6 +1213,7 @@ namespace Rasa.Managers
                     runtimeMission.State != MissionState.Active)
                     return false;
 
+                Action<Client> inventoryPublication = null;
                 try
                 {
                     using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
@@ -1230,6 +1235,7 @@ namespace Rasa.Managers
                             unitOfWork.CharacterMissionProgress.GetTracked(
                                 client.Player.Id,
                                 missionId));
+                        inventoryPublication = MissionSaveCompatibility.PlanInventory(client, unitOfWork, this, missionId);
                     });
                 }
                 catch (Exception error) when (GameplayRejectionException.IsExpected(error))
@@ -1242,6 +1248,7 @@ namespace Rasa.Managers
 
                 runtimeMission.State = MissionState.Failed;
                 runtimeMission.Completeable = false;
+                inventoryPublication?.Invoke(client);
                 client.CallMethod(
                     client.Player.EntityId,
                     new MissionFailedPacket(missionId));
@@ -1474,7 +1481,8 @@ namespace Rasa.Managers
                             publishMissionStatus:
                                 objectiveDefinition.GetExecutableTransitionsOrLegacyDefault()
                                     .Any(transition =>
-                                        transition.ProgressRule?.Kind == MissionProgressEventKind.DeadlineElapsed)));
+                                        transition.ProgressRule?.Kind == MissionProgressEventKind.DeadlineElapsed),
+                            inventoryPublication: MissionSaveCompatibility.PlanInventory(client, unitOfWork, this, missionId)));
                     return true;
             }
 
@@ -1554,6 +1562,7 @@ namespace Rasa.Managers
                 var authoredFailurePlan = MissionFailurePublicationPlan.Empty;
                 var authoredFailure = false;
                 IReadOnlyList<string> cancelledScenes = Array.Empty<string>();
+                Action<Client> inventoryPublication = null;
                 try
                 {
                     using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
@@ -1579,6 +1588,7 @@ namespace Rasa.Managers
 
                         cancelledScenes = Scenes.CancelAssignment(unitOfWork, durableMission);
                         unitOfWork.CharacterMissions.Remove(client.Player.Id, missionId);
+                        inventoryPublication = MissionSaveCompatibility.PlanInventory(client, unitOfWork, this, missionId);
                         removed = true;
                     });
                     if (authoredFailure)
@@ -1601,6 +1611,7 @@ namespace Rasa.Managers
                 }
 
                 client.Player.Missions.Remove(missionId);
+                inventoryPublication?.Invoke(client);
                 Scenes.CompleteAssignmentCancellation(cancelledScenes);
                 PublishMissionPacket(client, new MissionDiscardedPacket(missionId), $"mission {missionId} abandoned");
                 return true;
@@ -1684,7 +1695,8 @@ namespace Rasa.Managers
                 MissionState.Failed,
                 false,
                 runtimeMission.Completeable,
-                failureActions.StartScenarioIds);
+                failureActions.StartScenarioIds,
+                inventoryPublication: MissionSaveCompatibility.PlanInventory(client, unitOfWork, this, definition.MissionId));
             QueueStartedScenarios(client, definition.MissionId, failureActions.StartScenarioIds, unitOfWork);
             return true;
         }
@@ -1995,7 +2007,8 @@ namespace Rasa.Managers
                     _scenarioService.TryActivateSpawnGroup(
                         progressClient,
                         progressedMissionId,
-                        spawnGroupId));
+                        spawnGroupId),
+                MissionSaveCompatibility.PlanInventory(client, unitOfWork, this));
         }
 
         private void QueueStartedScenarios(Client client, uint missionId, IEnumerable<uint> scenarioIds,

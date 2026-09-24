@@ -91,7 +91,8 @@ namespace Rasa.Managers
         private static readonly HashSet<string> TimedEffectModules = new HashSet<string>
         {
             "abilities.rage", "abilities.resistance", "abilities.sacrifice", "abilities.decay",
-            "abilities.scourge", "abilities.reconstruction", "abilities.regenerationwave", "abilities.basewave"
+            "abilities.scourge", "abilities.reconstruction", "abilities.regenerationwave", "abilities.basewave",
+            "abilities.medpack"
         };
 
         /// <summary>Of those, the ones aimed at a single enemy (client targetType TARGET_NON_FRIENDLY).</summary>
@@ -259,7 +260,12 @@ namespace Rasa.Managers
 
             // Is it theirs to use? A skill that grants the ability at this level, or a usable
             // item in their pack whose template performs exactly this action.
-            var item = packet.ItemId != 0 ? EntityManager.Instance.GetItem((ulong)packet.ItemId) : null;
+            var item = packet.ItemId != 0 ? EntityManager.Instance.GetItem(packet.ItemId) : null;
+            if (packet.ItemId != 0 && item == null)
+            {
+                Fail(client, actionId, level, PlayerMessage.PmMissingReqItem);
+                return;
+            }
 
             if (!Grants(player, actionId, level, item))
             {
@@ -402,7 +408,8 @@ namespace Rasa.Managers
         {
             if (item != null)
             {
-                if (!player.Inventory.PersonalInventory.Contains(item.EntityId))
+                if (item.OwnerId != player.Id || item.StackSize == 0 ||
+                    !player.Inventory.PersonalInventory.Contains(item.EntityId))
                     return false;
 
                 return _itemTemplateActions.TryGetValue(item.ItemTemplateId, out var performs) && performs.ActionId == actionId && performs.Level == level;
@@ -563,21 +570,22 @@ namespace Rasa.Managers
                 return;
             }
 
+            try
+            {
+                ConsumeAbilityItems(client, info, action.ItemId);
+            }
+            catch (Exception error) when (GameplayRejectionException.IsExpected(error))
+            {
+                Logger.WriteLog(LogType.Error, $"Unable to consume ability items for character {player.Id}: {error.Message}");
+                SendToOthers(mapChannel, player, new ActionInterruptPacket(player.EntityId, action.ActionId, action.ActionArgId));
+                Fail(client, action.ActionId, action.ActionArgId, PlayerMessage.PmMissingReqItem);
+                return;
+            }
+
             // Paid on landing, not on asking. A sustained ability pays as it runs, through its
             // effect's drain, not here.
             if (!IsSustained(info))
                 TakeCosts(client, player, info);
-
-            foreach (var requirement in info.ItemRequirements)
-                InventoryManager.Instance.RemoveItemsByClass(client, requirement.ItemClass, requirement.Quantity);
-
-            if (action.ItemId != 0)
-            {
-                var item = EntityManager.Instance.GetItem((ulong)action.ItemId);
-
-                if (item != null)
-                    InventoryManager.Instance.ReduceStackCount(client, InventoryType.Personal, item, 1);
-            }
 
             StartCooldown(client, player, info);
 
@@ -612,6 +620,52 @@ namespace Rasa.Managers
             CellManager.Instance.CellCallMethod(mapChannel, player, new AbilityRecoveryPacket(action.ActionId, action.ActionArgId, AbilityRecoveryPacket.HitDataKind.None));
         }
 
+        private void ConsumeAbilityItems(Client client, ActionLevelInfo info, ulong sourceItemId)
+        {
+            if (sourceItemId == 0 && info.ItemRequirements.Count == 0)
+                return;
+            var quantities = new Dictionary<ulong, uint>();
+            var source = sourceItemId == 0 ? null : EntityManager.Instance.GetItem(sourceItemId);
+            if (sourceItemId != 0 && source == null)
+                throw new GameplayRejectionException("The ability source item is no longer available.");
+            if (source != null)
+                quantities[source.EntityId] = 1;
+            var sourceCredit = source == null ? 0U : 1U;
+            foreach (var requirement in info.ItemRequirements)
+            {
+                var remaining = requirement.Quantity;
+                if (sourceCredit > 0 && source.ItemTemplate.Class == requirement.ItemClass && remaining > 0)
+                {
+                    remaining--;
+                    sourceCredit--;
+                }
+                foreach (var entityId in client.Player.Inventory.PersonalInventory.Where(id => id != 0))
+                {
+                    if (remaining == 0)
+                        break;
+                    var item = EntityManager.Instance.GetItem(entityId);
+                    if (item?.ItemTemplate?.Class != requirement.ItemClass)
+                        continue;
+                    var reserved = quantities.GetValueOrDefault(entityId);
+                    if (reserved > item.StackSize)
+                        throw new GameplayRejectionException("The ability source stack is empty.");
+                    var take = Math.Min(remaining, item.StackSize - reserved);
+                    if (take == 0)
+                        continue;
+                    quantities[entityId] = reserved + take;
+                    remaining -= take;
+                }
+                if (remaining != 0)
+                    throw new GameplayRejectionException("Required ability items are no longer available.");
+            }
+            var consumption = new InventoryManager.InventoryConsumption();
+            using var unit = _gameUnitOfWorkFactory.CreateChar();
+            unit.ExecuteTransaction(() => consumption.PlanAndSave(client, quantities, unit));
+            consumption.Publish(client);
+            foreach (var progress in consumption.ProgressEvents)
+                (_missionManager ?? MissionApplication.Instance).RecordProgress(client, progress);
+        }
+
         /// <summary>
         /// Why a landing ability should not land after all, or null to let it through.
         ///
@@ -639,7 +693,7 @@ namespace Rasa.Managers
         {
             // Asked for with an item, so it is the item that has to still grant it - a skill the
             // player also happens to have does not stand in for the one they used.
-            var item = action.ItemId != 0 ? EntityManager.Instance.GetItem((ulong)action.ItemId) : null;
+            var item = action.ItemId != 0 ? EntityManager.Instance.GetItem(action.ItemId) : null;
 
             if (action.ItemId != 0 && item == null)
                 return PlayerMessage.PmMissingReqItem;

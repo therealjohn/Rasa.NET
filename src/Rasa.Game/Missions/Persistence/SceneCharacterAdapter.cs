@@ -104,6 +104,9 @@ namespace Rasa.Game.Missions.Persistence
                                 ? CharacterMissionDeadlineState.Satisfied : CharacterMissionDeadlineState.Cancelled);
                     if (deadline.Kind != DeadlineIntentKind.Start)
                         _missions.Scenes.EndDeadline(unit, run, deadline.MissionId);
+                    var itemPublication = MissionSaveCompatibility.PlanInventory(client, unit, _missions, deadline.MissionId);
+                    if (itemPublication != null)
+                        publication.AddRuntimeConvergence(() => itemPublication(client));
                     publication.AddPublication(() => _missions.PublishMissionStatus(client, deadline.MissionId,
                         $"scene {run.Id} deadline {deadline.Kind}"));
                     break;

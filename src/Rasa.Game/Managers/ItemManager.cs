@@ -264,6 +264,7 @@ namespace Rasa.Managers
             var weaponTemplates = unitOfWork.Equipment.GetWeaponItems();
             foreach (var weaponTemplate in weaponTemplates)
                 LoadedItemTemplates[weaponTemplate.Id].WeaponInfo = new WeaponInfo(weaponTemplate);
+            Game.Missions.Content.Bootcamp.BootcampItemCompatibility.Apply(LoadedItemTemplates);
 
             var armorTemplates = unitOfWork.Equipment.GetArmorItems();
             foreach (var armorTemplate in armorTemplates)

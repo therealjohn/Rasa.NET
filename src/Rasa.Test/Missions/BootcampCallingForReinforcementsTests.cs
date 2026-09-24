@@ -1,6 +1,7 @@
 extern alias RasaGame;
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Numerics;
@@ -38,6 +39,187 @@ namespace Rasa.Test.Missions
         private const uint MissingScoutAreaId = 435;
         private static readonly TimeSpan BombDeadline = TimeSpan.FromMinutes(10);
         private static readonly TimeSpan ArrivalDelay = TimeSpan.FromSeconds(2);
+
+        [TestMethod]
+        public void FullMissionInventoryRejectsBombPickupUntilOneSlotIsFreed()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);
+            StartCrashSiteScene(harness);
+            harness.Context.AddRewardTemplate(999001, 999001);
+            var itemClass = EntityClassManager.Instance.LoadedEntityClasses[(EntityClasses)999001];
+            itemClass.ItemClassInfo = new ItemClassInfo(new ItemClassEntry { StackSize = 1, MaxHitPoints = 1 });
+            itemClass.ItemTemplates[999001].InventoryCategory = InventoryCategory.Mission;
+            using (var unit = harness.Context.CreateChar())
+            using (var grant = new InventoryManager.InventoryGrant())
+            {
+                unit.ExecuteTransaction(() => grant.PlanAndSave(harness.Client,
+                    new[] { new InventoryManager.InventoryItemGrant(999001, 50) }, unit));
+                grant.Publish(harness.Client);
+            }
+            harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
+            Assert.AreEqual(MissionObjectiveState.Incomplete, harness.Client.Player.Missions[1995].Objectives[3].State);
+            Assert.AreEqual(0, harness.ReadOwnedTemplateCounts(11519).GetValueOrDefault(11519U));
+            using (var unit = harness.Context.CreateChar())
+            {
+                var consume = new InventoryManager.InventoryConsumption();
+                var itemId = harness.Client.Player.Inventory.PersonalInventory[150];
+                unit.ExecuteTransaction(() => consume.PlanAndSave(harness.Client,
+                    new Dictionary<ulong, uint> { [itemId] = 1 }, unit));
+                consume.Publish(harness.Client);
+            }
+
+            harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
+
+            Assert.AreEqual(MissionObjectiveState.Completed, harness.Client.Player.Missions[1995].Objectives[3].State);
+            Assert.AreEqual(1, harness.ReadOwnedTemplateCounts(11519).GetValueOrDefault(11519U));
+        }
+
+        [TestMethod]
+        [DataRow(false)]
+        [DataRow(true)]
+        public void LegacyBombProgressBackfillsOnlyAnUnplantedBombWithoutResettingTheTimer(bool planted)
+        {
+            using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);
+            StartCrashSiteScene(harness);
+            harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
+            if (planted)
+                harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-dropship-debris"));
+            var deadline = ReadDeadline(harness, 1995);
+            var due = deadline.DueAtUtc;
+            var state = deadline.State;
+            using (var unit = harness.Context.CreateChar())
+            {
+                var consumption = new InventoryManager.InventoryConsumption();
+                var quantities = harness.Client.Player.Inventory.PersonalInventory.Where(id => id != 0)
+                    .Select(EntityManager.Instance.GetItem).Where(item => item.ItemTemplateId == 11519)
+                    .ToDictionary(item => item.EntityId, item => item.StackSize);
+                unit.ExecuteTransaction(() =>
+                {
+                    consumption.PlanAndSave(harness.Client, quantities, unit);
+                    unit.CharacterMissionScenario.RemoveByPrefix(harness.Client.Player.Id, 1995, "bootcamp-bomb-issued:");
+                });
+                consumption.Publish(harness.Client);
+            }
+
+            harness.ReconnectFresh();
+            harness.ReconnectFresh();
+
+            Assert.AreEqual(planted ? 0 : 1, harness.ReadOwnedTemplateCounts(11519).GetValueOrDefault(11519U));
+            Assert.AreEqual(due, ReadDeadline(harness, 1995).DueAtUtc);
+            Assert.AreEqual(state, ReadDeadline(harness, 1995).State);
+            Assert.AreEqual(MissionObjectiveState.Completed, harness.Client.Player.Missions[1995].Objectives[3].State);
+        }
+
+        [TestMethod]
+        public void FailedBombPickupRollsBackItemAndObjectiveThenCanRetry()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);
+            StartCrashSiteScene(harness);
+            harness.Context.AfterSave = _ => throw new DbUpdateException("Injected bomb pickup failure.");
+            try
+            {
+                harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
+            }
+            finally
+            {
+                harness.Context.AfterSave = null;
+            }
+            Assert.AreEqual(MissionObjectiveState.Incomplete, harness.Client.Player.Missions[1995].Objectives[3].State);
+            Assert.AreEqual(0, harness.ReadOwnedTemplateCounts(11519).GetValueOrDefault(11519U));
+            using (var unit = harness.Context.CreateChar())
+                Assert.IsNull(unit.CharacterMissionDeadlines.Get(harness.Client.Player.Id, 1995));
+
+            harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
+
+            Assert.AreEqual(1, harness.ReadOwnedTemplateCounts(11519).GetValueOrDefault(11519U));
+            Assert.AreEqual(MissionObjectiveState.Completed, harness.Client.Player.Missions[1995].Objectives[3].State);
+        }
+
+        [TestMethod]
+        public void AbandoningTheBombAttemptRemovesItsMissionItem()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);
+            StartCrashSiteScene(harness);
+            harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
+            Assert.AreEqual(1, harness.ReadOwnedTemplateCounts(11519).GetValueOrDefault(11519U));
+
+            Assert.IsTrue(harness.Manager.TryAbandon(harness.Client, 1995));
+
+            Assert.AreEqual(0, harness.ReadOwnedTemplateCounts(11519).GetValueOrDefault(11519U));
+        }
+
+        [TestMethod]
+        [DataRow(false)]
+        [DataRow(true)]
+        public void ConradBombIsAStoredMissionItemUntilPlanting(bool reconnect)
+        {
+            using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);
+            StartCrashSiteScene(harness);
+            harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
+            Assert.AreEqual(1, harness.ReadOwnedTemplateCounts(11519).GetValueOrDefault(11519U),
+                "Recovering Conrad's bomb must place the native Explosives Detonator in mission inventory.");
+            if (reconnect)
+                harness.ReconnectFresh();
+            var bomb = harness.Client.Player.Inventory.PersonalInventory.Where(id => id != 0)
+                .Select(EntityManager.Instance.GetItem).Single(item => item.ItemTemplate.ItemTemplateId == 11519);
+            Assert.IsTrue(bomb.OwnerSlotId is >= 150 and < 200);
+            Assert.AreEqual(1U, bomb.StackSize);
+            var deadline = ReadDeadline(harness, 1995).DueAtUtc;
+
+            harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-dropship-debris"));
+
+            Assert.AreEqual(0, harness.ReadOwnedTemplateCounts(11519).GetValueOrDefault(11519U));
+            Assert.AreEqual(deadline, ReadDeadline(harness, 1995).DueAtUtc);
+            Assert.AreEqual(CharacterMissionDeadlineState.Satisfied, ReadDeadline(harness, 1995).State);
+            harness.ReconnectFresh();
+            Assert.AreEqual(0, harness.ReadOwnedTemplateCounts(11519).GetValueOrDefault(11519U));
+        }
+
+        [TestMethod]
+        public void BombTimeoutRemovesTheItemAndRetryIssuesOnlyOneReplacement()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);
+            StartCrashSiteScene(harness);
+            harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
+            Assert.AreEqual(1, harness.ReadOwnedTemplateCounts(11519).GetValueOrDefault(11519U));
+            harness.UtcNow = ReadDeadline(harness, 1995).DueAtUtc + TimeSpan.FromSeconds(1);
+            Assert.IsTrue(harness.Manager.EvaluateDeadlines(harness.Client));
+            Assert.AreEqual(0, harness.ReadOwnedTemplateCounts(11519).GetValueOrDefault(11519U));
+            var youngblood = BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, 2561);
+
+            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(harness.Client, youngblood.EntityId, 2005));
+            Assert.AreEqual(1, harness.ReadOwnedTemplateCounts(11519).GetValueOrDefault(11519U));
+            harness.ReconnectFresh();
+            Assert.AreEqual(1, harness.ReadOwnedTemplateCounts(11519).GetValueOrDefault(11519U));
+            harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-dropship-debris"));
+            Assert.AreEqual(0, harness.ReadOwnedTemplateCounts(11519).GetValueOrDefault(11519U));
+        }
+
+        [TestMethod]
+        [DataRow(false)]
+        [DataRow(true)]
+        public void BombWreckIsPublishedAsAnEnabledTargetableInteraction(bool reconnect)
+        {
+            using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);
+            StartCrashSiteScene(harness);
+            harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
+            if (reconnect)
+                harness.ReconnectFresh();
+            var wreck = FindScenarioObject(harness, "bootcamp-dropship-debris");
+            var approach = harness.BootcampMap.NavMesh.Nearest(wreck.Position + new Vector3(4, 0, -0.9f));
+            Assert.IsTrue(approach.HasValue);
+            harness.Drain();
+            harness.MovePlayerTo(approach.Value);
+            CellManager.Instance.UpdateVisibility(harness.Client);
+            var created = harness.Drain().OfType<CreatePhysicalEntityPacket>()
+                .Single(packet => packet.EntityId == wreck.EntityId);
+
+            Assert.IsTrue(created.EntityData.OfType<IsTargetablePacket>().Single().IsTargetable,
+                "The native body must allow mouse targeting of the mission's bomb-planting interaction.");
+            Assert.IsTrue(created.EntityData.OfType<UsableInfoPacket>().Single().Enabled);
+            UseNativeObject(harness, wreck);
+            Assert.AreEqual(CharacterMissionDeadlineState.Satisfied, ReadDeadline(harness, 1995).State);
+        }
 
         [TestMethod]
         [DataRow(false)]

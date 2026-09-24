@@ -37,6 +37,7 @@ namespace Rasa.Managers
         private readonly bool _completeable;
         private readonly bool _completeableChanged;
         private readonly bool _publishMissionStatus;
+        private readonly Action<Client> _inventoryPublication;
         internal uint MissionId => _missionId;
         internal IReadOnlyList<uint> StartScenarioIds { get; }
 
@@ -47,7 +48,8 @@ namespace Rasa.Managers
             bool completeable,
             bool completeableChanged,
             IEnumerable<uint> startScenarioIds = null,
-            bool publishMissionStatus = false)
+            bool publishMissionStatus = false,
+            Action<Client> inventoryPublication = null)
         {
             _missionId = missionId;
             _objectiveId = objectiveId;
@@ -55,6 +57,7 @@ namespace Rasa.Managers
             _completeable = completeable;
             _completeableChanged = completeableChanged;
             _publishMissionStatus = publishMissionStatus;
+            _inventoryPublication = inventoryPublication;
             StartScenarioIds = Array.AsReadOnly(
                 (startScenarioIds ?? Array.Empty<uint>()).ToArray());
         }
@@ -72,6 +75,7 @@ namespace Rasa.Managers
             objective.State = MissionObjectiveState.Failed;
             mission.State = _missionState;
             mission.Completeable = _completeable;
+            _inventoryPublication?.Invoke(client);
 
             manager.PublishMissionPacket(
                 client,
@@ -124,6 +128,7 @@ namespace Rasa.Managers
         private readonly Func<Client, uint, uint, bool> _startFailureScenario;
         private readonly Func<Client, uint, uint, bool> _activateSpawnGroup;
         private readonly MissionApplication _manager;
+        private readonly Action<Client> _inventoryPublication;
 
         internal bool HasChanges => _publications.Length > 0 || _failurePlans.Length > 0;
 
@@ -135,7 +140,8 @@ namespace Rasa.Managers
             Func<Client, uint, uint, bool> startScenario,
             Func<Client, uint, uint, bool> startFailureScenario,
             MissionApplication manager,
-            Func<Client, uint, uint, bool> activateSpawnGroup = null)
+            Func<Client, uint, uint, bool> activateSpawnGroup = null,
+            Action<Client> inventoryPublication = null)
         {
             _publications = publications.ToArray();
             _failurePlans = failurePlans.ToArray();
@@ -145,10 +151,12 @@ namespace Rasa.Managers
             _startFailureScenario = startFailureScenario;
             _activateSpawnGroup = activateSpawnGroup;
             _manager = manager;
+            _inventoryPublication = inventoryPublication;
         }
 
         internal void Publish(Client client)
         {
+            _inventoryPublication?.Invoke(client);
             foreach (var publication in _publications.Where(
                 publication =>
                     publication.CounterId.HasValue &&

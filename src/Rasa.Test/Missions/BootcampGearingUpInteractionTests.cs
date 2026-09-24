@@ -10,17 +10,20 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 namespace Rasa.Test.Missions
 {
     using Rasa.Data;
+    using Rasa.Game.Missions.Content.Bootcamp;
     using Rasa.Managers;
     using Rasa.Memory;
     using Rasa.Packets;
     using Rasa.Packets.Game.Server;
     using Rasa.Packets.Inventory.Client;
+    using Rasa.Packets.Inventory.Server;
     using Rasa.Packets.LootDispenser.Client;
     using Rasa.Packets.MapChannel.Client;
     using Rasa.Packets.MapChannel.Server;
     using Rasa.Packets.Mission.Server;
     using Rasa.Packets.Protocol;
     using Rasa.Structures;
+    using Rasa.Structures.World;
     using Rasa.Test.World;
 
     [TestClass]
@@ -109,6 +112,122 @@ namespace Rasa.Test.Missions
                 .SelectMany(cell => cell.CreatureList).Any(creature =>
                     creature.DbId == BootcampRuntimeTestHarness.PracticeDummyCreatureId ||
                     creature.DbId == BootcampRuntimeTestHarness.LightningDummyCreatureId));
+        }
+
+        [TestMethod]
+        public void StartingPistolUsesItsAuthoredSameClassWeaponProfileWithoutOverwritingAnOverride()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create();
+            var templates = harness.WorldContext.Set<ItemTemplateItemClassEntry>()
+                .Where(entry => entry.ItemTemplateId == 17131 || entry.ItemTemplateId == 11557)
+                .ToArray().ToDictionary(entry => entry.ItemTemplateId, entry => new ItemTemplate(entry));
+            var profile = new WeaponInfo(harness.WorldContext.Set<ItemTemplateWeaponEntry>().Single(entry => entry.Id == 11557));
+            templates[11557].WeaponInfo = profile;
+            Assert.IsNull(templates[17131].WeaponInfo);
+
+            BootcampItemCompatibility.Apply(templates);
+
+            Assert.AreSame(profile, templates[17131].WeaponInfo);
+            Assert.AreEqual(1U, templates[17131].WeaponInfo.AmmoPerShot);
+            Assert.AreEqual(80U, templates[17131].WeaponInfo.Range);
+            var custom = new WeaponInfo(new ItemTemplateWeaponEntry { Range = 47 });
+            templates[17131].WeaponInfo = custom;
+            BootcampItemCompatibility.Apply(templates);
+            Assert.AreSame(custom, templates[17131].WeaponInfo);
+        }
+
+        [TestMethod]
+        public void AssigningPlayerRefreshesTheWeaponDrawerAfterSelectingTheControlledActor()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create();
+            var actors = PrepareActors(harness);
+            Accept(harness, actors.McAllister);
+            CompleteObjective(harness, actors.Delessio, 4);
+            LootCrate(harness);
+            var rifle = EquipAndReloadRifle(harness);
+            harness.Drain();
+
+            ManifestationManager.Instance.AssignPlayer(harness.Client);
+
+            var packets = DrainMethods(harness).Select(method => method.Packet).ToList();
+            var controlled = packets.FindIndex(packet => packet is SetControlledActorIdPacket);
+            var drawer = packets.FindIndex(packet => packet is InventoryCreatePacket inventory &&
+                inventory.InventoryType == InventoryType.WeaponDrawerInventory);
+            var selected = packets.FindIndex(packet => packet is WeaponDrawerSlotPacket);
+            Assert.IsTrue(controlled >= 0 && drawer > controlled && selected > drawer,
+                "The weapon tray must receive its complete contents after the controlled actor initializes its UI, then its selection.");
+            Assert.AreEqual(rifle.EntityId, ((InventoryCreatePacket)packets[drawer]).ListOfItems[0]);
+            Assert.AreEqual(20U, rifle.CurrentAmmo);
+        }
+
+        [TestMethod]
+        public void RifleDrawerReferencesAnIntroducedItemBeforeAndAfterReconnect()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create();
+            var actors = PrepareActors(harness);
+            Accept(harness, actors.McAllister);
+            CompleteObjective(harness, actors.Delessio, 4);
+            LootCrate(harness);
+            var rifle = EquipAndReloadRifle(harness);
+            AssertDrawerItemData(harness, rifle);
+
+            harness.ReconnectFresh(drainPackets: false);
+
+            rifle = EntityManager.Instance.GetItem(harness.Client.Player.Inventory.WeaponDrawer[0]);
+            Assert.IsNotNull(rifle);
+            AssertDrawerItemData(harness, rifle);
+        }
+
+        private static void AssertDrawerItemData(BootcampRuntimeTestHarness.Harness harness, Item rifle)
+        {
+            var knownItems = new HashSet<ulong>();
+            var itemInfo = new HashSet<ulong>();
+            var weaponInfo = new HashSet<ulong>();
+            var sawRifleDrawer = false;
+            foreach (var method in DrainMethods(harness))
+            {
+                switch (method.Packet)
+                {
+                    case CreatePhysicalEntityPacket created:
+                        knownItems.Add(created.EntityId);
+                        itemInfo.Remove(created.EntityId);
+                        weaponInfo.Remove(created.EntityId);
+                        if (created.EntityId == rifle.EntityId)
+                            Assert.AreEqual((EntityClasses)27220, created.ClassId,
+                                "The native rifle icon is selected by item class 27220.");
+                        break;
+                    case ItemInfoPacket info:
+                        Assert.IsTrue(knownItems.Contains(method.EntityId));
+                        itemInfo.Add(method.EntityId);
+                        break;
+                    case WeaponInfoPacket:
+                        Assert.IsTrue(knownItems.Contains(method.EntityId));
+                        weaponInfo.Add(method.EntityId);
+                        break;
+                    case DestroyPhysicalEntityPacket destroyed:
+                        knownItems.Remove(destroyed.EntityId);
+                        itemInfo.Remove(destroyed.EntityId);
+                        weaponInfo.Remove(destroyed.EntityId);
+                        break;
+                    case InventoryAddItemPacket { Type: InventoryType.WeaponDrawerInventory } added
+                        when added.EntityId == rifle.EntityId:
+                        Assert.IsTrue(knownItems.Contains(added.EntityId) && itemInfo.Contains(added.EntityId) &&
+                            weaponInfo.Contains(added.EntityId),
+                            "The action bar must resolve the rifle and its metadata when the drawer changes.");
+                        sawRifleDrawer = true;
+                        break;
+                    case InventoryCreatePacket { InventoryType: InventoryType.WeaponDrawerInventory } inventory
+                        when inventory.ListOfItems.Contains(rifle.EntityId):
+                        Assert.IsTrue(knownItems.Contains(rifle.EntityId) && itemInfo.Contains(rifle.EntityId) &&
+                            weaponInfo.Contains(rifle.EntityId),
+                            "The reconnected drawer must resolve the rifle's complete item entity.");
+                        sawRifleDrawer = true;
+                        break;
+                }
+            }
+            Assert.IsTrue(sawRifleDrawer);
+            Assert.IsTrue(knownItems.Contains(rifle.EntityId));
+            Assert.AreEqual(13713U, rifle.ItemTemplateId);
         }
 
         [TestMethod]

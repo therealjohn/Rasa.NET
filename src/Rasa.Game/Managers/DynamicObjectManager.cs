@@ -448,6 +448,13 @@ namespace Rasa.Managers
                 return;
 
             dynamicObject.IsEnabled = enabled;
+            if (dynamicObject.SceneRunId != null)
+            {
+                var classInfo = EntityClassManager.Instance.GetClassInfo(dynamicObject.EntityClassId)
+                    ?? throw new GameplayRejectionException($"Missing scene object class {dynamicObject.EntityClassId}.");
+                CellManager.Instance.CellCallMethod(mapChannel, dynamicObject,
+                    new IsTargetablePacket(classInfo.TargetFlag || enabled));
+            }
             CellManager.Instance.CellCallMethod(
                 mapChannel,
                 dynamicObject,
@@ -497,7 +504,8 @@ namespace Rasa.Managers
             var entityData = new List<PythonPacket>
             {
                 // PhysicalEntity
-                new IsTargetablePacket(classInfo.TargetFlag),
+                new IsTargetablePacket(classInfo.TargetFlag ||
+                    dynamicObject.SceneRunId != null && dynamicObject.IsEnabled),
                 new WorldLocationDescriptorPacket(dynamicObject.Position, dynamicObject.Rotation),
                 // set state
                 new UsableInfoPacket(dynamicObject.IsEnabled, dynamicObject.StateId, 0, dynamicObject.WindupTime, dynamicObject.ActivateMission)

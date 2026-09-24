@@ -60,6 +60,8 @@ namespace Rasa.Game.Missions
         }
 
         internal bool Owns(uint missionId) => _bindings.ContainsKey(missionId);
+        internal bool UsesScript(uint missionId, string script) =>
+            _bindings.TryGetValue(missionId, out var binding) && binding.Script == script;
 
         internal void LeaseReset(string runId)
         {
@@ -158,6 +160,7 @@ namespace Rasa.Game.Missions
                         DrainMessages(row.RunId);
                 }
             _missions.Credit.Resume(client);
+            MissionSaveCompatibility.ReconcileInventory(client, _factory, _missions);
             _resumed[(client.Player.Id, map)] = client;
         }
 
@@ -869,9 +872,10 @@ namespace Rasa.Game.Missions
                     if (appliedIntent is RestoreActorPoseIntent)
                         current.Payload = JsonSerializer.Serialize<WorldIntent>(appliedIntent);
                 });
-                if (result.State == WorldEffectState.Failed)
+                if (result.State is WorldEffectState.Failed or WorldEffectState.Deferred)
                 {
-                    Reject($"Scene {runId} effect {effect.OperationKey} remains pending: {result.Failure}");
+                    if (result.State == WorldEffectState.Failed)
+                        Reject($"Scene {runId} effect {effect.OperationKey} remains pending: {result.Failure}");
                     _worldRetries[runId] = _utcNow().AddSeconds(1);
                 }
             }

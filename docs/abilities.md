@@ -8,6 +8,7 @@ It uses the approved community historical tables, not a claim of exact client
 | --- | --- | --- |
 | Lightning, action 194 / skill 49 | 1-2 | Rank 2 includes one eligible secondary arc. Ranks 3-5 fail explicitly without spending Power or reserving cooldown; Sonic/stun/storm contracts remain unknown. |
 | Sprint, action 401 / skill 165 | 1-5 | Toggle with elapsed-time adrenaline upkeep. |
+| Medpack, item-provided action 419 | Authored item levels | Consumes the source medpack once, then applies its authored healing-over-time effect. |
 | Other catalogue abilities | Not executable | Existing training and drawer mappings remain available; execution fails explicitly. The wider class/tier catalogue remains separate work. |
 
 Remaining higher-rank Lightning packet layouts are tracked in
@@ -132,6 +133,34 @@ and all effects due in a tick expire. Toggle upkeep uses its own clock seam so
 time preceding activation is not charged.
 
 ## Learned state and drawer persistence
+
+### Item-provided abilities
+
+`RequestPerformAbility` retains the source item's 64-bit entity ID through
+recovery. The source must still be owned in personal inventory when the ability
+lands. Source-item consumption and reagent requirements share one transaction;
+when the source also satisfies a reagent row, it is counted once. A failed save,
+interruption or item moved out of the inventory does not consume it or apply the
+effect. Reloaded items retain their template ID so item-granted actions work
+after reconnect.
+
+Thrax can drop medpack template `44917` (action `419`, level `1`). Its World
+properties specify a five-second effect, one-second interval and 60 health per
+tick. The first tick is scheduled on landing, with subsequent ticks handled by
+the existing effect worker. Other medpack levels use their own authored values.
+Health remains capped at the recipient's maximum, and the normal action cooldown
+applies. This does not add support for unrelated consumable ability modules.
+
+### Initial weapon tray
+
+After selecting the controlled actor, Game publishes a complete weapon-drawer
+snapshot before the selected slot. This refreshes the initial tray without
+requiring the player to press E; it does not regrant weapons or refill ammunition.
+The starting pistol, template `17131`, uses the existing weapon profile of
+template `11557` when its own profile is absent. Both map to class `27120`;
+an explicit profile for `17131` is preserved.
+
+### Learned abilities
 
 New characters persist rank 1 in Lightning, Sprint, Firearms, Hand to Hand and
 Motor Assist Armor as part of creation, consuming the five recruit skill points.

@@ -1153,6 +1153,12 @@ namespace Rasa.Managers
 
             client.CallMethod(SysEntity.ClientMethodId, new SetControlledActorIdPacket(player.EntityId));
 
+            // Inventory deltas precede LoginOk. Refresh the tray after its controlled actor
+            // exists so the initial image does not depend on opening the equipment selector.
+            client.CallMethod(SysEntity.ClientInventoryManagerId,
+                new Packets.Inventory.Server.InventoryCreatePacket(
+                    InventoryType.WeaponDrawerInventory, player.Inventory.WeaponDrawer.ToList(),
+                    player.Inventory.WeaponDrawer.Count));
             client.CallMethod(player.EntityId, new WeaponDrawerSlotPacket(player.ActiveWeapon, false));
 
             client.CallMethod(SysEntity.ClientGameMapId, new SetSkyTimePacket { RunningTime = 6666666 });   // ToDo add actual time how long map is running

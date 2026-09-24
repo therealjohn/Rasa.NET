@@ -522,7 +522,7 @@ namespace Rasa.Test.Missions
 
         private static void LoadBootcampLootContent(SqliteWorldContext world)
         {
-            var templateIds = new uint[] { 41666, 28, 56, 44917, 41665 };
+            var templateIds = new uint[] { 41666, 28, 56, 44917, 41665, 11519 };
             foreach (var link in world.Set<ItemTemplateItemClassEntry>().AsNoTracking()
                          .Where(row => templateIds.Contains(row.ItemTemplateId)))
             {
@@ -818,7 +818,7 @@ namespace Rasa.Test.Missions
                 AttachClientToMap(Client, BootcampMap);
             }
 
-            internal void ReconnectFresh()
+            internal void ReconnectFresh(bool drainPackets = true)
             {
                 var characterId = Client.Player.Id;
                 var accountEntry = CloneAccountEntry(Client.AccountEntry);
@@ -962,7 +962,8 @@ namespace Rasa.Test.Missions
                 freshClient.State = RasaGame::Rasa.Data.ClientState.Ingame;
                 MissionApplication.Instance.Scenes.Resume(freshClient);
                 Client = freshClient;
-                MissionTestContext.Drain(freshClient);
+                if (drainPackets)
+                    MissionTestContext.Drain(freshClient);
             }
 
             internal IReadOnlyDictionary<uint, int> ReadOwnedTemplateCounts(params uint[] templateIds)

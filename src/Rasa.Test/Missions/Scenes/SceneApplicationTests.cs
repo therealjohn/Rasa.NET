@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -133,6 +134,47 @@ namespace Rasa.Test.Missions.Scenes
         }
 
         [TestMethod]
+        public void DeferredWorldApplicationRetriesWithoutLoggingAFailureOrRecommittingTheScene()
+        {
+            using var context = MissionTestContext.WithDefinitions(321);
+            var now = DateTime.UnixEpoch;
+            var world = new WorldBoundary { Defer = true };
+            var app = Application(context, world, () => now);
+            var originalOutput = Console.Out;
+            using var output = new StringWriter();
+            Console.SetOut(output);
+            try
+            {
+                var id = app.Start(context.Client, "data.sequence", Bindings());
+                for (var retry = 0; retry < 3; retry++)
+                {
+                    now = now.AddSeconds(1);
+                    app.Tick(context.Map);
+                }
+                using (var unit = context.CreateChar())
+                {
+                    var effect = unit.CharacterMissions.Runtime.Effects(id).Single();
+                    Assert.AreEqual("Pending", effect.Status);
+                    Assert.IsNull(effect.Failure);
+                    Assert.AreEqual(1L, unit.CharacterMissions.Runtime.Scene(id).Version);
+                }
+                world.Defer = false;
+                now = now.AddSeconds(1);
+
+                app.Tick(context.Map);
+
+                using var verify = context.CreateChar();
+                Assert.AreEqual("Applied", verify.CharacterMissions.Runtime.Effects(id).Single().Status);
+                Assert.AreEqual(1L, verify.CharacterMissions.Runtime.Scene(id).Version);
+            }
+            finally
+            {
+                Console.SetOut(originalOutput);
+            }
+            Assert.IsFalse(output.ToString().Contains("remains pending", StringComparison.Ordinal), output.ToString());
+        }
+
+        [TestMethod]
         public void IdleSceneTicksDoNotOpenCharacterStorage()
         {
             using var context = MissionTestContext.WithDefinitions(321);
@@ -203,12 +245,14 @@ namespace Rasa.Test.Missions.Scenes
         private sealed class WorldBoundary : ISceneWorld
         {
             internal bool Fail { get; set; }
+            internal bool Defer { get; set; }
             internal Action<SceneRun> BeforeApply { get; set; }
             public void Attach(SceneRun run, SceneBindings bindings, Client owner, MapChannel map) { }
             public WorldEffectResult Apply(SceneRun run, WorldIntent intent)
             {
                 BeforeApply?.Invoke(run);
-                return Fail ? WorldEffectResult.Failed("Injected world failure") : WorldEffectResult.Applied();
+                return Fail ? WorldEffectResult.Failed("Injected world failure") :
+                    Defer ? WorldEffectResult.Deferred() : WorldEffectResult.Applied();
             }
             public void Tick(MapChannel map, DateTime utcNow) { }
             public void Detach(string runId) { }

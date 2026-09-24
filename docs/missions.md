@@ -350,6 +350,14 @@ Actor handles identify a run, role, generation and exact map lifetime. Reset
 invalidates prior handles and asynchronous callbacks. Pending world effects have
 explicit outcomes; a failed spawn or route is not an arrival event.
 
+The world adapter can also defer a static actor operation while a valid
+automatic spawn pool in the character's private map is waiting to produce it.
+Deferred operations remain durably `Pending`, without a failure diagnostic or
+another scene commit. They retry and respond to the normal actor-available
+notification. Missing/invalid spawn definitions and public actors without the
+required lease remain failures. A deferred actor is not treated as present, and
+its dependent route or interaction is not marked successful.
+
 Wall-clock deadlines continue while a character is absent. Active-scene waits
 save their remaining duration on detach. Route waypoints and completion return
 authoritative observations through the same scene boundary.
@@ -485,6 +493,13 @@ do not change or republish that revision to apply this correction. New content
 should author the intended position normally in a new revision rather than rely
 on this compatibility rule. See the
 [Conrad recovery and native-client checks](world-testing.md#native-client-bootcamp-acceptance-checklist).
+
+The same legacy Bootcamp scripts also use `BootcampBombInventory` to materialize
+the bomb as native mission item `11519`. Pickup, planting and retry update that
+item within the existing character transaction; a per-assignment issuance
+receipt prevents duplicate grants. Resume can backfill an old unplanted save
+without changing its deadline. This is a Bootcamp compatibility adapter, not a
+new general pack field or permission to rewrite published revisions.
 
 The CLI connects to SQLite only. For MySQL, apply the provider's migrations and
 invoke the same `MissionPackStore.Validate`, `Diff` and `Publish` methods with an

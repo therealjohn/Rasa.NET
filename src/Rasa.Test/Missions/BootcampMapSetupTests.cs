@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using System.Numerics;
 
@@ -20,6 +21,147 @@ namespace Rasa.Test.Missions
     {
         private static readonly Vector3 CratePosition = new(398, 122, 173);
         private static readonly Vector3 AlisterDestination = new(400, 120, 150);
+
+        [TestMethod]
+        [DataRow(false)]
+        [DataRow(true)]
+        public void McAllisterReconnectWaitsForStaticSpawningWithoutReportingAnActorFailure(bool finishRun)
+        {
+            using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);
+            harness.Client.Player.GmFlagAlwaysFriendly = true;
+            SpawnPoolManager.Instance.SpawnPoolWorker(harness.BootcampMap, 0);
+            var original = BootcampRuntimeTestHarness.FindCreature(
+                harness.BootcampMap, BootcampRuntimeTestHarness.MajorMcAllisterCreatureId);
+            Assert.IsNotNull(original);
+            harness.SeedMission(harness.Client.Player.Id, 1990, (uint)MissionState.Completed, true);
+            harness.MovePlayerTo(original);
+            CellManager.Instance.UpdateVisibility(harness.Client);
+            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(harness.Client, original.EntityId, 1992));
+            for (var tick = 0; tick < (finishRun ? 600 : 4); tick++)
+                BehaviorManager.Instance.MapChannelThink(harness.BootcampMap, 250);
+
+            var previousOutput = Console.Out;
+            var previousLogging = Logger.Config;
+            using var output = new StringWriter();
+            Logger.UpdateConfig(new Logger.LoggerConfig { IsDebugMode = true, LogToFile = false });
+            Console.SetOut(output);
+            try
+            {
+                harness.ReconnectFresh();
+                Assert.IsTrue(harness.BootcampMap.SpawnPools.Any(pool =>
+                    pool.DbId == BootcampRuntimeTestHarness.MajorMcAllisterCreatureId));
+                Assert.IsNull(BootcampRuntimeTestHarness.FindCreature(
+                    harness.BootcampMap, BootcampRuntimeTestHarness.MajorMcAllisterCreatureId));
+                for (var retry = 0; retry < 3; retry++)
+                {
+                    harness.UtcNow += TimeSpan.FromSeconds(1);
+                    harness.Manager.TickScenarios(harness.Client);
+                }
+                using (var unit = harness.Context.CreateChar())
+                {
+                    var scene = unit.CharacterMissions.Runtime.Scenes(harness.Client.Player.Id, 0).Single();
+                    var pending = unit.CharacterMissions.Runtime.Effects(scene.RunId)
+                        .Single(effect => effect.OperationKey == "ensure-mcallister");
+                    Assert.AreEqual("Pending", pending.Status);
+                    Assert.IsNull(pending.Failure, "Waiting for a valid spawn must not persist a failure.");
+                }
+
+                SpawnPoolManager.Instance.SpawnPoolWorker(harness.BootcampMap, 0);
+
+                var restored = BootcampRuntimeTestHarness.FindCreature(
+                    harness.BootcampMap, BootcampRuntimeTestHarness.MajorMcAllisterCreatureId);
+                Assert.IsNotNull(restored);
+                Assert.AreEqual(AlisterDestination, restored.Position,
+                    "Recover the authored final pose before the normal spawn worker introduces the actor.");
+                using (var unit = harness.Context.CreateChar())
+                {
+                    var scene = unit.CharacterMissions.Runtime.Scenes(harness.Client.Player.Id, 0).Single();
+                    var applied = unit.CharacterMissions.Runtime.Effects(scene.RunId)
+                        .Single(effect => effect.OperationKey == "ensure-mcallister");
+                    Assert.AreEqual("Applied", applied.Status, "The normal spawn notification must complete the pending ensure.");
+                    Assert.IsNull(applied.Failure);
+                }
+                harness.UtcNow += TimeSpan.FromSeconds(1);
+                harness.Manager.TickScenarios(harness.Client);
+                Assert.AreEqual(2.175, restored.Rotation, 0.001);
+                Assert.IsFalse(restored.IsRunning);
+                Assert.AreEqual(1, harness.BootcampMap.MapCellInfo.Cells.Values
+                    .SelectMany(cell => cell.CreatureList)
+                    .Count(creature => creature.DbId == BootcampRuntimeTestHarness.MajorMcAllisterCreatureId));
+            }
+            finally
+            {
+                Console.SetOut(previousOutput);
+                Logger.UpdateConfig(previousLogging);
+            }
+            Assert.IsFalse(output.ToString().Contains("[Error]", StringComparison.Ordinal),
+                $"A valid static spawn awaiting the first spawn worker is not a broken scene:{Environment.NewLine}{output}");
+        }
+
+        [TestMethod]
+        public void McAllisterDepartureStartsWhenItsInitiallyDeferredActorBecomesAvailable()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);
+            harness.SeedMission(harness.Client.Player.Id, 1992, (uint)MissionState.Active, false);
+            harness.Manager.Scenes.StageExperience(harness.Client.Player.Id, harness.BootcampMap);
+            using (var unit = harness.Context.CreateChar())
+            {
+                var scene = unit.CharacterMissions.Runtime.Scenes(harness.Client.Player.Id, 0).Single();
+                foreach (var effect in unit.CharacterMissions.Runtime.Effects(scene.RunId)
+                    .Where(effect => effect.OperationKey is "ensure-mcallister" or "mcallister-departure"))
+                {
+                    Assert.AreEqual("Pending", effect.Status);
+                    Assert.IsNull(effect.Failure);
+                }
+            }
+
+            SpawnPoolManager.Instance.SpawnPoolWorker(harness.BootcampMap, 0);
+
+            var actor = BootcampRuntimeTestHarness.FindCreature(
+                harness.BootcampMap, BootcampRuntimeTestHarness.MajorMcAllisterCreatureId);
+            Assert.IsNotNull(actor);
+            Assert.IsTrue(actor.IsRunning);
+            using var verify = harness.Context.CreateChar();
+            var recoveredScene = verify.CharacterMissions.Runtime.Scenes(harness.Client.Player.Id, 0).Single();
+            var effects = verify.CharacterMissions.Runtime.Effects(recoveredScene.RunId);
+            Assert.AreEqual("Applied", effects.Single(effect => effect.OperationKey == "ensure-mcallister").Status);
+            Assert.AreEqual("Running", effects.Single(effect => effect.OperationKey == "mcallister-departure").Status);
+        }
+
+        [TestMethod]
+        [DataRow("missing-pool")]
+        [DataRow("missing-creature")]
+        [DataRow("disabled-pool")]
+        [DataRow("empty-pool")]
+        [DataRow("invalid-counts")]
+        [DataRow("missing-live-actor")]
+        public void BrokenMcAllisterSpawnStillRecordsAFailure(string failure)
+        {
+            using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);
+            var pool = harness.BootcampMap.SpawnPools.Single(candidate =>
+                candidate.DbId == BootcampRuntimeTestHarness.MajorMcAllisterCreatureId);
+            switch (failure)
+            {
+                case "missing-pool": harness.BootcampMap.SpawnPools.Remove(pool); break;
+                case "missing-creature":
+                    CreatureManager.Instance.LoadedCreatures.Remove(BootcampRuntimeTestHarness.MajorMcAllisterCreatureId);
+                    break;
+                case "disabled-pool": pool.Mode = 1; break;
+                case "empty-pool": pool.SpawnSlot.Clear(); break;
+                case "invalid-counts": pool.SpawnSlot[0].CountMin = -1; break;
+                case "missing-live-actor": pool.AliveCreatures = 1; break;
+            }
+            harness.SeedMission(harness.Client.Player.Id, 1992, (uint)MissionState.Active, false);
+
+            harness.Manager.Scenes.StageExperience(harness.Client.Player.Id, harness.BootcampMap);
+
+            using var unit = harness.Context.CreateChar();
+            var scene = unit.CharacterMissions.Runtime.Scenes(harness.Client.Player.Id, 0).Single();
+            var effect = unit.CharacterMissions.Runtime.Effects(scene.RunId)
+                .Single(entry => entry.OperationKey == "ensure-mcallister");
+            Assert.AreEqual("Pending", effect.Status);
+            StringAssert.Contains(effect.Failure, "Public actor spawn 510203 is unavailable");
+        }
 
         [TestMethod]
         public void CrateIsVisibleButLockedBeforeAcceptingAnyMission()

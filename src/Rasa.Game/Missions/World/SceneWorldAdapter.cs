@@ -10,13 +10,14 @@ namespace Rasa.Game.Missions.World
     using Structures;
     using Structures.World;
 
-    internal enum WorldEffectState { Applied, Running, Failed, Suppressed }
+    internal enum WorldEffectState { Applied, Running, Failed, Suppressed, Deferred }
     internal sealed record WorldEffectResult(WorldEffectState State, string Failure = null)
     {
         internal static WorldEffectResult Applied() => new(WorldEffectState.Applied);
         internal static WorldEffectResult Running() => new(WorldEffectState.Running);
         internal static WorldEffectResult Failed(string failure) => new(WorldEffectState.Failed, failure);
         internal static WorldEffectResult Suppressed(string reason) => new(WorldEffectState.Suppressed, reason);
+        internal static WorldEffectResult Deferred() => new(WorldEffectState.Deferred);
     }
 
     internal interface ISceneWorld
@@ -127,6 +128,7 @@ namespace Rasa.Game.Missions.World
             if (actor == null || !IsCurrent(world, actor))
                 return intent is RemoveActorIntent ? WorldEffectResult.Applied() :
                     intent is SetInteractionIntent { IfPresent: true } ? WorldEffectResult.Suppressed("Optional actor is absent.") :
+                    IsAwaitingPrivateSpawn(world, definition) ? WorldEffectResult.Deferred() :
                     WorldEffectResult.Failed($"Actor role {intent.Role} is unavailable.");
             if (intent is RemoveActorIntent)
             {
@@ -213,7 +215,8 @@ namespace Rasa.Game.Missions.World
                         return WorldEffectResult.Failed($"Actor {definition.Role} is not leased to this run.");
                 }
                 if (creature == null)
-                    return WorldEffectResult.Failed($"Public actor spawn {definition.TemplateId} is unavailable.");
+                    return IsAwaitingPrivateSpawn(world, definition) ? WorldEffectResult.Deferred() :
+                        WorldEffectResult.Failed($"Public actor spawn {definition.TemplateId} is unavailable.");
                 world.Actors[definition.Role] = new BoundActor(handle, creature, null);
                 return WorldEffectResult.Applied();
             }
@@ -290,6 +293,24 @@ namespace Rasa.Game.Missions.World
                 world.Actors[definition.Role] = new BoundActor(handle, null, obj);
             }
             return WorldEffectResult.Applied();
+        }
+
+        private static bool IsAwaitingPrivateSpawn(WorldRun world, SceneActorDefinition definition)
+        {
+            if (!world.Map.IsPrivateInstance || definition.Kind != SceneActorKind.PublicSpawn)
+                return false;
+            var pool = world.Map.SpawnPools.SingleOrDefault(candidate =>
+                candidate.DbId == definition.TemplateId && candidate.ScenarioKey == null);
+            // Scene recovery precedes the normal spawn worker; an automatic pool can be
+            // waiting on its first tick, a respawn cooldown, or a dropship delivery.
+            return pool != null && ReferenceEquals(pool.RuntimeMapChannel, world.Map) &&
+                pool.MapContextId == world.Map.MapInfo.MapContextId &&
+                pool.SpawnPolicy != MissionSpawnGroupPolicy.ScenarioControlled && pool.Mode == 0 &&
+                pool.AnimType is >= 0 and <= 2 && pool.AliveCreatures == 0 &&
+                pool.SpawnSlot?.Any(slot => slot != null && slot.CreatureId != 0 &&
+                    slot.CountMin >= 0 && slot.CountMax > 0 && slot.CountMax >= slot.CountMin &&
+                    CreatureManager.Instance.LoadedCreatures.TryGetValue(slot.CreatureId, out var creature) &&
+                    creature != null) == true;
         }
 
         private Creature ResolveCreature(MapChannel map, ActorHandle handle) =>

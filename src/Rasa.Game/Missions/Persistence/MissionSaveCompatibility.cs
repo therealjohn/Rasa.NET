@@ -1,5 +1,6 @@
 namespace Rasa.Game.Missions.Persistence
 {
+    using System;
     using Managers;
     using Repositories.Char;
     using Repositories.Char.CharacterMissionProgress;
@@ -9,6 +10,12 @@ namespace Rasa.Game.Missions.Persistence
 
     internal static class MissionSaveCompatibility
     {
+        internal static Action<Client> PlanInventory(Client client, ICharUnitOfWork unit,
+            MissionApplication manager, uint? missionId = null) =>
+            Content.Bootcamp.BootcampBombInventory.Plan(client, unit, manager, missionId);
+        internal static void ReconcileInventory(Client client, IGameUnitOfWorkFactory factory, MissionApplication manager) =>
+            Content.Bootcamp.BootcampBombInventory.Reconcile(client, factory, manager);
+
         internal static CharacterMissionProgressSnapshot NormalizeSnapshot(uint characterId,
             CharacterMissionProgressSnapshot progress, IGameUnitOfWorkFactory factory, MissionApplication manager) =>
             Migration.NormalizeSnapshot(characterId, progress, factory, manager);
