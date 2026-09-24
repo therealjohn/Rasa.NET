@@ -186,9 +186,9 @@ namespace Rasa.Test.Missions
                 1,
                 "Graduate",
                 mapContextId: BootcampSelectionTestContext.BootcampMapContextId,
-                x: -255.3125,
-                y: 101.05078,
-                z: -70.4375,
+                x: -225,
+                y: 101.12099,
+                z: -71,
                 experience: 49250,
                 level: 5);
             var secondCharacterId = context.SeedCharacter(713, 2, "SecondPass");
@@ -227,7 +227,7 @@ namespace Rasa.Test.Missions
                     WaypointId = BootcampSelectionTestContext.ExitPadWaypointId,
                     MapInstanceId = privateMap.InstanceId
                 });
-            context.CompletePendingMapLinkTransfer(departingClient);
+            context.CompletePendingDeparture(departingClient);
 
             using (var verify = context.OpenChar())
             {
@@ -727,7 +727,15 @@ namespace Rasa.Test.Missions
                     MapInstanceId = harness.BootcampMap.InstanceId
                 });
             Assert.IsNotNull(harness.Client.PendingTransfer);
+            var objects = DynamicObjectManager.Instance;
+            var departure = objects.Dropships[harness.Client.PendingTransfer.DropshipId];
+            for (var phase = 0; phase < 6; phase++)
+                objects.DropshipsWorker(harness.BootcampMap, Math.Max(0, departure.PhaseTimeleft));
             harness.RouteMapLoaded();
+            var arrival = objects.Dropships.Values.Single(ship =>
+                ship.Client == harness.Client && ship.Role == DropshipRole.Arrival);
+            for (var phase = 0; phase < 6; phase++)
+                objects.DropshipsWorker(harness.Client.Player.MapChannel, Math.Max(0, arrival.PhaseTimeleft));
         }
 
         private static void AssertDurableBootcampDeparture(

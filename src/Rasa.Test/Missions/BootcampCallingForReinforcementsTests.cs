@@ -43,6 +43,83 @@ namespace Rasa.Test.Missions
         private static readonly TimeSpan ArrivalDelay = TimeSpan.FromSeconds(2);
 
         [TestMethod]
+        public void BombDetonationPublishesTheNativeWreckExplosionTransition()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);
+            StartCrashSiteScene(harness);
+            var conrad = FindScenarioObject(harness, "bootcamp-conrad-corpse");
+            harness.MovePlayerTo(conrad);
+            CellManager.Instance.UpdateVisibility(harness.Client);
+            UseNativeObject(harness, conrad);
+            var wreck = FindScenarioObject(harness, "bootcamp-dropship-debris");
+            harness.MovePlayerTo(wreck);
+            CellManager.Instance.UpdateVisibility(harness.Client);
+            UseNativeObject(harness, wreck);
+            harness.Drain();
+            harness.UtcNow += TimeSpan.FromSeconds(5);
+
+            Assert.IsTrue(harness.Manager.TickScenarios(harness.Client));
+
+            Assert.AreEqual(UseObjectState.DoorStateOpen, wreck.StateId,
+                "The native tutorial-wreck class uses its closed-to-open transition for the detonation.");
+            Assert.IsTrue(harness.Drain().OfType<UsePacket>()
+                .Any(packet => packet.CurState == UseObjectState.DoorStateOpen),
+                "The fuse must emit the native state-transition cue, not only complete an objective.");
+        }
+
+        [TestMethod]
+        [DataRow(false)]
+        [DataRow(true)]
+        public void EvacuationShipAppearsOnlyAfterTheWreckClearsAndVanChecksIn(bool reconnect)
+        {
+            using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);
+            Assert.IsFalse(harness.BootcampMap.DynamicObjects.Any(obj =>
+                obj.EntityClassId == EntityClasses.UsableTwoStateHumDropshipBeam),
+                "Bootcamp must not start with an evacuation ship hovering over its old pad.");
+            StartCrashSiteScene(harness);
+            harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
+            var wreck = FindScenarioObject(harness, "bootcamp-dropship-debris");
+            var pad = harness.BootcampMap.Teleporters[60];
+            Assert.AreEqual(wreck.Position, pad.Position);
+            harness.UseObjectAndRecover(wreck);
+            harness.UtcNow += TimeSpan.FromSeconds(5);
+            harness.Manager.TickScenarios(harness.Client);
+            Assert.IsTrue(harness.BootcampMap.DynamicObjects.Contains(wreck));
+            harness.UtcNow += ArrivalDelay;
+            harness.Manager.TickScenarios(harness.Client);
+            Assert.IsFalse(harness.BootcampMap.DynamicObjects.Contains(wreck));
+            Assert.IsNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-evacuation-ship"));
+            harness.MovePlayerTo(pad);
+            CellManager.Instance.UpdateVisibility(harness.Client);
+            harness.Drain();
+            new MapTriggerManager().TriggersProximityWorker(harness.BootcampMap);
+            Assert.IsFalse(harness.Drain().OfType<EnteredWaypointPacket>().Any(),
+                "The boarding menu must stay closed until Van's check-in is complete.");
+            var van = BootcampRuntimeTestHarness.FindNpcByPackage(
+                harness.BootcampMap, BootcampRuntimeTestHarness.CorporalVanValkenbergPackageId);
+
+            CompleteNativeObjective(harness, van, 4);
+
+            var evacuation = FindScenarioObject(harness, "bootcamp-evacuation-ship");
+            Assert.IsNotNull(evacuation);
+            Assert.AreEqual(pad.Position, evacuation.Position);
+            Assert.IsNull(harness.Client.PendingTransfer, "Check-in must not board the player automatically.");
+            harness.MovePlayerTo(pad);
+            CellManager.Instance.UpdateVisibility(harness.Client);
+            harness.Drain();
+            new MapTriggerManager().TriggersProximityWorker(harness.BootcampMap);
+            Assert.IsTrue(harness.Drain().OfType<EnteredWaypointPacket>().Any(),
+                "The cleared pad must offer manual boarding once the check-in completes.");
+            if (reconnect)
+            {
+                harness.ReconnectFresh();
+                Assert.IsNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-dropship-debris"));
+                Assert.IsNotNull(FindScenarioObject(harness, "bootcamp-evacuation-ship"));
+                Assert.IsNull(harness.Client.PendingTransfer);
+            }
+        }
+
+        [TestMethod]
         public void FullMissionInventoryRejectsBombPickupUntilOneSlotIsFreed()
         {
             using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);

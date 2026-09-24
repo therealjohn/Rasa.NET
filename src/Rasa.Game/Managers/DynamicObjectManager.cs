@@ -111,7 +111,7 @@ namespace Rasa.Managers
             _maps = maps;
             _clock = clock ?? (() => Environment.TickCount64);
             _updateCharacter = updateCharacter ?? ((client, update, value) =>
-                CharacterManager.Instance.UpdateCharacter(client, update, value));
+                Characters.UpdateCharacter(client, update, value));
             _disconnect = disconnect ?? (client => client.Close(false));
             _missionManager = missionManager;
             _characterManager = characterManager;
@@ -682,7 +682,8 @@ namespace Rasa.Managers
                 // nothing left to do; take it out of the world rather than fly it into a null.
                 if (dropship.DropshipType == DropshipType.Teleporter && (dropship.Client?.Player == null || dropship.Client.Player.Disconected))
                 {
-                    if (MapChannelManager.Instance.MapChannelArray.TryGetValue(dropship.MapContextId, out var lostMap))
+                    var lostMap = dropship.RuntimeMapChannel ?? Maps.FindByContextId(dropship.MapContextId);
+                    if (lostMap != null)
                         CellManager.Instance.RemoveFromWorld(lostMap, dropship);
 
                     Dropships.Remove(entry.Key);
@@ -979,6 +980,8 @@ namespace Rasa.Managers
                         // the landing pad geometry itself; the ship was always the server's.
                         CellManager.Instance.AddToWorld(mapChannel, new MapTrigger(teleporter.Id, teleporter.Description, teleporter.Position, teleporter.Rotation, teleporter.MapContextId));
 
+                        if (Characters.StartingExperience.IsExitPad(teleporter.MapContextId, teleporter.Id))
+                            break;
                         mapChannel.DynamicObjects.Add(new DynamicObject
                         {
                             EntityId = EntityManager.Instance.GetEntityId,
@@ -1191,8 +1194,14 @@ namespace Rasa.Managers
 
                 if (isStartingExperienceExit)
                 {
-                    if (!Characters.StartingExperience.TryDepart(client))
+                    if (!Characters.StartingExperience.TryDepart(client, this))
                         RejectTravel(client, "Starting-experience departure is not available.");
+                    return;
+                }
+                if (isDropship)
+                {
+                    if (!TryBeginDropshipTravel(client, destinationMap, destination, teleporter.Rotation))
+                        RejectTravel(client, "Dropship departure is not available.");
                     return;
                 }
 
@@ -1214,30 +1223,10 @@ namespace Rasa.Managers
                     DestinationPosition = destination,
                     DestinationRotation = teleporter.Rotation,
                     Deadline = checked(_clock() + timeout * 1000L),
-                    IsDropship = isDropship
+                    IsDropship = false
                 };
                 client.PendingTransfer = transfer;
                 client.CallMethod(SysEntity.ClientMethodId, new RequestMovementBlockPacket());
-
-                if (isDropship)
-                {
-                    var dropship = new Dropship(
-                        Factions.AFS,
-                        DropshipType.Teleporter,
-                        client,
-                        DropshipRole.Departure,
-                        destination,
-                        destinationMap.MapInfo.MapContextId)
-                    {
-                        DestinationRotation = teleporter.Rotation
-                    };
-                    transfer.DropshipId = dropship.EntityId;
-                    CellManager.Instance.AddToWorld(origin, dropship);
-                    Dropships.Add(dropship.EntityId, dropship);
-                    if (destinationMap != origin)
-                        client.LoadingMap = destinationMap.MapInfo.MapContextId;
-                    return;
-                }
 
                 client.CellCallMethod(client, client.Player.EntityId, new PreTeleportPacket(TeleportType.Default));
                 client.State = ClientState.Teleporting;
@@ -1247,6 +1236,58 @@ namespace Rasa.Managers
                     new TeleportPacket(destination, teleporter.Rotation, TeleportType.Default, 5));
                 client.CallMethod(SysEntity.ClientMethodId, new BeginTeleportPacket());
                 client.CellMoveObject(client, new MoveObjectMessage(client.Player.EntityId, client.Movement), false);
+            }
+        }
+
+        internal bool CanBeginDropshipTravel(Client client, MapChannel destination, Vector3 position, double rotation)
+        {
+            var timeout = client?.Server?.Config.GameConfig.TransferTimeoutSeconds ??
+                Config.GameConfig.DefaultTransferTimeoutSeconds;
+            return client?.Player?.MapChannel != null && client.State == ClientState.Ingame &&
+                client.Player.State != CharacterState.Dead && client.PendingTransfer == null &&
+                CellManager.Instance.IsInWorld(client) && destination != null &&
+                CellManager.TryGetCellCoordinates(position, out _, out _) && double.IsFinite(rotation) &&
+                timeout > 0 && !Dropships.Values.Any(ship => ship.Client == client && ship.DropshipType == DropshipType.Teleporter);
+        }
+
+        internal bool IsStationAvailable(Client client, uint mapContextId, uint waypointId) =>
+            !Characters.StartingExperience.IsExitPad(mapContextId, waypointId) ||
+            Characters.StartingExperience.IsDepartureReady(client);
+
+        internal bool TryBeginDropshipTravel(Client client, MapChannel destination, Vector3 position, double rotation,
+            Vector3? departurePosition = null, double? departureRotation = null,
+            uint releaseOwnedPrivateInstancesForCharacterId = 0)
+        {
+            lock (client.SyncRoot)
+            {
+                if (!CanBeginDropshipTravel(client, destination, position, rotation) ||
+                    departurePosition.HasValue && !CellManager.TryGetCellCoordinates(departurePosition.Value, out _, out _) ||
+                    departureRotation.HasValue && !double.IsFinite(departureRotation.Value))
+                    return false;
+                var origin = client.Player.MapChannel;
+                var timeout = client.Server?.Config.GameConfig.TransferTimeoutSeconds ??
+                    Config.GameConfig.DefaultTransferTimeoutSeconds;
+                var transfer = new PlayerTransfer
+                {
+                    OriginMap = origin, OriginPosition = client.Player.Position, OriginRotation = client.Player.Rotation,
+                    DestinationMap = destination, DestinationPosition = position, DestinationRotation = rotation,
+                    Deadline = checked(_clock() + timeout * 1000L), IsDropship = true,
+                    ReleaseOwnedPrivateInstancesForCharacterId = releaseOwnedPrivateInstancesForCharacterId
+                };
+                var ship = new Dropship(Factions.AFS, DropshipType.Teleporter, client, DropshipRole.Departure,
+                    position, destination.MapInfo.MapContextId) { DestinationRotation = rotation };
+                if (departurePosition.HasValue)
+                    ship.Position = departurePosition.Value;
+                if (departureRotation.HasValue)
+                    ship.Rotation = departureRotation.Value;
+                transfer.DropshipId = ship.EntityId;
+                client.PendingTransfer = transfer;
+                client.CallMethod(SysEntity.ClientMethodId, new RequestMovementBlockPacket());
+                CellManager.Instance.AddToWorld(origin, ship);
+                Dropships.Add(ship.EntityId, ship);
+                if (destination != origin)
+                    client.LoadingMap = destination.MapInfo.MapContextId;
+                return true;
             }
         }
 
@@ -1400,7 +1441,10 @@ namespace Rasa.Managers
                     throw new InvalidOperationException("No matching map transfer to complete.");
                 if (!PersistTransfer(client))
                     return false;
+                var releaseOwner = client.PendingTransfer.ReleaseOwnedPrivateInstancesForCharacterId;
                 client.PendingTransfer = null;
+                if (releaseOwner != 0)
+                    Maps.ReleaseOwnedPrivateInstances(releaseOwner);
                 return true;
             }
         }

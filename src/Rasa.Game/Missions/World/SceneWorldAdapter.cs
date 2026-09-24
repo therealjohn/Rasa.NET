@@ -162,6 +162,20 @@ namespace Rasa.Game.Missions.World
                 }
                 return WorldEffectResult.Applied();
             }
+            if (intent is TransitionObjectStateIntent transition)
+            {
+                if (actor.Object == null || !Enum.IsDefined(typeof(UseObjectState), (int)transition.State))
+                    return WorldEffectResult.Failed("Object-state transition requires a world object and supported native state.");
+                var state = (UseObjectState)transition.State;
+                if (actor.Object.StateId != state)
+                {
+                    actor.Object.StateId = state;
+                    CellManager.Instance.CellCallMethod(world.Map, actor.Object,
+                        new Packets.MapChannel.Server.UsePacket(world.Owner?.Player?.EntityId ?? 0, state,
+                            checked((int)transition.WindupMilliseconds)));
+                }
+                return WorldEffectResult.Applied();
+            }
             if (intent is RunRouteIntent route)
                 return actor.Creature == null ? WorldEffectResult.Failed("Only a creature can follow a route.") :
                     _routes.Start(world.Map, actor.Handle, actor.Creature, route, world.Bindings.Routes[route.Route]);

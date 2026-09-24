@@ -11,6 +11,7 @@ namespace Rasa.Missions.Content
     {
         public string Script { get; set; }
         public int StateVersion { get; set; } = 1;
+        public MissionAudioDefinition Audio { get; set; }
         public Dictionary<string, SceneActorDefinition> Actors { get; set; } = new(StringComparer.Ordinal);
         public Dictionary<string, SceneRoute> Routes { get; set; } = new(StringComparer.Ordinal);
         public Dictionary<uint, SceneSequenceDefinition> Sequences { get; set; } = new();

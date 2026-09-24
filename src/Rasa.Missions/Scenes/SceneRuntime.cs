@@ -61,6 +61,11 @@ namespace Rasa.Missions.Scenes
             {
                 if (intent.Role != null && !bindings.Actors.ContainsKey(intent.Role))
                     return Reject($"Scene operation {intent.OperationKey} references missing actor role {intent.Role}.");
+                if (intent is TransitionObjectStateIntent state &&
+                    (string.IsNullOrWhiteSpace(state.Role) || !bindings.Actors.TryGetValue(state.Role, out var actor) ||
+                     actor.Kind is not (SceneActorKind.Object or SceneActorKind.PracticeTarget) ||
+                     state.State == 0 || state.State > int.MaxValue || state.WindupMilliseconds > int.MaxValue))
+                    return Reject($"Scene operation {intent.OperationKey} has an invalid object-state transition.");
                 if (intent is RunRouteIntent route &&
                     (!bindings.Routes.TryGetValue(route.Route, out var definition) ||
                      definition.Points.Count == 0 || route.StartWaypoint < 0 || route.StartWaypoint >= definition.Points.Count ||

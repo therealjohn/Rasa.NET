@@ -44,6 +44,7 @@ namespace Rasa.Missions.Scenes
     [JsonDerivedType(typeof(PresentationIntent), "presentation")]
     [JsonDerivedType(typeof(TransferIntent), "transfer")]
     [JsonDerivedType(typeof(RestoreActorPoseIntent), "restore-pose")]
+    [JsonDerivedType(typeof(TransitionObjectStateIntent), "object-state")]
     public abstract record WorldIntent(string OperationKey, string Role);
     public sealed record EnsureActorIntent(string OperationKey, string Role, ScenePosition RestorePosition = null) : WorldIntent(OperationKey, Role);
     public sealed record RemoveActorIntent(string OperationKey, string Role) : WorldIntent(OperationKey, Role);
@@ -55,6 +56,8 @@ namespace Rasa.Missions.Scenes
     public sealed record TransferIntent(string OperationKey, uint MapContextId, ScenePosition Position, double Orientation) : WorldIntent(OperationKey, null);
     public sealed record RestoreActorPoseIntent(string OperationKey, string Role, ScenePosition Position, double Orientation)
         : WorldIntent(OperationKey, Role);
+    public sealed record TransitionObjectStateIntent(string OperationKey, string Role, uint State,
+        uint WindupMilliseconds = 0) : WorldIntent(OperationKey, Role);
 
     [JsonPolymorphic(TypeDiscriminatorPropertyName = "$kind")]
     [JsonDerivedType(typeof(GrantRewardIntent), "reward")]

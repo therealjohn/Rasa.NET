@@ -140,11 +140,31 @@ transactions. Unknown handlers/facts fail explicitly. Nesting is bounded to 32.
 
 `MissionSceneDefinition` contains `Script`, `StateVersion`, role-keyed `Actors`,
 named `Routes`, numeric `Sequences`, named sequence entry points, eligibility
-requirements, `Credit`, and an optional `PublicEncounter`.
+requirements, `Credit`, optional `Audio`, and an optional `PublicEncounter`.
 
 Scripts receive only `SceneContext` and `SceneObservation`, not clients or EF
 contexts. Decisions contain typed intents, signals, timers and JSON checkpoints.
 Internal database/checkpoint JSON does not introduce a file-based publish step.
+
+### Mission audio
+
+`MissionAudioDefinition` is available to any mission, including main-world
+quests and data-only missions. Author it on the mission's scene definition
+(a metadata-only scene may omit `Script`):
+
+- `OfferAudioSetId`: native briefing narration in the existing offer tuple.
+- `Events`: optional `MissionAudioEvent.Accepted` and `Completed` voice cues.
+- `Announcements`: greeting-text ID to audio-set ID, paired with authored
+  ambient mission announcements.
+
+Use verified client audio-set IDs, not sound-file IDs. Omit audio metadata for
+a silent mission; zero or invalid bindings are rejected. Do not bind the same
+briefing to both offer and acceptance unless a repeated readout is intended.
+The Game adapter uses the native offer slot or existing voice-over RPC
+(`PlayTutorialAudio`, a historical wire name that is not restricted to tutorial
+zones). There are no Bootcamp-ID checks in that playback module.
+Scene scripts can also use the existing `PresentationIntent` with
+`PresentationKind.Audio` for explicitly timed cues.
 
 | `SceneActorKind` | `TemplateId` means |
 | --- | --- |
@@ -175,6 +195,7 @@ milliseconds. Scripted movement needs a complete loaded-navmesh route.
 | `PresentationIntent` | Tutorial, audio or greeting using an existing ID |
 | `TransferIntent` | Transfer to a map and authored position |
 | `RestoreActorPoseIntent` | Recover a static actor in its owning private map |
+| `TransitionObjectStateIntent` | Send the native usable transition to an object state, with an optional windup in milliseconds |
 
 Character intents are `GrantRewardIntent`, `GrantAbilityIntent`,
 `SetQualificationIntent`, `SetEntitlementIntent`, `ObjectiveIntent`, and
@@ -199,12 +220,20 @@ Only eligible creature-kill/scenario-event objectives share credit, not personal
 dialogue, inventory actions, acceptance or reward choices.
 
 `MissionExperienceDefinition` has a key, revision, map context, private-per-character
-flag, scene, mission triggers and actor policies. Triggers respond to `Accepted`
-or `Rewarded` for a mission and name an experience sequence.
+flag, scene, mission triggers and actor policies. Triggers respond to `Accepted`,
+`Rewarded`, `Completeable` or `Departing` for a mission and name an experience
+sequence. `Completeable` is also derived from current active assignments during
+reconnect; `Departing` is emitted by the authorized starting-experience boarding
+flow. Each trigger must reference a loaded mission and a declared sequence.
 
 Actor policies can configure invulnerability, defense, participation,
 scenario-kill rewards and loot. The fixed C# Bootcamp example is
 [BootcampMissionDataV1.Experience.cs](../src/Rasa.DBL/Services/Preloader/Missions/BootcampMissionDataV1.Experience.cs).
+The subsequent
+[BootcampFinaleDataV2.cs](../src/Rasa.DBL/Services/Preloader/Missions/BootcampFinaleDataV2.cs)
+shows a forward migration that changes the finale without editing the first seed.
+[BootcampAudioAndCreditsV3.cs](../src/Rasa.DBL/Services/Preloader/Missions/BootcampAudioAndCreditsV3.cs)
+then supplies native audio bindings and the configured credit rewards.
 
 ## Migration helper interface
 

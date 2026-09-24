@@ -270,11 +270,14 @@ namespace Rasa.Managers
                                 objectiveId)),
                         $"mission {publication.MissionId} objective {objectiveId} activated");
                 foreach (var request in publication.AmbientConversationRequests)
+                {
                     MissionApplication.TryPublish(
                         () => client.CallMethod(
                             client.Player.EntityId,
                             new ForceConversePacket((int)request.GreetingId)),
                         $"mission {publication.MissionId} objective {publication.ObjectiveId} ambient conversation");
+                    _manager.PublishAnnouncementAudio(client, publication.MissionId, request.GreetingId);
+                }
             }
 
             var indicatorRefreshMissionIds = new SortedSet<uint>(_missionStatusMissionIds);
@@ -289,11 +292,16 @@ namespace Rasa.Managers
                     $"mission {missionId} status after deadline start or indicator reveal");
 
             foreach (var missionId in _completableMissions)
+            {
                 MissionApplication.TryPublish(
                     () => client.CallMethod(
                         client.Player.EntityId,
                         new MissionCompleteablePacket(missionId, true)),
                     $"mission {missionId} completable");
+                MissionApplication.TryPublish(
+                    () => _manager.Scenes.MissionChanged(client, missionId, "Completeable"),
+                    $"mission {missionId} experience ready state");
+            }
 
             foreach (var failurePlan in _failurePlans)
                 failurePlan.Publish(

@@ -12,6 +12,12 @@ namespace Rasa.Game.Missions.Content
         internal static void Validate(uint missionId, string revision, MissionSceneDefinition scene, IEnumerable<uint> objectives)
         {
             var objectiveIds = objectives.ToHashSet();
+            if (scene.Audio is { } audio && (audio.Events == null || audio.Announcements == null ||
+                audio.OfferAudioSetId is 0 or > int.MaxValue ||
+                audio.Events.Any(entry => !Enum.IsDefined(typeof(MissionAudioEvent), entry.Key) ||
+                    entry.Value == 0 || entry.Value > int.MaxValue) ||
+                audio.Announcements.Any(entry => entry.Key == 0 || entry.Value == 0 || entry.Value > int.MaxValue)))
+                throw new MissionRuleException($"Mission {missionId}: invalid audio cue binding.");
             new Integration.MissionRequirementService().Validate(missionId, objectiveIds,
                 scene.Requirement, scene.TurnInRequirement, scene.ObjectiveRequirements);
             var scripts = new SceneScriptRegistry();

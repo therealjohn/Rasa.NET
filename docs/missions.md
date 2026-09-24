@@ -151,6 +151,9 @@ rather than parsing runtime entity IDs or legacy scenario-key strings.
   admission, progress and turn-in eligibility.
 - `Credit` and optional `PublicEncounter`, controlling eligible group credit
   and public actor reservation.
+- Optional `Audio`, binding briefing narration, accepted/completed voice cues
+  and audio paired with mission announcements. This is shared by all missions,
+  not restricted to Bootcamp.
 
 Use `data.sequence` for ordinary authored sequences. Bootcamp scripts and
 `example.escort` show how to add unusual behavior without enlarging the

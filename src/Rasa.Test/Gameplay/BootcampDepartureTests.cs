@@ -97,9 +97,9 @@ namespace Rasa.Test.Gameplay
                 1,
                 "Departure",
                 mapContextId: BootcampSelectionTestContext.BootcampMapContextId,
-                x: -255.3125,
-                y: 101.05078,
-                z: -70.4375,
+                x: -225,
+                y: 101.12099,
+                z: -71,
                 rotation: 0,
                 experience: 49250,
                 level: 5);
@@ -130,13 +130,14 @@ namespace Rasa.Test.Gameplay
                     MapInstanceId = privateMap.InstanceId
                 });
 
-            Assert.AreEqual(RasaGame::Rasa.Data.ClientState.Teleporting, client.State);
+            Assert.AreEqual(RasaGame::Rasa.Data.ClientState.Ingame, client.State);
+            Assert.IsTrue(client.PendingTransfer.IsDropship);
             Assert.IsNotNull(client.PendingTransfer);
             Assert.AreEqual(
                 BootcampSelectionTestContext.WildernessMapContextId,
                 client.PendingTransfer.DestinationMap.MapInfo.MapContextId);
 
-            context.CompletePendingMapLinkTransfer(client);
+            context.CompletePendingDeparture(client);
 
             Assert.AreEqual(RasaGame::Rasa.Data.ClientState.Ingame, client.State);
             Assert.AreEqual(
@@ -187,9 +188,9 @@ namespace Rasa.Test.Gameplay
                 1,
                 "WaypointUnlocks",
                 mapContextId: BootcampSelectionTestContext.BootcampMapContextId,
-                x: -255.3125,
-                y: 101.05078,
-                z: -70.4375,
+                x: -225,
+                y: 101.12099,
+                z: -71,
                 experience: 49250,
                 level: 5);
             context.SeedStartingExperience(characterId, CharacterStartingExperienceState.Bootcamp);
@@ -240,7 +241,7 @@ namespace Rasa.Test.Gameplay
                     .Count(packet => packet.WaypointId == BootcampSelectionTestContext.AliaDasHospitalId));
             Assert.AreEqual(0, departurePackets.OfType<UpdateMapMarkerPacket>().Count());
 
-            context.CompletePendingMapLinkTransfer(client);
+            context.CompletePendingDeparture(client);
             MissionTestContext.Drain(client);
             MapMarkerManager.Instance.PlayerEnteredMap(client);
 
@@ -306,9 +307,9 @@ namespace Rasa.Test.Gameplay
                 1,
                 "Departed",
                 mapContextId: BootcampSelectionTestContext.BootcampMapContextId,
-                x: -255.3125,
-                y: 101.05078,
-                z: -70.4375,
+                x: -225,
+                y: 101.12099,
+                z: -71,
                 rotation: 0,
                 experience: 49250,
                 level: 5);
@@ -329,7 +330,7 @@ namespace Rasa.Test.Gameplay
                     WaypointId = BootcampSelectionTestContext.ExitPadWaypointId,
                     MapInstanceId = departedClient.Player.MapChannel.InstanceId
                 });
-            context.CompletePendingMapLinkTransfer(departedClient);
+            context.CompletePendingDeparture(departedClient);
 
             context.SeedAccount(612, canSkipBootcamp: true);
             var skippedCharacterId = context.SeedCharacter(612, 1, "Skipped");
@@ -432,8 +433,8 @@ namespace Rasa.Test.Gameplay
                 1,
                 "Locked",
                 mapContextId: BootcampSelectionTestContext.BootcampMapContextId,
-                x: -255.3125,
-                y: 101.05078,
+                x: -225,
+                y: 101.12099,
                 z: -70.4375);
             context.SeedStartingExperience(characterId, CharacterStartingExperienceState.Bootcamp);
             context.SeedMission(characterId, BootcampSelectionTestContext.MissionFinale, MissionState.Active, completeable: false);
@@ -475,9 +476,9 @@ namespace Rasa.Test.Gameplay
                 1,
                 "DuplicateExit",
                 mapContextId: BootcampSelectionTestContext.BootcampMapContextId,
-                x: -255.3125,
-                y: 101.05078,
-                z: -70.4375,
+                x: -225,
+                y: 101.12099,
+                z: -71,
                 experience: 49250,
                 level: 5);
             context.SeedStartingExperience(characterId, CharacterStartingExperienceState.Bootcamp);
@@ -506,7 +507,8 @@ namespace Rasa.Test.Gameplay
             var departurePackets = MissionTestContext.Drain(client);
 
             Assert.AreSame(pendingTransfer, client.PendingTransfer);
-            Assert.AreEqual(RasaGame::Rasa.Data.ClientState.Teleporting, client.State);
+            Assert.AreEqual(RasaGame::Rasa.Data.ClientState.Ingame, client.State);
+            Assert.IsTrue(client.PendingTransfer.IsDropship);
             CollectionAssert.AreEquivalent(
                 new[] { BootcampSelectionTestContext.AliaDasWaypointId, BootcampSelectionTestContext.AliaDasHospitalId },
                 departurePackets.OfType<WaypointGainedPacket>()
@@ -549,8 +551,8 @@ namespace Rasa.Test.Gameplay
                     context.ReadInventoryTemplates(631, characterId));
             }
 
-            context.CompletePendingMapLinkTransfer(client);
-            context.CompletePendingMapLinkTransfer(client);
+            context.CompletePendingDeparture(client);
+            context.CompletePendingDeparture(client);
 
             Assert.IsNull(context.Maps.FindOwnedPrivateInstance(
                 BootcampSelectionTestContext.BootcampMapContextId,
@@ -567,9 +569,9 @@ namespace Rasa.Test.Gameplay
                 1,
                 "ConcurrentExit",
                 mapContextId: BootcampSelectionTestContext.BootcampMapContextId,
-                x: -255.3125,
-                y: 101.05078,
-                z: -70.4375,
+                x: -225,
+                y: 101.12099,
+                z: -71,
                 experience: 49250,
                 level: 5);
             context.SeedStartingExperience(characterId, CharacterStartingExperienceState.Bootcamp);
@@ -598,7 +600,8 @@ namespace Rasa.Test.Gameplay
 
             Assert.IsNotNull(firstClient.PendingTransfer);
             Assert.IsNull(secondClient.PendingTransfer);
-            Assert.AreEqual(RasaGame::Rasa.Data.ClientState.Teleporting, firstClient.State);
+            Assert.AreEqual(RasaGame::Rasa.Data.ClientState.Ingame, firstClient.State);
+            Assert.IsTrue(firstClient.PendingTransfer.IsDropship);
             Assert.AreEqual(RasaGame::Rasa.Data.ClientState.Ingame, secondClient.State);
 
             using (var verify = context.OpenChar())
@@ -626,7 +629,7 @@ namespace Rasa.Test.Gameplay
                     new CharacterRepository(verify).Get(characterId).Experience);
             }
 
-            context.CompletePendingMapLinkTransfer(firstClient);
+            context.CompletePendingDeparture(firstClient);
             Assert.IsNull(context.Maps.FindOwnedPrivateInstance(
                 BootcampSelectionTestContext.BootcampMapContextId,
                 characterId));
@@ -646,9 +649,9 @@ namespace Rasa.Test.Gameplay
                 1,
                 "DepartureRollback",
                 mapContextId: BootcampSelectionTestContext.BootcampMapContextId,
-                x: -255.3125,
-                y: 101.05078,
-                z: -70.4375,
+                x: -225,
+                y: 101.12099,
+                z: -71,
                 level: 5,
                 experience: 49250);
             context.SeedStartingExperience(characterId, CharacterStartingExperienceState.Bootcamp);

@@ -120,12 +120,15 @@ namespace Rasa.Game.Missions
                 if (row.Version == 0)
                     Submit(runId, new SceneObservation(SceneEventKind.Started, row.Generation));
             }
-            var states = unit.CharacterMissions.Get(characterId).ToDictionary(mission => mission.MissionId, mission => mission.MissionState);
+            var assignments = unit.CharacterMissions.Get(characterId).ToDictionary(mission => mission.MissionId);
+            var states = assignments.ToDictionary(entry => entry.Key, entry => entry.Value.MissionState);
             foreach (var history in unit.CharacterMissions.Runtime.History(characterId))
                 states.TryAdd(history.MissionId, history.Outcome);
             foreach (var trigger in experience.MissionTriggers.Where(trigger =>
                 states.TryGetValue(trigger.MissionId, out var state) &&
-                (trigger.Event == "Accepted" || trigger.Event == "Rewarded" && state == (uint)Data.MissionState.Completed)))
+                (trigger.Event == "Accepted" || trigger.Event == "Rewarded" && state == (uint)Data.MissionState.Completed ||
+                 trigger.Event == "Completeable" && state == (uint)Data.MissionState.Active &&
+                    assignments.TryGetValue(trigger.MissionId, out var assignment) && assignment.Completeable)))
                 Submit(runId, new SceneObservation(SceneEventKind.Signal, _runs[runId].Run.Generation, SequenceId: trigger.SequenceId));
         }
 

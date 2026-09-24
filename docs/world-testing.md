@@ -80,6 +80,26 @@ starting-experience state `Bootcamp`, can accept this arrival offer. The mission
 and initial objectives are committed before `MissionGained` is sent. Reconnecting
 before acceptance offers it again; reconnecting after acceptance restores progress.
 
+The two icons under "You will receive" show **credits** and **prestige**, not XP.
+Initiation grants 100 XP and, after `BootcampMissionAudioAndCredits`, 100 credits.
+Gearing Up, Capture the Flag, Calling for Reinforcements and its retry each
+grant 200 credits at their successful mission turn-in. Prestige remains zero.
+The retry is the alternative failed-attempt path, not a second grant for the
+original mission. The native client has no XP field in this reward tuple. NPC/radio offers,
+mission gain and mission-log snapshots use the same authored currency/item
+preview as turn-in; creating a preview does not grant rewards.
+
+Mission voices use generic authored audio metadata, not Bootcamp-specific
+branches in the manager. The offer's existing audio slot plays narration when
+the dialog opens: Bootcamp uses sets `2773`, `2774`, `2775`, and `2776` for
+missions `1990`, `1992`, `1994`, and `1995`. Eloh announcements bind sets `2788`
+and `2789`; successful Initiation completion binds McAllister's set `2777`.
+These IDs refer to installed native audio sets, not copied sound files.
+Accepted/completed/announcement cues run after committed progress and are not
+replayed by a rejected duplicate request or ordinary reconnect. The native
+offer narrator owns its dialog playback; it is not played again by a second
+acceptance cue unless one is explicitly authored.
+
 Apply the `BootcampLightningCue` **World** migration when deploying (SQLite
 applies pending migrations on startup; MySQL requires an explicit update). It
 changes the first Eloh greeting to `1634`, the client's Logos/Lightning cue.
@@ -671,8 +691,28 @@ Entering area `435` reveals the survivor without completing objective `2`.
 Speaking to survivor package `2584` completes that objective and reveals
 Conrad's bomb interaction. Recovering the bomb starts the 600-second deadline;
 finishing the 1400 ms planting windup satisfies it before the fuse and
-reinforcement arrival. Van Valkenberg's dialogue makes the final handoff
-available through the existing departure interaction.
+reinforcement arrival. After the five-second fuse, the wreck receives its native
+closed-to-open destruction transition. Two seconds later the wreck is removed
+and Van Valkenberg appears. Checking in enables evacuation on the cleared pad;
+it does not board the player automatically.
+
+Walk onto the cleared pad and choose to board in the dropship travel window.
+The ready hovering ship is replaced by the normal departure flight, followed
+by the wilderness load and arrival flight at Alia Das. Departure commits the
+existing Bootcamp progression/entitlement changes once, and the old private map
+is released after destination persistence succeeds. The mission remains ready
+for its existing Rogers turn-in in the wilderness.
+
+Waypoint 60 now uses the wreck's pad at `(-225, 101.12099, -71)`, rather than
+the old hillside location. Bootcamp no longer creates an always-on hovering
+ship at map entry. The boarding window and ready ship become available only
+after check-in, including reconnect at that stage. Other public-world dropship
+pads keep their existing visuals.
+
+`BootcampFinalePresentation` is a forward data migration for both providers.
+It updates the versioned C# scene/experience definitions and pad location;
+SQLite applies it normally on startup. It does not require another database
+reset or a mission publish step.
 
 The bomb target uses tutorial wreck class `24586`, not dropship-crate class
 `24911`. Its authored shared role and experience-owned effects drive reconnect
@@ -681,6 +721,12 @@ crash-site destination is the user-confirmed `(-225, 101, -71)` near the damaged
 landing pad; authored actors and interactions are grounded against the current
 Bootcamp navmesh. Conrad and the wreck use their shipped usable-state contract,
 including disabled planting after the charge is placed.
+
+The explosion uses native `Use` for state `31 -> 91`, whose client data binds
+the transition animation and effect package `37160`. `ForceState` and
+`UsableInfo` set a state directly and are not substitutes for this transition.
+The server-side packet/lifecycle sequence is covered automatically; native
+animation rendering and camera behavior still require an in-game check.
 
 The bomb target is tutorial wreck class `24586` (mesh `20000024`), not dropship
 crate class `24911` or extraction landing-pad class `29771`. Planting triggers

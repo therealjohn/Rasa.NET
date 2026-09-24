@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Rasa.Missions.Runtime;
 using ProgressCandidate = Rasa.Missions.Runtime.MissionProgressCandidate;
 using System.Text.Json;
+using Rasa.Missions.Content;
 using Rasa.Game.Missions.Content;
 using Rasa.Repositories.World;
 using Rasa.Game.Missions.Persistence;
@@ -118,14 +119,48 @@ namespace Rasa.Managers
                 }
             }
 
-            return definition.CreateInfo(
+            return WithRewardInfo(definition, definition.CreateInfo(
                 runtimeMission.State,
                 runtimeMission.Completeable,
                 runtimeMission.Objectives,
                 objectiveId =>
                     objectiveId == activeDeadlineObjectiveId
                         ? timeRemaining
-                        : null);
+                        : null));
+        }
+
+        internal MissionInfo BuildOfferInfo(Mission definition, MissionState state = MissionState.NotAssigned)
+        {
+            var info = WithRewardInfo(definition, definition.CreateInfo(state, false, definition.CreateInitialObjectiveLogs()));
+            info.AudioSetId = checked((int)(_catalog.SceneBindings.GetValueOrDefault(definition.MissionId)?
+                .Audio?.OfferAudioSetId ?? 0));
+            return info;
+        }
+
+        internal void PublishAudio(Client client, uint missionId, MissionAudioEvent audioEvent)
+        {
+            if (_catalog.SceneBindings.GetValueOrDefault(missionId)?.Audio?.Events is { } events &&
+                events.TryGetValue(audioEvent, out var audioSetId))
+                PlayVoice(client, missionId, audioSetId);
+        }
+
+        internal void PublishAnnouncementAudio(Client client, uint missionId, uint greetingId)
+        {
+            if (_catalog.SceneBindings.GetValueOrDefault(missionId)?.Audio?.Announcements is { } announcements &&
+                announcements.TryGetValue(greetingId, out var audioSetId))
+                PlayVoice(client, missionId, audioSetId);
+        }
+
+        private static void PlayVoice(Client client, uint missionId, uint audioSetId) =>
+            MissionApplication.TryPublish(
+                () => CommunicatorManager.Instance.PlayTutorialAudio(client, audioSetId),
+                $"mission {missionId} voice {audioSetId}");
+
+        private MissionInfo WithRewardInfo(Mission definition, MissionInfo info)
+        {
+            if (_catalog.Rewards.TryGetValue(definition.MissionId, out var reward))
+                info.MissionConstantData.RewardInfo = reward.CreateInfo();
+            return info;
         }
 
         public void PublishInitialState(Client client)

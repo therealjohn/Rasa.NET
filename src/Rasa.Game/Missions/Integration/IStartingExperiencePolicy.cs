@@ -16,7 +16,8 @@ namespace Rasa.Game.Missions.Integration
         void OfferStartingExperienceMission(Client client);
         bool CanAcceptRadio(Manifestation player, uint missionId, ICharUnitOfWork unit);
         bool IsExitPad(uint mapContextId, uint waypointId);
-        bool TryDepart(Client client);
+        bool IsDepartureReady(Client client);
+        bool TryDepart(Client client, DynamicObjectManager objects);
     }
 
     internal static class StartingExperienceComposition

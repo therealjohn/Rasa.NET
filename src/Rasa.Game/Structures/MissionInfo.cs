@@ -25,7 +25,10 @@ namespace Rasa.Structures
             pw.WriteTuple(6);
             pw.WriteUInt(MissionConstantData.Level);
             pw.WriteStruct(MissionConstantData.RewardInfo);
-            pw.WriteNoneStruct(); // offerVOAudioSetId
+            if (AudioSetId > 0)
+                pw.WriteInt(AudioSetId);
+            else
+                pw.WriteNoneStruct();
             pw.WriteList(ItemRequired.Count);
             foreach (var item in ItemRequired)
                 pw.WriteInt(item);

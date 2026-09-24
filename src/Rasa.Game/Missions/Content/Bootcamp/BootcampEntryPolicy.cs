@@ -26,6 +26,11 @@ namespace Rasa.Game.Missions.Content.Bootcamp
         public bool CanSkip(GameAccountEntry account) => account?.CanSkipBootcamp == true;
         public bool IsExitPad(uint mapContextId, uint waypointId) =>
             mapContextId == BootcampPrivateMapContextId && waypointId == BootcampExitPadWaypointId;
+        public bool IsDepartureReady(Client client) =>
+            client?.Player != null && IsOwnedBootcampPlayer(client.Player) &&
+            !client.Player.StartingExperienceCompleted &&
+            client.Player.Missions.Values.Any(mission => mission.State == MissionState.Active &&
+                mission.Completeable && (_missionManager ?? MissionApplication.Instance).HasPlayerTriggeredScenario(mission.MissionId));
 
         public bool TrySelect(Client client, bool skip, CharacterEntry character, ICharUnitOfWork unitOfWork,
             out CharacterStartingExperienceState? state)
@@ -122,7 +127,7 @@ namespace Rasa.Game.Missions.Content.Bootcamp
             return MapChannelManager.Instance.FindByContextId(character?.MapContextId ?? 0);
         }
 
-        public bool TryDepart(Client client)
+        public bool TryDepart(Client client, DynamicObjectManager objects)
         {
             if (client?.Player == null ||
                 client.State != ClientState.Ingame ||
@@ -135,7 +140,15 @@ namespace Rasa.Game.Missions.Content.Bootcamp
 
             var destinationMap = MapChannelManager.Instance.FindByContextId(
                 BootcampArrivalMapContextId);
-            if (destinationMap == null)
+            var destination = new System.Numerics.Vector3(
+                (float)BootcampArrivalCoordX, (float)BootcampArrivalCoordY, (float)BootcampArrivalCoordZ);
+            if (!objects.CanBeginDropshipTravel(client, destinationMap, destination, BootcampArrivalRotation) ||
+                !client.Player.MapChannel.Teleporters.TryGetValue(BootcampExitPadWaypointId, out var pad))
+                return false;
+            var readyMission = client.Player.Missions.Values.FirstOrDefault(mission =>
+                mission.State == MissionState.Active && mission.Completeable &&
+                (_missionManager ?? MissionApplication.Instance).HasPlayerTriggeredScenario(mission.MissionId));
+            if (readyMission == null)
                 return false;
 
             var departed = false;
@@ -216,15 +229,15 @@ namespace Rasa.Game.Missions.Content.Bootcamp
                     BootcampAliaHospitalId,
                     (byte)WaypointType.Hospital));
 
-            return MapChannelManager.Instance.ChangeMap(
-                client,
-                destinationMap,
-                new System.Numerics.Vector3(
-                    (float)BootcampArrivalCoordX,
-                    (float)BootcampArrivalCoordY,
-                    (float)BootcampArrivalCoordZ),
-                (float)BootcampArrivalRotation,
-                releaseOwnedPrivateInstancesForCharacterId: client.Player.Id);
+            MissionApplication.TryPublish(
+                () => (_missionManager ?? MissionApplication.Instance).Scenes.MissionChanged(client, readyMission.MissionId, "Departing"),
+                $"character {client.Player.Id} evacuation boarding");
+            var started = objects.TryBeginDropshipTravel(client, destinationMap, destination, BootcampArrivalRotation,
+                pad.Position, pad.Rotation, releaseOwnedPrivateInstancesForCharacterId: client.Player.Id);
+            if (!started)
+                Logger.WriteLog(LogType.Error,
+                    $"Bootcamp completion committed for character {client.Player.Id}, but flight could not start; reconnect restores the completed arrival.");
+            return started;
         }
 
         private void ApplyBootcampSkipParity(

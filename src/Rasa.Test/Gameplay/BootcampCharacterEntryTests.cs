@@ -602,6 +602,7 @@ namespace Rasa.Test.Gameplay
             var map = client.Player.MapChannel;
             map.QueuedClients.Clear();
             EnsureEntityClass(client.Player.EntityClass);
+            EnsureEntityClass(EntityClasses.UsableCrSpawnerHumDropshipV01);
             if (client.Player.Inventory.EquippedInventory.Count == 0)
                 for (var index = 0; index < 22; index++)
                     client.Player.Inventory.EquippedInventory.Add(0);
@@ -622,8 +623,29 @@ namespace Rasa.Test.Gameplay
             CellManager.Instance.AddToWorld(client);
         }
 
-        internal void CompletePendingMapLinkTransfer(Client client)
+        internal void CompletePendingDeparture(Client client)
         {
+            if (client.PendingTransfer?.IsDropship == true)
+            {
+                var origin = client.PendingTransfer.OriginMap;
+                var ship = Objects.Dropships[client.PendingTransfer.DropshipId];
+                for (var phase = 0; phase < 6; phase++)
+                    Objects.DropshipsWorker(origin, Math.Max(0, ship.PhaseTimeleft));
+                Assert.IsTrue(client.PendingTransfer.HasDeparted);
+                Assert.AreEqual(RasaGame::Rasa.Data.ClientState.Teleporting, client.State);
+                var destination = client.PendingTransfer.DestinationMap;
+                if (!Objects.CompleteMapLoadTransfer(client))
+                    return;
+                if (!destination.ClientList.Contains(client))
+                    destination.ClientList.Add(client);
+                CellManager.Instance.AddToWorld(client);
+                var arrival = new Dropship(Factions.AFS, DropshipType.Teleporter, client, DropshipRole.Arrival);
+                CellManager.Instance.AddToWorld(destination, arrival);
+                Objects.Dropships.Add(arrival.EntityId, arrival);
+                for (var phase = 0; phase < 6; phase++)
+                    Objects.DropshipsWorker(destination, Math.Max(0, arrival.PhaseTimeleft));
+                return;
+            }
             typeof(MapChannelManager)
                 .GetMethod(
                     "CompleteMapLinkTransfer",

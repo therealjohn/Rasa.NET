@@ -55,6 +55,8 @@ namespace Rasa.Managers
             {
                 if (mapTrigger.TriggeredBy.Contains(client))
                     return;
+                if (!Objects.IsStationAvailable(client, mapTrigger.MapContextId, mapTrigger.TriggerId))
+                    return;
 
                 if (!Objects.Teleporters.TryGetValue(mapTrigger.TriggerId, out var station) ||
                     station.ObjectData is not WaypointInfo waypoint || waypoint.WaypointType != WaypointType.Dropship)
@@ -74,8 +76,9 @@ namespace Rasa.Managers
         }
         internal void PlayerExitTriggerRange(Client client, MapTrigger mapTrigger)
         {
-            if (client.State != ClientState.Ingame ||
+            if (client.State != ClientState.Ingame || client.PendingTransfer != null ||
                 client.Player?.MapChannel?.MapInfo.MapContextId != mapTrigger.MapContextId ||
+                !Objects.IsStationAvailable(client, mapTrigger.MapContextId, mapTrigger.TriggerId) ||
                 !client.Player.IsNear5m(mapTrigger))
                 if (mapTrigger.TriggeredBy.Contains(client))
                 {

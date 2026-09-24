@@ -169,6 +169,8 @@ namespace Rasa.Managers
             _protocol.PublishMissionStatus(client, missionId, description);
         internal MissionInfo BuildPublishedMissionInfo(Manifestation player, Mission definition, MissionLog mission) =>
             _protocol.BuildPublishedMissionInfo(player, definition, mission);
+        internal void PublishAnnouncementAudio(Client client, uint missionId, uint greetingId) =>
+            _protocol.PublishAnnouncementAudio(client, missionId, greetingId);
         public void PublishInitialState(Client client)
         {
             Scenes.Resume(client);
@@ -214,10 +216,7 @@ namespace Rasa.Managers
                 return;
             }
 
-            var offer = definition.CreateInfo(
-                MissionState.NotAssigned, false, definition.CreateInitialObjectiveLogs());
-            if (_catalog.Rewards.TryGetValue(missionId, out var reward))
-                offer.MissionConstantData.RewardInfo = reward.CreateInfo();
+            var offer = _protocol.BuildOfferInfo(definition);
             PublishMissionPacket(client, new DispenseRadioMissionPacket(missionId, offer, true),
                 $"radio mission {missionId} offer");
         }
@@ -635,6 +634,7 @@ namespace Rasa.Managers
                     $"mission {missionId} acceptance world state");
                 TryPublish(() => Scenes.MissionChanged(client, missionId, "Accepted"),
                     $"mission {missionId} experience acceptance");
+                _protocol.PublishAudio(client, missionId, Rasa.Missions.Content.MissionAudioEvent.Accepted);
 
                 // ClassifyNpcConversation's "dispensable" list is recomputed here, so the giver's
                 // available-mission icon would otherwise keep showing what it showed when this
@@ -817,6 +817,7 @@ namespace Rasa.Managers
                             client.Player.EntityId,
                             new MissionRewardedPacket(missionId)),
                         $"mission {missionId} rewarded");
+                    _protocol.PublishAudio(client, missionId, Rasa.Missions.Content.MissionAudioEvent.Completed);
                     RefreshNpcConversationStatuses(client);
                     return true;
                 }
@@ -1046,8 +1047,12 @@ namespace Rasa.Managers
                     client.CallMethod(client.Player.EntityId,
                         new ObjectiveActivatedPacket(missionId, successorId));
                 if (completeable)
+                {
                     client.CallMethod(client.Player.EntityId,
                         new MissionCompleteablePacket(missionId, true));
+                    TryPublish(() => Scenes.MissionChanged(client, missionId, "Completeable"),
+                        $"mission {missionId} experience ready state");
+                }
                 foreach (var scenarioId in actionApplication.StartScenarioIds)
                     if (ShouldStartScenarioAutomatically(missionId, scenarioId))
                         _scenarioService.TryExecute(client, missionId, scenarioId);
@@ -1425,10 +1430,14 @@ namespace Rasa.Managers
                                 new ObjectiveActivatedPacket(missionId, successorId),
                                 $"mission {missionId} objective {successorId} activated");
                         if (completeableChanged && completeable)
+                        {
                             PublishMissionPacket(
                                 client,
                                 new MissionCompleteablePacket(missionId, true),
                                 $"mission {missionId} completable");
+                            TryPublish(() => Scenes.MissionChanged(client, missionId, "Completeable"),
+                                $"mission {missionId} experience ready state");
+                        }
                         if (deadlineBecameActive)
                             PublishMissionStatus(
                                 client,
@@ -2326,10 +2335,7 @@ namespace Rasa.Managers
                         ArePrerequisitesSatisfied(player, mission.MissionId, out _))
                         dispensable.Add(
                             mission.MissionId,
-                            mission.CreateInfo(
-                                MissionState.Active,
-                                false,
-                                mission.CreateInitialObjectiveLogs()));
+                            _protocol.BuildOfferInfo(mission, MissionState.Active));
                     continue;
                 }
 

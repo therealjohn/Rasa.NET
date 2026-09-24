@@ -132,6 +132,11 @@ namespace Rasa.Managers
                             !experience.PrivatePerCharacter || string.IsNullOrWhiteSpace(experience.Revision))
                             throw new InvalidOperationException($"Experience {entry.ExperienceKey} has inconsistent migrated bindings.");
                         MissionSceneValidation.Validate(0, experience.Revision, experience.Scene, Array.Empty<uint>());
+                        foreach (var trigger in experience.MissionTriggers)
+                            if (!Missions.ContainsKey(trigger.MissionId) ||
+                                !experience.Scene.Sequences.ContainsKey(trigger.SequenceId) ||
+                                trigger.Event is not ("Accepted" or "Rewarded" or "Completeable" or "Departing"))
+                                throw new MissionRuleException($"Experience {experience.Key}: invalid mission trigger {trigger.MissionId}/{trigger.Event}.");
                         foreach (var actor in experience.Scene.Actors.Values.Where(actor =>
                             actor.Kind == Rasa.Missions.Scenes.SceneActorKind.PublicSpawn))
                             if (!publicSpawnIds.Contains(actor.TemplateId))

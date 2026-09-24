@@ -41,6 +41,23 @@ Deployment 11 starting experience:
 - NPC interaction: `ConversePacket` on `RequestNPCConverse`
 - map transfer: `PreWonkavatePacket -> WonkavatePacket`
 
+The finale sends `Use` on wreck class `24586` for the native `31 -> 91`
+transition, then removes the wreck after its presentation interval.
+Manual evacuation uses the normal dropship states, boarding fade, map-load
+handshake and arrival flight rather than an immediate map change.
+
+Mission reward previews retain the native fixed-currency/item and selectable-item
+tuple. The currency slots are credits and prestige; XP is granted separately
+and has no native preview field. The shared projection fills authored rewards
+for offers, gains and snapshots without changing reward amounts or granting them.
+
+The third field of the six-field mission offer is `offerVOAudioSetId`, now
+populated when the mission authors narration. Absent audio remains `None`.
+Accepted/completed and ambient-announcement voices use the existing
+`PlayTutorialAudio` client method after successful commits; its wire name does
+not impose a tutorial-map restriction. Do not add an extra tuple field or
+encode XP as a currency/audio value.
+
 Run the focused suite with:
 
 ```powershell
