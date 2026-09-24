@@ -82,11 +82,21 @@ in durable server progress. This prevents Initiation from displaying both
 "Approach the Eloh Hologram" steps before the second is revealed.
 
 Calling for Reinforcements (`1995`) uses the shipped client objective IDs
-`2, 3, 1, 4`. The survivor conversation belongs to objective `2`; the
-server-only reconstruction `10` is no longer sent in mission snapshots or
-objective updates. Text IDs alone cannot localize an invented objective ID:
-the client indexes mission objectives by the mission/objective pair.
-Legacy saves are converted without restarting an active bomb deadline.
+`2, 3, 1, 4`. Proximity completes objective `2`; the corpse's Continue action
+advances objective `3`. The native conversation lookup only has
+`(1995, 2, 2584, 1, COMPLETION)` for this text, so the authored object binding
+separates displayed objective `2` from progression objective `3`.
+The corpse is class `21081`, with NPC augmentation `52`, and receives
+`NPCInfo(2584)` plus `NPCConversationStatus`, not `UsableInfo`.
+`RequestNPCConverse` opens `Converse` with its objective-completion tuple;
+`CompleteNPCObjective(corpseId, 1995, 2, 1)` is validated against that open
+object/assignment before the scoped objective-3 transition commits.
+
+The former loot-only class `24990` has TreasureDispenser augmentation `64`,
+not the NPC receiver required for the Continue dialog. No standing or hidden
+proxy human is created, and no client files are changed. Server-only objective
+`10` is not sent. Current-branch saves are repaired without restarting an active
+bomb deadline.
 See the [Bootcamp checks](world-testing.md) for migration and interaction coverage.
 
 ## Coverage inventory

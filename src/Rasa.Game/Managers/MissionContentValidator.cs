@@ -413,6 +413,15 @@ namespace Rasa.Managers
                             transition.TransitionId,
                             actionId: action.ActionId));
                     }
+                    else if (action.Kind == MissionActionKind.SetPlayerFlag &&
+                        !Structures.Char.CharacterFlagIds.IsMissionFlag(action.PlayerFlagId.Value))
+                    {
+                        diagnostics.Add(new MissionValidationDiagnostic(
+                            "reserved-player-flag-id",
+                            "Mission flags must use IDs 1..2147483647; higher IDs are reserved for named server state.",
+                            definition.MissionId, definition.ContentRevision, transition.ObjectiveId,
+                            transition.TransitionId, actionId: action.ActionId));
+                    }
                 }
             }
 

@@ -15,7 +15,7 @@ namespace Rasa.Test.Gameplay
     using Repositories.Char.Character;
     using Repositories.Char.CharacterAbilityDrawer;
     using Repositories.Char.CharacterMission;
-    using Repositories.Char.CharacterQualification;
+    using Repositories.Char.CharacterFlag;
     using Repositories.Char.CharacterSkills;
     using Repositories.Char.CharacterStartingExperience;
     using Repositories.Char.CharacterTeleporter;
@@ -65,9 +65,9 @@ namespace Rasa.Test.Gameplay
             Assert.AreEqual(884.11d, durableCharacter.CoordX, 0.001d);
             Assert.AreEqual(305.8d, durableCharacter.CoordY, 0.001d);
             Assert.AreEqual(347.81d, durableCharacter.CoordZ, 0.001d);
-            Assert.IsTrue(new CharacterQualificationRepository(verify).HasQualification(
+            Assert.IsTrue(new CharacterFlagRepository(verify).HasValue(
                 characterId,
-                CharacterQualificationKey.BootcampComplete));
+                CharacterFlagIds.BootcampComplete));
             CollectionAssert.AreEquivalent(
                 new[] { BootcampSelectionTestContext.AliaDasWaypointId, BootcampSelectionTestContext.AliaDasHospitalId },
                 waypointRepository.Get(characterId).Select(entry => entry.WaypointId).ToArray());
@@ -154,9 +154,9 @@ namespace Rasa.Test.Gameplay
             Assert.AreEqual(0, new CharacterTeleporterRepository(verify).Get(characterId).Count);
             Assert.AreEqual(0, new CharacterSkillsRepository(verify).GetCharacterSkills(characterId).Count);
             Assert.AreEqual(0, new CharacterAbilityDrawerRepository(verify).GetCharacterAbilities(characterId).Count);
-            Assert.IsFalse(new CharacterQualificationRepository(verify).HasQualification(
+            Assert.IsFalse(new CharacterFlagRepository(verify).HasValue(
                 characterId,
-                CharacterQualificationKey.BootcampComplete));
+                CharacterFlagIds.BootcampComplete));
         }
 
         [TestMethod]
@@ -189,10 +189,10 @@ namespace Rasa.Test.Gameplay
                     0,
                     (int)ActionId.AaRecruitLightning,
                     1);
-                seed.CharacterQualifications.Add(
-                    new CharacterQualificationEntry(
+                seed.CharacterFlags.Add(
+                    new CharacterFlagEntry(
                         characterId,
-                        CharacterQualificationKey.BootcampComplete));
+                        CharacterFlagIds.BootcampComplete));
             }
             var firstClient = context.CreateSelectionClient(54);
             context.Characters.RequestSwitchToCharacterInSlot(
@@ -247,9 +247,9 @@ namespace Rasa.Test.Gameplay
                 new CharacterStartingExperienceRepository(verify).Get(characterId).State);
             Assert.AreEqual(0, context.ReadInventoryTemplates(55, characterId).Length);
             Assert.AreEqual(0, new CharacterTeleporterRepository(verify).Get(characterId).Count);
-            Assert.IsFalse(new CharacterQualificationRepository(verify).HasQualification(
+            Assert.IsFalse(new CharacterFlagRepository(verify).HasValue(
                 characterId,
-                CharacterQualificationKey.BootcampComplete));
+                CharacterFlagIds.BootcampComplete));
             Assert.AreEqual(0, new CharacterSkillsRepository(verify).GetCharacterSkills(characterId).Count);
         }
     }

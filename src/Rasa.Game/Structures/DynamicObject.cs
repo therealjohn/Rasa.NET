@@ -53,5 +53,6 @@ namespace Rasa.Structures
         /// </summary>
         public ulong LootDispenserEntityId { get; set; }
         internal MissionLootSource MissionLootSource { get; set; }
+        internal Rasa.Missions.Scenes.SceneObjectConversation MissionConversation { get; set; }
     }
 }

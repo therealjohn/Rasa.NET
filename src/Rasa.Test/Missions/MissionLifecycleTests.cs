@@ -1110,6 +1110,8 @@ namespace Rasa.Test.Missions
                     context.Client.Player.Level = 2;
                     break;
                 case MissionPrerequisiteKind.PlayerFlagValue:
+                    using (var unit = context.CreateChar())
+                        unit.CharacterFlags.Set(context.Client.Player.Id, 9, 3);
                     context.Client.Player.PlayerFlags[9] = 3;
                     break;
                 default:

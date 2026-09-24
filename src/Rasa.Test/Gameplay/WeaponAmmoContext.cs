@@ -296,7 +296,7 @@ namespace Rasa.Test.Gameplay
                 characterMissionProgress: null,
                 characterMissionScenario: null,
                 characterOptions: null,
-                characterQualifications: null,
+                characterFlags: null,
                 characterSkills: new Rasa.Repositories.Char.CharacterSkills.CharacterSkillsRepository(context),
                 characterStartingExperience: null,
                 characterTeleporters: null,

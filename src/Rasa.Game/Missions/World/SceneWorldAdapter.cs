@@ -263,6 +263,9 @@ namespace Rasa.Game.Missions.World
             }
             if (definition.Position == null)
                 return WorldEffectResult.Failed($"Spawn role {definition.Role} has no position.");
+            if (definition.Conversation != null &&
+                EntityClassManager.Instance.GetClassInfo((EntityClasses)definition.TemplateId)?.Augmentations.Contains(AugmentationType.NPC) != true)
+                return WorldEffectResult.Failed($"Conversation role {definition.Role} requires a native NPC augmentation.");
             if (definition.SharedKey != null && !world.Map.IsPrivateInstance)
                 return WorldEffectResult.Failed("Shared experience roles require their actual private map.");
             var runtimeKey = definition.SharedKey == null
@@ -315,6 +318,7 @@ namespace Rasa.Game.Missions.World
                     obj.SceneMissionId = world.Run.MissionId;
                     obj.SceneActorRole = definition.Role;
                     obj.SceneGeneration = world.Run.Generation;
+                    obj.MissionConversation = definition.Conversation;
                     if (definition.Kind == SceneActorKind.PracticeTarget)
                         obj.DynamicObjectType = DynamicObjectType.PracticeDummy;
                     if (definition.LootMissionId.HasValue && definition.LootRewardId.HasValue && definition.LootObjectiveId.HasValue)
@@ -395,7 +399,8 @@ namespace Rasa.Game.Missions.World
 
         private static bool ObjectShapeMatches(DynamicObject obj, SceneActorDefinition definition) =>
             (uint)obj.EntityClassId == definition.TemplateId && definition.Position != null &&
-            obj.Position == SceneRouteController.Position(definition.Position) && obj.Rotation == definition.Orientation;
+            obj.Position == SceneRouteController.Position(definition.Position) && obj.Rotation == definition.Orientation &&
+            obj.MissionConversation == definition.Conversation;
 
         private bool IsCurrent(WorldRun world, BoundActor actor) =>
             actor.Handle.Generation == world.Run.Generation && actor.Handle.MapEpoch == world.Map.MissionEpoch &&

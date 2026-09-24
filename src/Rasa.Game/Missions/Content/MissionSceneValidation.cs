@@ -30,6 +30,15 @@ namespace Rasa.Game.Missions.Content
                     actor.Value.Position is { } position &&
                         (!float.IsFinite(position.X) || !float.IsFinite(position.Y) || !float.IsFinite(position.Z)))
                     throw new MissionRuleException($"Mission {missionId}: invalid actor role {actor.Key}.");
+            foreach (var actor in scene.Actors.Values.Where(actor => actor.Conversation != null))
+            {
+                var conversation = actor.Conversation;
+                if (actor.Kind != SceneActorKind.Object || conversation.MissionId is 0 or > int.MaxValue ||
+                    conversation.ObjectiveId == 0 || conversation.NpcPackageId == 0 ||
+                    conversation.DialogObjectiveId is 0 or > int.MaxValue || conversation.PlayerFlagId is 0 or > int.MaxValue ||
+                    missionId != 0 && (conversation.MissionId != missionId || !objectiveIds.Contains(conversation.ObjectiveId)))
+                    throw new MissionRuleException($"Mission {missionId}: invalid object conversation for {actor.Role}.");
+            }
             if (scene.PublicEncounter is { } encounter &&
                 (encounter.MissionId != missionId || encounter.ScriptKey != scene.Script ||
                  !scene.Actors.TryGetValue(encounter.Role, out var publicActor) ||

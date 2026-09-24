@@ -32,6 +32,8 @@ namespace Rasa.Test.Missions.Content
                 }));
             var giver = harness.AddNpc(BootcampRuntimeTestHarness.MajorMcAllisterCreatureId);
             harness.Client.Player.PlayerFlags[903] = 1;
+            using (var unit = harness.Context.CreateChar())
+                unit.CharacterFlags.Set(harness.Client.Player.Id, 903, 1);
             Assert.IsFalse(HasMission(Converse(harness, giver), ConversationType.MissionDispense, 1990));
             Assert.IsFalse(harness.Manager.TryAcceptNpcMission(harness.Client, giver.EntityId, 1990));
 
@@ -48,6 +50,8 @@ namespace Rasa.Test.Missions.Content
 
             SetLevel(harness, 3);
             harness.Client.Player.PlayerFlags.Remove(903);
+            using (var unit = harness.Context.CreateChar())
+                unit.CharacterFlags.Remove(harness.Client.Player.Id, 903);
             CompleteInitiationObjectives(harness);
             Assert.IsTrue(HasMission(Converse(harness, giver), ConversationType.MissionComplete, 1990));
             Assert.IsTrue(harness.Manager.TryCompleteNpcMission(harness.Client, giver.EntityId, 1990, null, null));

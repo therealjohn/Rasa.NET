@@ -21,7 +21,7 @@ namespace Rasa.Repositories.UnitOfWork
     using Char.CharacterMissionProgress;
     using Char.CharacterMissionScenario;
     using Char.CharacterOption;
-    using Char.CharacterQualification;
+    using Char.CharacterFlag;
     using Char.CharacterSkills;
     using Char.CharacterStartingExperience;
     using Char.CharacterTeleporter;
@@ -73,8 +73,8 @@ namespace Rasa.Repositories.UnitOfWork
 
         public ICharacterOptionRepository CharacterOptions => _parent.CharacterOptions;
 
-        public ICharacterQualificationRepository CharacterQualifications =>
-            _parent.CharacterQualifications;
+        public ICharacterFlagRepository CharacterFlags =>
+            _parent.CharacterFlags;
 
         public ICharacterSkillsRepository CharacterSkills => _parent.CharacterSkills;
 

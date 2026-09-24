@@ -237,6 +237,11 @@ namespace Rasa.Managers
                     $"{client.Player.FamilyName} sent {packet.ActionId}/{packet.ActionArgId} to use object {packet.EntityId}; an object is used with {ActionId.UseObject}. Ignored.");
                 return;
             }
+            if (obj.MissionConversation != null)
+            {
+                (_missionManager ?? MissionApplication.Instance).ObjectConversations.Open(client, obj.EntityId);
+                return;
+            }
 
             if (obj.MissionLootSource != null || obj.LootDispenserEntityId != 0)
             {
@@ -455,6 +460,15 @@ namespace Rasa.Managers
                 CellManager.Instance.CellCallMethod(mapChannel, dynamicObject,
                     new IsTargetablePacket(classInfo.TargetFlag || enabled));
             }
+            if (dynamicObject.MissionConversation != null)
+            {
+                if (CellManager.TryGetCellCoordinates(dynamicObject.Position, out var x, out var z))
+                    foreach (var recipient in CellManager.Instance.GetClientsInCells(mapChannel,
+                        CellManager.Instance.CreateCellMatrix(mapChannel, x, z)))
+                        recipient.CallMethod(dynamicObject.EntityId,
+                            (_missionManager ?? MissionApplication.Instance).ObjectConversations.Status(recipient, dynamicObject));
+                return;
+            }
             CellManager.Instance.CellCallMethod(
                 mapChannel,
                 dynamicObject,
@@ -506,10 +520,16 @@ namespace Rasa.Managers
                 // PhysicalEntity
                 new IsTargetablePacket(classInfo.TargetFlag ||
                     dynamicObject.SceneRunId != null && dynamicObject.IsEnabled),
-                new WorldLocationDescriptorPacket(dynamicObject.Position, dynamicObject.Rotation),
-                // set state
-                new UsableInfoPacket(dynamicObject.IsEnabled, dynamicObject.StateId, 0, dynamicObject.WindupTime, dynamicObject.ActivateMission)
-        };
+                new WorldLocationDescriptorPacket(dynamicObject.Position, dynamicObject.Rotation)
+            };
+            if (dynamicObject.MissionConversation is { } conversation)
+            {
+                entityData.Add(new NPCInfoPacket(conversation.NpcPackageId));
+                entityData.Add((_missionManager ?? MissionApplication.Instance).ObjectConversations.Status(client, dynamicObject));
+            }
+            else
+                entityData.Add(new UsableInfoPacket(dynamicObject.IsEnabled, dynamicObject.StateId, 0,
+                    dynamicObject.WindupTime, dynamicObject.ActivateMission));
 
             // Only for an object that actually has a lock. An unlocked usable is the default the
             // client already assumes, and sending a lock of zeroes would tell it the same thing

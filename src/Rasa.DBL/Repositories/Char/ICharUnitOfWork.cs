@@ -20,7 +20,7 @@
     using CharacterMissionProgress;
     using CharacterMissionScenario;
     using CharacterOption;
-    using CharacterQualification;
+    using CharacterFlag;
     using CharacterTeleporter;
     using CharacterTitle;
     using CharacterStartingExperience;
@@ -49,7 +49,7 @@
         ICharacterMissionProgressRepository CharacterMissionProgress { get; }
         ICharacterMissionScenarioRepository CharacterMissionScenario { get; }
         ICharacterOptionRepository CharacterOptions { get; }
-        ICharacterQualificationRepository CharacterQualifications { get; }
+        ICharacterFlagRepository CharacterFlags { get; }
         ICharacterSkillsRepository CharacterSkills { get; }
         ICharacterStartingExperienceRepository CharacterStartingExperience { get; }
         ICharacterTeleporterRepository CharacterTeleporters { get; }

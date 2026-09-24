@@ -707,9 +707,11 @@ The repository does not contain a native-client automation harness. Use this
 manual script when validating Bootcamp in the retail `1.16.5.0` client.
 
 Calling for Reinforcements (`1995`) exposes only client objectives `2, 3, 1, 4`.
-Entering area `435` reveals the survivor without completing objective `2`.
-Speaking to survivor package `2584` completes that objective and reveals
-Conrad's bomb interaction. Recovering the bomb starts the 600-second deadline;
+Entering area `435` completes objective `2` ("Locate the missing AFS soldiers")
+and reveals Conrad's corpse interaction. No standing survivor NPC is spawned.
+Clicking the corpse opens the native mission Continue dialog; only Continue
+completes objective `3`, places the bomb in Mission inventory and starts the
+600-second deadline. Closing the dialog does not grant or advance anything;
 finishing the 1400 ms planting windup satisfies it before the fuse and
 reinforcement arrival. Planting also starts one six-Thrax assault at the foot
 of the hill. The attackers follow a grounded uphill route and engage the player;
@@ -789,21 +791,34 @@ timeout or abandonment removes it, and accepting retry `2005` supplies one new
 bomb. Item changes share the mission/scene transaction and are published only
 after commit. Full Mission inventory rejects pickup without completing the
 objective. The issuance receipt prevents repeated reconnects from granting
-extra bombs. The migration-owned design starts with fresh databases and does
-not backfill old experimental saves.
+extra bombs. The `BootcampCorpseDialogue` World migration replaces the
+loot-only corpse with native conversation-capable class `21081`
+(`UsableNPCHumMCorpseV01`, mesh `29456`).
+
+The matching `BootcampCorpseDialogueProgress` Char migration repairs current
+branch saves whose durable area-scene input proves that the missing soldiers
+were already found. It completes the search, exposes the corpse objective and
+retires old survivor spawn receipts without granting a bomb or changing an
+active/satisfied bomb deadline. Characters already carrying or planting a bomb
+keep that progress. Apply both World and Char migrations; SQLite does so during
+normal startup. This is not a conversion for pre-redesign experimental schemas,
+and does not require resetting current character databases.
 
 The old Conrad placement `(-102.4, 86.20677, 66.8)` was inside the client's
 static trench wall (class `9707`), despite having a nearby navmesh polygon.
-The C# Bootcamp data migration now places the corpse at `(-99, 86.41823, 74)`
+The C# Bootcamp data migration now places the corpse at `(-99, 86.33577, 74)`
 and indicator `436` at ground `(-99, 86.32086, 74)`. Mission and experience actor
-bindings use the same authored position; no runtime coordinate patch is needed.
+bindings use the same authored position. The new height accounts for class
+`21081`'s native render minimum Y of `-0.01490639`; its X/Z placement is unchanged.
 
 On a fresh migrated database, confirm the corpse is visible beside the missing team, the
-marker agrees with its location, and using it advances objective `3` and starts
-the bomb deadline. Also check reconnect before pickup, after pickup and after
-planting. Source-geometry checks cover the full corpse footprint, connected
-ground and an unobstructed sight line from the survivor; native-client rendering
-still needs the manual check.
+marker agrees with its location, and clicking it opens the mission dialog with
+a Continue button. Confirm that the search completes on proximity, opening or
+closing the dialog grants nothing, and Continue advances objective `3` and
+starts the bomb deadline. Check reconnect before opening, before Continue,
+after pickup and after planting. Source-geometry checks use the new corpse's
+measured footprint and connected approach; native-client rendering still needs
+the manual check.
 
 After rebuilding/restarting Game, check that the rifle image appears on login
 without pressing E, that the bomb appears in the Mission tab, and that the wreck
@@ -816,6 +831,13 @@ not the old experimental objective `10`. Runtime conversion of old objective
 layouts has been removed for the fresh-database design.
 
 ### SQLite pass
+
+The character-flag consolidation is fresh-database-only. Its schema migration
+does not backfill old qualification rows. On the new database, verify that a
+mission-set numeric flag survives reconnect, a failed transition grants no flag,
+and deleting/recreating a character does not carry flags into the new character.
+Bootcamp completion and skip store `CharacterFlagIds.BootcampComplete = 1`;
+the starting-experience state and account skip entitlement remain separate.
 
 1. Start from disposable SQLite character/world databases and apply migrations.
 2. Launch `Rasa.Auth` and `Rasa.Game`; normal initialization installs mission data.
@@ -848,7 +870,7 @@ the automated suites still cover offline MySQL migrations and model parity.
 Before signing off startup validation, intentionally break one required
 Bootcamp reference in a disposable database copy. Two safe examples are:
 
-- remove NPC package `2584` (the wounded survivor package), or
+- remove NPC package `2564` (Van Valkenberg), or
 - set `mission_objective_definition.client_body_text_id = 0` for mission `1995`
   objective `2`
 

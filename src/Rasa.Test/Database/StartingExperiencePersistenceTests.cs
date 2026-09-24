@@ -15,7 +15,7 @@ namespace Rasa.Test.Database
     using Rasa.Configuration.ContextSetup;
     using Rasa.Context.Char;
     using Rasa.Repositories.Char.Character;
-    using Rasa.Repositories.Char.CharacterQualification;
+    using Rasa.Repositories.Char.CharacterFlag;
     using Rasa.Repositories.Char.CharacterStartingExperience;
     using Rasa.Services.DbContext;
     using Rasa.Structures.Char;
@@ -33,15 +33,15 @@ namespace Rasa.Test.Database
                 SeedCharacter(context, 17, 123, 1, 1220);
 
                 var experience = new CharacterStartingExperienceRepository(context);
-                var qualifications = new CharacterQualificationRepository(context);
+                var qualifications = new CharacterFlagRepository(context);
 
                 experience.Add(new CharacterStartingExperienceEntry(
                     123,
                     "deployment_11",
                     CharacterStartingExperienceState.Pending));
-                qualifications.Add(new CharacterQualificationEntry(
+                qualifications.Add(new CharacterFlagEntry(
                     123,
-                    CharacterQualificationKey.BootcampComplete));
+                    CharacterFlagIds.BootcampComplete));
 
                 using var reopened = Open(database);
                 var savedExperience = new CharacterStartingExperienceRepository(reopened).Get(123);
@@ -49,8 +49,8 @@ namespace Rasa.Test.Database
                 Assert.AreEqual("deployment_11", savedExperience.ContentRevision);
                 Assert.AreEqual(CharacterStartingExperienceState.Pending, savedExperience.State);
 
-                Assert.IsTrue(new CharacterQualificationRepository(reopened)
-                    .HasQualification(123, CharacterQualificationKey.BootcampComplete));
+                Assert.IsTrue(new CharacterFlagRepository(reopened)
+                    .HasValue(123, CharacterFlagIds.BootcampComplete));
             });
         }
 
@@ -95,9 +95,9 @@ namespace Rasa.Test.Database
                     123,
                     "deployment_11",
                     CharacterStartingExperienceState.Pending));
-                new CharacterQualificationRepository(context).Add(new CharacterQualificationEntry(
+                new CharacterFlagRepository(context).Add(new CharacterFlagEntry(
                     123,
-                    CharacterQualificationKey.BootcampComplete));
+                    CharacterFlagIds.BootcampComplete));
 
                 using (var deleteContext = Open(database))
                 {
@@ -109,7 +109,7 @@ namespace Rasa.Test.Database
                 using var reopened = Open(database);
                 Assert.AreEqual(0, reopened.CharacterEntries.Count(entry => entry.Id == 123));
                 Assert.AreEqual(0, reopened.Set<CharacterStartingExperienceEntry>().Count(entry => entry.CharacterId == 123));
-                Assert.AreEqual(0, reopened.Set<CharacterQualificationEntry>().Count(entry => entry.CharacterId == 123));
+                Assert.AreEqual(0, reopened.Set<CharacterFlagEntry>().Count(entry => entry.CharacterId == 123));
             });
         }
 

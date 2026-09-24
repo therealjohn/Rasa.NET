@@ -60,6 +60,7 @@ namespace Rasa.Game
         private readonly object _clientLock = new();
         internal object SyncRoot => _clientLock;
         internal PlayerTransfer PendingTransfer { get; set; }
+        internal (DynamicObject Object, string AssignmentId)? PendingObjectConversation { get; set; }
 
         private readonly ClientPacketHandler _handler;
         private readonly PacketQueue _packetQueue = new();

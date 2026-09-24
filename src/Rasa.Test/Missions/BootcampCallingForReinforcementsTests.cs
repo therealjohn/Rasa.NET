@@ -382,11 +382,10 @@ namespace Rasa.Test.Missions
                 $"Conrad at {conrad.Position} must be visible above the ground at {ground.Value}.");
             Assert.IsLessThan(0.25f, Vector2.Distance(
                 new Vector2(marker.X, marker.Z), new Vector2(conrad.Position.X, conrad.Position.Z)));
-            Assert.IsLessThan(6f, Vector3.Distance(survivorPosition,
-                conrad.Position + new Vector3(0.16736676f, 0.033820882f, 0.19178998f)));
+            Assert.IsLessThan(6f, Vector3.Distance(survivorPosition, conrad.Position));
             // The shipped corpse's footprint must fit on connected ground, not just its origin.
-            foreach (var x in new[] { -0.6709014f, 0f, 1.1951588f })
-                foreach (var z in new[] { -0.99099433f, 0f, 0.47449246f })
+            foreach (var x in new[] { -0.41631162f, 0f, 0.45468274f })
+                foreach (var z in new[] { -1.0020568f, 0f, 0.42947608f })
                 {
                     var sample = conrad.Position + new Vector3(x, 0, z);
                     var surface = harness.BootcampMap.NavMesh.Nearest(sample);
@@ -404,7 +403,7 @@ namespace Rasa.Test.Missions
             var introduced = harness.Drain().OfType<CreatePhysicalEntityPacket>()
                 .SingleOrDefault(packet => packet.EntityId == conrad.EntityId);
             Assert.IsNotNull(introduced, "Approaching the objective marker must introduce Conrad to the client.");
-            Assert.AreEqual((EntityClasses)24990, introduced.ClassId);
+            Assert.AreEqual((EntityClasses)21081, introduced.ClassId);
             Assert.AreEqual(conrad.Position,
                 introduced.EntityData.OfType<WorldLocationDescriptorPacket>().Single().Position);
             Assert.IsTrue(conrad.IsEnabled);
@@ -426,7 +425,7 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(70.8, survivor.PosZ, 0.0001);
             var conrad = FindScenarioObject(harness, "bootcamp-conrad-corpse");
             Assert.IsLessThan(0.001f, Vector3.Distance(
-                new Vector3(-99, 86.41823f, 74), conrad.Position));
+                new Vector3(-99, 86.33577f, 74), conrad.Position));
             var wreck = FindScenarioObject(harness, "bootcamp-dropship-debris");
             Assert.IsLessThan(0.001f, Vector3.Distance(
                 new Vector3(-225, 101.12099f, -71), wreck.Position));
@@ -488,7 +487,7 @@ namespace Rasa.Test.Missions
             Assert.IsLessThan(0.001f, Vector3.Distance(
                 new Vector3(-225, 101.12099f, -71), rebuilt.Position));
             Assert.AreEqual(UseObjectState.DoorStateClosed, rebuilt.StateId);
-            Assert.AreEqual(UseObjectState.TdStateClosed, FindScenarioObject(harness, "bootcamp-conrad-corpse").StateId);
+            Assert.AreEqual((UseObjectState)0, FindScenarioObject(harness, "bootcamp-conrad-corpse").StateId);
             Assert.AreNotEqual(legacy.EntityId, rebuilt.EntityId);
             Assert.AreEqual(!planted, rebuilt.IsEnabled);
             Assert.AreEqual(deadline.DueAtUtc, ReadDeadline(harness, 1995).DueAtUtc);
@@ -498,7 +497,7 @@ namespace Rasa.Test.Missions
 
 
         [TestMethod]
-        public void WorldMovementAndNativeSurvivorDialogueUseOnlyClientObjectivesThenReachExtraction()
+        public void WorldMovementAndNativeCorpseDialogueUseOnlyClientObjectivesThenReachExtraction()
         {
             using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);
             var youngblood = harness.AddNpc(BootcampRuntimeTestHarness.CaptainYoungbloodCreatureId, 2561);
@@ -515,22 +514,14 @@ namespace Rasa.Test.Missions
             Assert.IsTrue(harness.Client.HandleMovement(new Movement(
                 center + new Vector3((float)area.Radius.Value - 0.25f, 0, 0), 1, 0, Vector2.Zero)));
 
-            Assert.AreEqual(MissionObjectiveState.Incomplete, harness.Client.Player.Missions[1995].Objectives[2].State);
-            Assert.AreEqual(MissionObjectiveState.Inactive, harness.Client.Player.Missions[1995].Objectives[3].State);
-            var survivor = BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, 2584);
-            Assert.IsNotNull(survivor);
-            Assert.AreEqual((EntityClasses)3846, survivor.EntityClass,
-                "The real-content regression must load the authored survivor model.");
-            CompleteNativeObjective(harness, survivor, 2);
             Assert.AreEqual(MissionObjectiveState.Completed, harness.Client.Player.Missions[1995].Objectives[2].State);
             Assert.AreEqual(MissionObjectiveState.Incomplete, harness.Client.Player.Missions[1995].Objectives[3].State);
+            Assert.IsNull(BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, 2584));
             AssertSupportedObjectives(harness);
 
             var conrad = FindScenarioObject(harness, "bootcamp-conrad-corpse");
-            Assert.AreEqual(UseObjectState.TdStateClosed, conrad.StateId);
-            Assert.IsTrue(Vector3.Distance(harness.Client.Player.Position,
-                conrad.Position + new Vector3(0.16736676f, 0.033820882f, 0.19178998f)) <= 6,
-                "Conrad's native Damage1 point must be usable from the connected survivor ground.");
+            Assert.AreEqual((EntityClasses)21081, conrad.EntityClassId);
+            harness.MovePlayerTo(conrad);
             UseNativeObject(harness, conrad);
             Assert.AreEqual(harness.UtcNow + BombDeadline, ReadDeadline(harness, 1995).DueAtUtc);
             var wreck = FindScenarioObject(harness, "bootcamp-dropship-debris");
@@ -572,6 +563,11 @@ namespace Rasa.Test.Missions
 
         private static void UseNativeObject(BootcampRuntimeTestHarness.Harness harness, DynamicObject target)
         {
+            if (target.MissionConversation != null)
+            {
+                harness.UseObjectAndRecover(target);
+                return;
+            }
             DynamicObjectManager.Instance.RequestUseObjectPacket(harness.Client, new RequestUseObjectPacket
             {
                 ActionId = ActionId.UseObject,
@@ -679,7 +675,7 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
-        public void MissingScoutAreaStartsOnlyTheSurvivorSceneAndReconnectRebuildsTheCorrectActorsAcrossTheConversation()
+        public void MissingScoutAreaCreatesTheCorpseAndReconnectPreservesDiscoveryWithoutASurvivor()
         {
             using var harness = BootcampRuntimeTestHarness.Create();
             var youngblood = harness.AddNpc(
@@ -700,14 +696,14 @@ namespace Rasa.Test.Missions
                 harness.Client,
                 MissionProgressEvent.Area(1995, MissingScoutAreaId)));
 
-            Assert.IsNotNull(BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, 2584));
-            Assert.IsNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-conrad-corpse"));
-            Assert.IsNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-dropship-debris"));
+            Assert.IsNull(BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, 2584));
+            Assert.IsNotNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-conrad-corpse"));
+            Assert.IsNotNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-dropship-debris"));
             Assert.AreEqual(
-                MissionObjectiveState.Incomplete,
+                MissionObjectiveState.Completed,
                 harness.Client.Player.Missions[1995].Objectives[2].State);
             Assert.AreEqual(
-                MissionObjectiveState.Inactive,
+                MissionObjectiveState.Incomplete,
                 harness.Client.Player.Missions[1995].Objectives[3].State);
 
             var foreignMap = harness.Maps.GetOrCreatePrivateInstance(
@@ -718,21 +714,6 @@ namespace Rasa.Test.Missions
             Assert.IsNull(BootcampRuntimeTestHarness.FindScenarioObject(foreignMap, "bootcamp-dropship-debris"));
 
             harness.ReconnectFresh();
-
-            Assert.IsNotNull(BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, 2584));
-            Assert.IsNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-conrad-corpse"));
-            Assert.IsNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-dropship-debris"));
-
-            var survivor = BootcampRuntimeTestHarness.FindNpcByPackage(
-                harness.BootcampMap,
-                BootcampRuntimeTestHarness.WoundedSurvivorPackageId);
-            Assert.IsNotNull(survivor);
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
-                harness.Client,
-                survivor.EntityId,
-                1995,
-                2,
-                1));
 
             Assert.IsNull(BootcampRuntimeTestHarness.FindNpcByPackage(
                 harness.BootcampMap,
@@ -991,16 +972,7 @@ namespace Rasa.Test.Missions
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Client,
                 MissionProgressEvent.Area(1995, MissingScoutAreaId)));
-            var survivor = BootcampRuntimeTestHarness.FindNpcByPackage(
-                harness.BootcampMap,
-                BootcampRuntimeTestHarness.WoundedSurvivorPackageId)
-                ?? throw new AssertFailedException("Missing wounded survivor.");
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
-                harness.Client,
-                survivor.EntityId,
-                1995,
-                2,
-                1));
+            Assert.AreEqual(MissionObjectiveState.Completed, harness.Client.Player.Missions[1995].Objectives[2].State);
 
             return youngblood;
         }

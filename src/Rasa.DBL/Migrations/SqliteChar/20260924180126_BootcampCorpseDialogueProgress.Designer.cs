@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Rasa.Context.Char;
 
@@ -11,9 +12,11 @@ using Rasa.Context.Char;
 namespace Rasa.Migrations.SqliteChar
 {
     [DbContext(typeof(SqliteCharContext))]
-    partial class SqliteCharContextModelSnapshot : ModelSnapshot
+    [Migration("20260924180126_BootcampCorpseDialogueProgress")]
+    partial class BootcampCorpseDialogueProgress
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.20");
@@ -270,30 +273,6 @@ namespace Rasa.Migrations.SqliteChar
                         .IsUnique();
 
                     b.ToTable("character");
-                });
-
-            modelBuilder.Entity("Rasa.Structures.Char.CharacterFlagEntry", b =>
-                {
-                    b.Property<uint>("CharacterId")
-                        .HasColumnType("integer")
-                        .HasColumnName("character_id");
-
-                    b.Property<uint>("FlagId")
-                        .HasColumnType("int(11)")
-                        .HasColumnName("flag_id");
-
-                    b.Property<uint>("Value")
-                        .HasColumnType("int(11)")
-                        .HasColumnName("value");
-
-                    b.HasKey("CharacterId", "FlagId");
-
-                    b.ToTable("character_flag", t =>
-                        {
-                            t.HasCheckConstraint("CK_character_flag_id", "flag_id BETWEEN 1 AND 4294967295");
-
-                            t.HasCheckConstraint("CK_character_flag_value", "value BETWEEN 0 AND 4294967295");
-                        });
                 });
 
             modelBuilder.Entity("Rasa.Structures.Char.CharacterInventoryEntry", b =>
@@ -584,6 +563,24 @@ namespace Rasa.Migrations.SqliteChar
                     b.HasKey("CharacterId", "OptionId");
 
                     b.ToTable("character_option");
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.CharacterQualificationEntry", b =>
+                {
+                    b.Property<uint>("CharacterId")
+                        .HasColumnType("integer")
+                        .HasColumnName("character_id");
+
+                    b.Property<byte>("QualificationKey")
+                        .HasColumnType("tinyint(3)")
+                        .HasColumnName("qualification_key");
+
+                    b.HasKey("CharacterId", "QualificationKey");
+
+                    b.ToTable("character_qualification", t =>
+                        {
+                            t.HasCheckConstraint("CK_character_qualification_key", "qualification_key IN (1)");
+                        });
                 });
 
             modelBuilder.Entity("Rasa.Structures.Char.CharacterSkillsEntry", b =>
@@ -1478,17 +1475,6 @@ namespace Rasa.Migrations.SqliteChar
                     b.Navigation("GameAccount");
                 });
 
-            modelBuilder.Entity("Rasa.Structures.Char.CharacterFlagEntry", b =>
-                {
-                    b.HasOne("Rasa.Structures.Char.CharacterEntry", "Character")
-                        .WithMany()
-                        .HasForeignKey("CharacterId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Character");
-                });
-
             modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionDeadlineEntry", b =>
                 {
                     b.HasOne("Rasa.Structures.Char.CharacterMissionEntry", "Mission")
@@ -1560,6 +1546,17 @@ namespace Rasa.Migrations.SqliteChar
                         .IsRequired();
 
                     b.Navigation("Mission");
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.CharacterQualificationEntry", b =>
+                {
+                    b.HasOne("Rasa.Structures.Char.CharacterEntry", "Character")
+                        .WithMany()
+                        .HasForeignKey("CharacterId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Character");
                 });
 
             modelBuilder.Entity("Rasa.Structures.Char.CharacterStartingExperienceEntry", b =>

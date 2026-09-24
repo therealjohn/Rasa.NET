@@ -49,6 +49,7 @@ namespace Rasa.Managers
         public Game.Missions.World.PublicActorLeaseService PublicActors { get; }
         internal Game.Missions.SceneApplication Scenes { get; }
         internal Game.Missions.GroupCreditService Credit { get; }
+        internal Game.Missions.MissionObjectConversations ObjectConversations { get; }
         internal Rasa.Missions.Definitions.ActorPolicyCatalog ActorPolicies { get; } = new();
         internal IMissionSceneHost ScenarioService => _scenarioService;
         internal Action<Item> BeforeRewardItemPublication => _beforeRewardItemPublication;
@@ -144,6 +145,7 @@ namespace Rasa.Managers
                 _manifestationManager);
             Scenes = new Game.Missions.SceneApplication(_gameUnitOfWorkFactory, this, _manifestationManager, utcNow: _utcNow);
             Credit = new Game.Missions.GroupCreditService(_gameUnitOfWorkFactory, this);
+            ObjectConversations = new Game.Missions.MissionObjectConversations(_gameUnitOfWorkFactory, this);
             Game.Missions.Integration.MissionRuntimeComposition.Bind(_catalog, Scenes, PublicActors, ActorPolicies);
         }
 
@@ -932,6 +934,9 @@ namespace Rasa.Managers
         {
             if (client == null)
                 return false;
+            if (EntityManager.Instance.TryGetObject(npcEntityId, out var conversationObject) &&
+                conversationObject.MissionConversation != null)
+                return ObjectConversations.Complete(client, npcEntityId, missionId, objectiveId, playerFlagId);
 
             lock (client.SyncRoot)
             {
@@ -987,7 +992,7 @@ namespace Rasa.Managers
                         actionApplication = ApplyTransitionActions(
                             objectiveId,
                             transition,
-                            durableObjectives);
+                            durableObjectives, unitOfWork, client.Player.Id);
                         QueueStartedScenarios(client, missionId, actionApplication.StartScenarioIds, unitOfWork);
 
                         completeable = true;
@@ -1676,7 +1681,7 @@ namespace Rasa.Managers
             var failureActions = ApplyTransitionActions(
                 authoredFailure.Objective.ObjectiveId,
                 authoredFailure.Transition,
-                durableObjectives);
+                durableObjectives, unitOfWork, client.Player.Id);
             _deadlineService.SynchronizeMission(
                 unitOfWork,
                 client.Player.Id,
@@ -1697,7 +1702,8 @@ namespace Rasa.Managers
                 false,
                 runtimeMission.Completeable,
                 failureActions.StartScenarioIds,
-                inventoryPublication: MissionInventory.Plan(client, unitOfWork, this, definition.MissionId));
+                inventoryPublication: MissionInventory.Plan(client, unitOfWork, this, definition.MissionId),
+                flags: failureActions.PlayerFlagChanges.Count > 0 ? unitOfWork.CharacterFlags.Get(client.Player.Id) : null);
             QueueStartedScenarios(client, definition.MissionId, failureActions.StartScenarioIds, unitOfWork);
             return true;
         }
@@ -1883,7 +1889,7 @@ namespace Rasa.Managers
                             durableObjective.ObjectiveState = (byte)MissionObjectiveState.Completed;
                         var actions = completed
                             ? ApplyTransitionActions(candidate.ObjectiveDefinition.ObjectiveId,
-                                candidate.ExecutableTransition, durableObjectives)
+                                candidate.ExecutableTransition, durableObjectives, unitOfWork, client.Player.Id)
                             : TransitionActionApplication.Empty;
                         publications.Add(decision.IsItemCounter
                             ? ProgressPublication.ItemCounter(candidate, decision.CounterId.Value,
@@ -1916,7 +1922,7 @@ namespace Rasa.Managers
                         var failureActions = ApplyTransitionActions(
                             candidate.ObjectiveDefinition.ObjectiveId,
                             candidate.ExecutableTransition,
-                            durableObjectives);
+                            durableObjectives, unitOfWork, client.Player.Id);
                         _deadlineService.SynchronizeMission(
                             unitOfWork,
                             client.Player.Id,
@@ -1933,7 +1939,8 @@ namespace Rasa.Managers
                                 failureActions.StartScenarioIds,
                                 publishMissionStatus:
                                     candidate.ExecutableTransition.ProgressRule?.Kind ==
-                                    MissionProgressEventKind.DeadlineElapsed));
+                                    MissionProgressEventKind.DeadlineElapsed,
+                                changesFlags: failureActions.PlayerFlagChanges.Count > 0));
                         continue;
                     }
 
@@ -1947,7 +1954,7 @@ namespace Rasa.Managers
                                 ApplyTransitionActions(
                                     candidate.ObjectiveDefinition.ObjectiveId,
                                     candidate.ExecutableTransition,
-                                    durableObjectives)));
+                                    durableObjectives, unitOfWork, client.Player.Id)));
                         continue;
                     }
 
@@ -1958,7 +1965,7 @@ namespace Rasa.Managers
                         ApplyTransitionActions(
                             candidate.ObjectiveDefinition.ObjectiveId,
                             candidate.ExecutableTransition,
-                            durableObjectives)));
+                            durableObjectives, unitOfWork, client.Player.Id)));
                 }
 
                 var completeable = first.Definition.Objectives.Values
@@ -2007,7 +2014,10 @@ namespace Rasa.Managers
                         progressClient,
                         progressedMissionId,
                         spawnGroupId),
-                MissionInventory.Plan(client, unitOfWork, this));
+                MissionInventory.Plan(client, unitOfWork, this),
+                flags: publications.Any(publication => publication.PlayerFlagChanges.Count > 0) ||
+                    failurePlans.Any(failure => failure.ChangesFlags)
+                    ? unitOfWork.CharacterFlags.Get(client.Player.Id) : null);
         }
 
         private void QueueStartedScenarios(Client client, uint missionId, IEnumerable<uint> scenarioIds,
@@ -2037,7 +2047,8 @@ namespace Rasa.Managers
         private static TransitionActionApplication ApplyTransitionActions(
             uint currentObjectiveId,
             MissionObjectiveExecutableTransition transition,
-            IReadOnlyDictionary<uint, CharacterMissionObjectiveEntry> durableObjectives)
+            IReadOnlyDictionary<uint, CharacterMissionObjectiveEntry> durableObjectives,
+            ICharUnitOfWork unitOfWork, uint characterId)
         {
             if (transition == null)
                 return TransitionActionApplication.Empty;
@@ -2084,6 +2095,9 @@ namespace Rasa.Managers
                         if (!action.PlayerFlagId.HasValue || !action.PlayerFlagValue.HasValue)
                             throw new GameplayRejectionException(
                                 $"Transition {transition.TransitionId} set player flag action is missing its flag id or value.");
+                        if (!CharacterFlagIds.IsMissionFlag(action.PlayerFlagId.Value))
+                            throw new GameplayRejectionException("Mission flag actions cannot write zero or reserved server flag IDs.");
+                        unitOfWork.CharacterFlags.Set(characterId, action.PlayerFlagId.Value, action.PlayerFlagValue.Value);
                         playerFlagChanges.Add(new PlayerFlagChange(
                             action.PlayerFlagId.Value,
                             action.PlayerFlagValue.Value));
@@ -2231,7 +2245,8 @@ namespace Rasa.Managers
                     durableCharacter != null &&
                     durableCharacter.Level >= prerequisite.RequiredLevel.Value,
                 MissionPrerequisiteKind.PlayerFlagValue =>
-                    IsPrerequisiteSatisfied(player, prerequisite),
+                    prerequisite.PlayerFlagId.HasValue && prerequisite.PlayerFlagValue.HasValue &&
+                    unitOfWork.CharacterFlags.HasValue(player.Id, prerequisite.PlayerFlagId.Value, prerequisite.PlayerFlagValue.Value),
                 _ => false
             };
 

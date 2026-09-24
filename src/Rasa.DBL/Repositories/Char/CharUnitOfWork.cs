@@ -21,7 +21,7 @@ namespace Rasa.Repositories.Char
     using CharacterMissionProgress;
     using CharacterMissionScenario;
     using CharacterOption;
-    using CharacterQualification;
+    using CharacterFlag;
     using CharacterSkills;
     using CharacterStartingExperience;
     using CharacterTeleporter;
@@ -50,7 +50,7 @@ namespace Rasa.Repositories.Char
             ICharacterMissionProgressRepository characterMissionProgress,
             ICharacterMissionScenarioRepository characterMissionScenario,
             ICharacterOptionRepository characterOptions,
-            ICharacterQualificationRepository characterQualifications,
+            ICharacterFlagRepository characterFlags,
             ICharacterSkillsRepository characterSkills,
             ICharacterStartingExperienceRepository characterStartingExperience,
             ICharacterTeleporterRepository characterTeleporters,
@@ -80,7 +80,7 @@ namespace Rasa.Repositories.Char
             CharacterMissionProgress = characterMissionProgress;
             CharacterMissionScenario = characterMissionScenario;
             CharacterOptions = characterOptions;
-            CharacterQualifications = characterQualifications;
+            CharacterFlags = characterFlags;
             CharacterSkills = characterSkills;
             CharacterStartingExperience = characterStartingExperience;
             CharacterTeleporters = characterTeleporters;
@@ -109,7 +109,7 @@ namespace Rasa.Repositories.Char
         public ICharacterMissionProgressRepository CharacterMissionProgress { get; }
         public ICharacterMissionScenarioRepository CharacterMissionScenario { get; }
         public ICharacterOptionRepository CharacterOptions { get; }
-        public ICharacterQualificationRepository CharacterQualifications { get; }
+        public ICharacterFlagRepository CharacterFlags { get; }
         public ICharacterSkillsRepository CharacterSkills { get; }
         public ICharacterStartingExperienceRepository CharacterStartingExperience { get; }
         public ICharacterTeleporterRepository CharacterTeleporters { get; }

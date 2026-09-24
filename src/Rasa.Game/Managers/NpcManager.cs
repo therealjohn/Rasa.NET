@@ -142,6 +142,12 @@ namespace Rasa.Managers
 
         public void RequestNpcConverse(Client client, RequestNPCConversePacket packet)
         {
+            if (EntityManager.Instance.TryGetObject(packet.EntityId, out var conversationObject) &&
+                conversationObject.MissionConversation != null)
+            {
+                Missions.ObjectConversations.Open(client, packet.EntityId);
+                return;
+            }
             if (client?.Player?.MapChannel == null ||
                 !MapInstanceScope.TryGetCreature(
                     client.Player.MapChannel,

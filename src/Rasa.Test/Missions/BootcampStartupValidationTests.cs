@@ -60,15 +60,15 @@ namespace Rasa.Test.Missions
         [TestMethod]
         public void MissingRequiredBootcampNpcPackageLogsTheExactOperatorDiagnosticAndBlocksReadyState()
         {
-            const string expected = "Mission 1995@deployment_11 objective 2 transition 2 trigger 1: " +
-                                    "conversation trigger references missing npc_package.package_id 2584; " +
-                                    "restore npc_package.package_id 2584 or update mission_trigger.npc_package_id to a valid package.";
+            const string expected = "Mission 1995@deployment_11 objective 4 transition 1 trigger 1: " +
+                                    "conversation trigger references missing npc_package.package_id 2564; " +
+                                    "restore npc_package.package_id 2564 or update mission_trigger.npc_package_id to a valid package.";
 
             WithDisposableSqliteWorld(context =>
             {
                 context.Database.Migrate();
 
-                var package = context.NpcPackageEntries.Single(entry => entry.PackageId == 2584);
+                var package = context.NpcPackageEntries.Single(entry => entry.PackageId == 2564);
                 context.NpcPackageEntries.Remove(package);
                 context.SaveChanges();
 
@@ -77,8 +77,8 @@ namespace Rasa.Test.Missions
                 var diagnostic = report.Diagnostics.Single(entry =>
                     entry.Code == "missing-npc-package" &&
                     entry.MissionId == 1995 &&
-                    entry.ObjectiveId == 2 &&
-                    entry.TransitionId == 2 &&
+                    entry.ObjectiveId == 4 &&
+                    entry.TransitionId == 1 &&
                     entry.TriggerId == 1);
 
                 Assert.IsTrue(report.BlocksReadiness);

@@ -38,7 +38,7 @@ namespace Rasa.Test.Gameplay
     using Rasa.Repositories.Char.CharacterMissionDeadline;
     using Rasa.Repositories.Char.CharacterMissionProgress;
     using Rasa.Repositories.Char.CharacterMissionScenario;
-    using Rasa.Repositories.Char.CharacterQualification;
+    using Rasa.Repositories.Char.CharacterFlag;
     using Rasa.Repositories.Char.CharacterSkills;
     using Rasa.Repositories.Char.CharacterStartingExperience;
     using Rasa.Repositories.Char.CharacterTeleporter;
@@ -474,6 +474,8 @@ namespace Rasa.Test.Gameplay
             {
                 var character = change.CharacterEntries.Single(entry => entry.AccountId == 184);
                 characterId = character.Id;
+                change.CharacterFlagEntries.Add(new CharacterFlagEntry(characterId, 901, 7));
+                change.CharacterFlagEntries.Add(new CharacterFlagEntry(characterId, 902, 0));
                 character.Level = 2;
                 character.Experience = 1000;
                 character.Body = character.Mind = character.Spirit = 1;
@@ -502,6 +504,8 @@ namespace Rasa.Test.Gameplay
                 new CharacterManager(context).RequestSwitchToCharacterInSlot(
                     reconnect, new RequestSwitchToCharacterInSlotPacket { SlotNum = 1 });
                 Assert.AreEqual(characterId, reconnect.Player.Id);
+                Assert.AreEqual(7U, reconnect.Player.PlayerFlags[901]);
+                Assert.AreEqual(0U, reconnect.Player.PlayerFlags[902]);
                 Assert.AreEqual(1, reconnect.Player.SpentBody);
                 Assert.AreEqual(1, reconnect.Player.SpentMind);
                 Assert.AreEqual(1, reconnect.Player.SpentSpirit);
@@ -624,8 +628,8 @@ namespace Rasa.Test.Gameplay
             if (completedQualification)
             {
                 using var unit = context.CreateChar();
-                unit.CharacterQualifications.Add(
-                    new CharacterQualificationEntry(characterId, CharacterQualificationKey.BootcampComplete));
+                unit.CharacterFlags.Add(
+                    new CharacterFlagEntry(characterId, CharacterFlagIds.BootcampComplete));
             }
             var client = context.CreateClient(21);
             var maps = new MapChannelManager(context, privateInstances: new PrivateMapInstanceService());
@@ -954,7 +958,7 @@ namespace Rasa.Test.Gameplay
                     characterMissionProgress: new CharacterMissionProgressRepository(context),
                     characterMissionScenario: new CharacterMissionScenarioRepository(context),
                     characterOptions: null,
-                    characterQualifications: new CharacterQualificationRepository(context),
+                    characterFlags: new CharacterFlagRepository(context),
                     characterSkills: new CharacterSkillsRepository(context),
                     characterStartingExperience: new CharacterStartingExperienceRepository(context),
                     characterTeleporters: new CharacterTeleporterRepository(context),

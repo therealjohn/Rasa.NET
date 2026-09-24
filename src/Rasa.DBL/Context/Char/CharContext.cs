@@ -44,7 +44,7 @@ namespace Rasa.Context.Char
         public DbSet<CharacterMissionObjectiveItemCounterEntry> CharacterMissionObjectiveItemCounterEntries { get; set; }
         public DbSet<CharacterMissionScenarioStepEntry> CharacterMissionScenarioStepEntries { get; set; }
         public DbSet<CharacterOptionEntry> CharacterOptionEntries { get; set; }
-        public DbSet<CharacterQualificationEntry> CharacterQualificationEntries { get; set; }
+        public DbSet<CharacterFlagEntry> CharacterFlagEntries { get; set; }
         public DbSet<CharacterSkillsEntry> CharacterSkillsEntries { get; set; }
         public DbSet<CharacterStartingExperienceEntry> CharacterStartingExperienceEntries { get; set; }
         public DbSet<CharacterTeleporterEntry> CharacterTeleporterEntries { get; set; }
@@ -116,6 +116,7 @@ namespace Rasa.Context.Char
             MissionRuntimeModel.Configure(modelBuilder);
             SetupCharacterSkillTable(modelBuilder);
             SetupCharacterStartingExperienceTables(modelBuilder);
+            SetupCharacterFlagTable(modelBuilder);
             SetupCharacterTeleporterTable(modelBuilder);
             SetupCharacterOptionsTable(modelBuilder);
             SetupClanMemberTable(modelBuilder);
@@ -440,21 +441,30 @@ namespace Rasa.Context.Char
                 .HasConversion<byte>()
                 .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
 
-            modelBuilder.Entity<CharacterQualificationEntry>()
-                .ToTable(table => table.HasCheckConstraint(
-                    "CK_character_qualification_key",
-                    "qualification_key IN (1)"));
-            modelBuilder.Entity<CharacterQualificationEntry>()
-                .HasKey(entry => new { entry.CharacterId, entry.QualificationKey });
-            modelBuilder.Entity<CharacterQualificationEntry>()
+        }
+
+        private void SetupCharacterFlagTable(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<CharacterFlagEntry>()
+                .ToTable(table =>
+                {
+                    table.HasCheckConstraint("CK_character_flag_id", "flag_id BETWEEN 1 AND 4294967295");
+                    table.HasCheckConstraint("CK_character_flag_value", "value BETWEEN 0 AND 4294967295");
+                });
+            modelBuilder.Entity<CharacterFlagEntry>()
+                .HasKey(entry => new { entry.CharacterId, entry.FlagId });
+            modelBuilder.Entity<CharacterFlagEntry>()
                 .HasOne(entry => entry.Character)
                 .WithMany()
                 .HasForeignKey(entry => entry.CharacterId)
                 .OnDelete(DeleteBehavior.Cascade);
-            modelBuilder.Entity<CharacterQualificationEntry>()
-                .Property(entry => entry.QualificationKey)
-                .HasConversion<byte>()
-                .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
+            modelBuilder.Entity<CharacterFlagEntry>()
+                .Property(entry => entry.FlagId)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11)
+                .ValueGeneratedNever();
+            modelBuilder.Entity<CharacterFlagEntry>()
+                .Property(entry => entry.Value)
+                .AsUnsignedInt(_dbContextPropertyModifier, 11);
         }
 
         private void SetupClanMemberTable(ModelBuilder modelBuilder)

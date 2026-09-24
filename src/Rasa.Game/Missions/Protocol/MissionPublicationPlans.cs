@@ -38,7 +38,10 @@ namespace Rasa.Managers
         private readonly bool _completeableChanged;
         private readonly bool _publishMissionStatus;
         private readonly Action<Client> _inventoryPublication;
+        private readonly IReadOnlyDictionary<uint, uint> _flags;
+        internal IReadOnlyDictionary<uint, uint> FlagSnapshot => _flags;
         internal uint MissionId => _missionId;
+        internal bool ChangesFlags { get; }
         internal IReadOnlyList<uint> StartScenarioIds { get; }
 
         internal MissionFailurePublicationPlan(
@@ -49,7 +52,9 @@ namespace Rasa.Managers
             bool completeableChanged,
             IEnumerable<uint> startScenarioIds = null,
             bool publishMissionStatus = false,
-            Action<Client> inventoryPublication = null)
+            Action<Client> inventoryPublication = null,
+            bool changesFlags = false,
+            IReadOnlyDictionary<uint, uint> flags = null)
         {
             _missionId = missionId;
             _objectiveId = objectiveId;
@@ -58,6 +63,8 @@ namespace Rasa.Managers
             _completeableChanged = completeableChanged;
             _publishMissionStatus = publishMissionStatus;
             _inventoryPublication = inventoryPublication;
+            _flags = flags;
+            ChangesFlags = changesFlags;
             StartScenarioIds = Array.AsReadOnly(
                 (startScenarioIds ?? Array.Empty<uint>()).ToArray());
         }
@@ -66,7 +73,8 @@ namespace Rasa.Managers
             Client client,
             MissionApplication manager,
             Func<Client, uint, uint, bool> startScenario = null,
-            Func<Client, uint, uint, bool> startFailureScenario = null)
+            Func<Client, uint, uint, bool> startFailureScenario = null,
+            bool convergeFlags = true)
         {
             if (!client.Player.Missions.TryGetValue(_missionId, out var mission) ||
                 !mission.Objectives.TryGetValue(_objectiveId, out var objective))
@@ -75,6 +83,8 @@ namespace Rasa.Managers
             objective.State = MissionObjectiveState.Failed;
             mission.State = _missionState;
             mission.Completeable = _completeable;
+            if (convergeFlags && _flags != null)
+                client.Player.PlayerFlags = new Dictionary<uint, uint>(_flags);
             _inventoryPublication?.Invoke(client);
 
             manager.PublishMissionPacket(
@@ -129,6 +139,8 @@ namespace Rasa.Managers
         private readonly Func<Client, uint, uint, bool> _activateSpawnGroup;
         private readonly MissionApplication _manager;
         private readonly Action<Client> _inventoryPublication;
+        private readonly IReadOnlyDictionary<uint, uint> _flags;
+        internal IReadOnlyDictionary<uint, uint> FlagSnapshot => _flags;
 
         internal bool HasChanges => _publications.Length > 0 || _failurePlans.Length > 0;
 
@@ -141,7 +153,8 @@ namespace Rasa.Managers
             Func<Client, uint, uint, bool> startFailureScenario,
             MissionApplication manager,
             Func<Client, uint, uint, bool> activateSpawnGroup = null,
-            Action<Client> inventoryPublication = null)
+            Action<Client> inventoryPublication = null,
+            IReadOnlyDictionary<uint, uint> flags = null)
         {
             _publications = publications.ToArray();
             _failurePlans = failurePlans.ToArray();
@@ -152,10 +165,13 @@ namespace Rasa.Managers
             _activateSpawnGroup = activateSpawnGroup;
             _manager = manager;
             _inventoryPublication = inventoryPublication;
+            _flags = flags;
         }
 
-        internal void Publish(Client client)
+        internal void Publish(Client client, bool convergeFlags = true)
         {
+            if (convergeFlags && _flags != null)
+                client.Player.PlayerFlags = new Dictionary<uint, uint>(_flags);
             _inventoryPublication?.Invoke(client);
             foreach (var publication in _publications.Where(
                 publication =>
@@ -196,10 +212,6 @@ namespace Rasa.Managers
                                     out var successor))
                                 successor.State = state.Value;
                 }
-
-            foreach (var publication in _publications)
-                foreach (var flagChange in publication.PlayerFlagChanges)
-                    client.Player.PlayerFlags[flagChange.FlagId] = flagChange.Value;
 
             foreach (var missionId in _completableMissions)
                 if (client.Player.Missions.TryGetValue(

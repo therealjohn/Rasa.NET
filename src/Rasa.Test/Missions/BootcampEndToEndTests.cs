@@ -17,7 +17,7 @@ namespace Rasa.Test.Missions
     using Rasa.Packets.MapChannel.Client;
     using Rasa.Packets.MapChannel.Server;
     using Rasa.Packets.Mission.Server;
-    using Rasa.Repositories.Char.CharacterQualification;
+    using Rasa.Repositories.Char.CharacterFlag;
     using Rasa.Repositories.Char.CharacterStartingExperience;
     using Rasa.Repositories.Char.CharacterTeleporter;
     using Rasa.Repositories.Char.GameAccount;
@@ -105,8 +105,8 @@ namespace Rasa.Test.Missions
             using (var unit = harness.Context.CreateChar())
             {
                 Assert.AreEqual(0, unit.CharacterMissions.Runtime.History(harness.Client.Player.Id).Count);
-                Assert.IsFalse(unit.CharacterQualifications.HasQualification(
-                    harness.Client.Player.Id, CharacterQualificationKey.BootcampComplete));
+                Assert.IsFalse(unit.CharacterFlags.HasValue(
+                    harness.Client.Player.Id, CharacterFlagIds.BootcampComplete));
             }
 
             var youngblood = AdvanceFreshCharacterToMission1995(harness);
@@ -579,16 +579,8 @@ namespace Rasa.Test.Missions
                 harness.Client,
                 MissionProgressEvent.Area(MissionCallingForReinforcements, MissingScoutAreaId)));
 
-            var survivor = BootcampRuntimeTestHarness.FindNpcByPackage(
-                harness.BootcampMap,
-                BootcampRuntimeTestHarness.WoundedSurvivorPackageId);
-            Assert.IsNotNull(survivor);
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
-                harness.Client,
-                survivor.EntityId,
-                MissionCallingForReinforcements,
-                2,
-                1));
+            Assert.AreEqual(MissionObjectiveState.Completed,
+                harness.Client.Player.Missions[MissionCallingForReinforcements].Objectives[2].State);
 
             harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
             harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-dropship-debris"));
@@ -621,16 +613,8 @@ namespace Rasa.Test.Missions
                 harness.Client,
                 MissionProgressEvent.Area(MissionCallingForReinforcements, MissingScoutAreaId)));
 
-            var survivor = BootcampRuntimeTestHarness.FindNpcByPackage(
-                harness.BootcampMap,
-                BootcampRuntimeTestHarness.WoundedSurvivorPackageId);
-            Assert.IsNotNull(survivor);
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
-                harness.Client,
-                survivor.EntityId,
-                MissionCallingForReinforcements,
-                2,
-                1));
+            Assert.AreEqual(MissionObjectiveState.Completed,
+                harness.Client.Player.Missions[MissionCallingForReinforcements].Objectives[2].State);
             return youngblood;
         }
 
@@ -759,9 +743,9 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(
                 CharacterStartingExperienceState.Completed,
                 verify.CharacterStartingExperience.Get(harness.Client.Player.Id).State);
-            Assert.IsTrue(verify.CharacterQualifications.HasQualification(
+            Assert.IsTrue(verify.CharacterFlags.HasValue(
                 harness.Client.Player.Id,
-                CharacterQualificationKey.BootcampComplete));
+                CharacterFlagIds.BootcampComplete));
             Assert.IsTrue(verify.GameAccounts.Get(harness.Client.AccountEntry.Id).CanSkipBootcamp);
             CollectionAssert.AreEquivalent(
                 new[]

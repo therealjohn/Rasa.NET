@@ -74,9 +74,9 @@ namespace Rasa.Test.Missions
                 .Single(entry => entry.AbilitySlot == 3);
             Assert.AreEqual(194, slotted.AbilityId);
             Assert.AreEqual(2U, slotted.AbilityLevel);
-            Assert.IsTrue(unit.CharacterQualifications.HasQualification(
+            Assert.IsTrue(unit.CharacterFlags.HasValue(
                 context.Client.Player.Id,
-                CharacterQualificationKey.BootcampComplete));
+                CharacterFlagIds.BootcampComplete));
             var run = unit.CharacterMissions.Runtime.Scenes(context.Client.Player.Id, 321).Single();
             Assert.AreEqual(1, unit.CharacterMissions.Runtime.Messages(run.RunId).Count(message => message.Status == "Handled"));
             using var verify = context.Open();

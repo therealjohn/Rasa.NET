@@ -79,15 +79,11 @@ namespace Rasa.Game.Missions.Persistence
                 case SetQualificationIntent qualification:
                     if (!Enum.IsDefined(typeof(CharacterQualificationKey), qualification.Qualification))
                         throw new GameplayRejectionException("Unknown scene qualification.");
-                    var key = (CharacterQualificationKey)qualification.Qualification;
-                    if (!qualification.Present)
-                        unit.CharacterQualifications.Remove(client.Player.Id, key);
-                    else if (!unit.CharacterQualifications.HasQualification(client.Player.Id, key))
-                        unit.CharacterQualifications.Add(new CharacterQualificationEntry(client.Player.Id, key));
-                    var startingExperienceCompleted = MissionRequirementFactsAdapter
-                        .HasCompletedStartingExperience(unit, client.Player.Id);
-                    publication.AddRuntimeConvergence(() =>
-                        client.Player.StartingExperienceCompleted = startingExperienceCompleted);
+                    SetFlag(client, CharacterFlagIds.FromQualification(qualification.Qualification),
+                        qualification.Present ? 1U : null, unit, publication);
+                    break;
+                case SetCharacterFlagIntent flag:
+                    SetFlag(client, flag.FlagId, flag.Value, unit, publication);
                     break;
                 case SetEntitlementIntent entitlement:
                     unit.GameAccounts.UpdateCanSkipBootcamp(client.AccountEntry.Id, entitlement.Enabled);
@@ -113,6 +109,22 @@ namespace Rasa.Game.Missions.Persistence
                 default:
                     throw new GameplayRejectionException($"Unsupported character intent {intent.GetType().Name}.");
             }
+        }
+
+        private static void SetFlag(Client client, uint flagId, uint? value,
+            ICharUnitOfWork unit, MissionScenarioPlan publication)
+        {
+            if (value.HasValue)
+                unit.CharacterFlags.Set(client.Player.Id, flagId, value.Value);
+            else
+                unit.CharacterFlags.Remove(client.Player.Id, flagId);
+            publication.CaptureFlags(unit.CharacterFlags.Get(client.Player.Id));
+            var startingExperienceCompleted = flagId == CharacterFlagIds.BootcampComplete
+                ? MissionRequirementFactsAdapter.HasCompletedStartingExperience(unit, client.Player.Id)
+                : (bool?)null;
+            if (startingExperienceCompleted.HasValue)
+                publication.AddRuntimeConvergence(() =>
+                    client.Player.StartingExperienceCompleted = startingExperienceCompleted.Value);
         }
     }
 }

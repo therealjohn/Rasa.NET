@@ -184,10 +184,7 @@ namespace Rasa.Game.Missions.Content.Bootcamp
                         client.Player.Id,
                         BootcampAliaHospitalId,
                         WaypointType.Hospital);
-                    EnsureQualification(
-                        unitOfWork,
-                        client.Player.Id,
-                        CharacterQualificationKey.BootcampComplete);
+                    unitOfWork.CharacterFlags.Set(client.Player.Id, CharacterFlagIds.BootcampComplete, 1);
                     if (!unitOfWork.GameAccounts.TryUpdateCanSkipBootcamp(
                             client.AccountEntry.Id,
                             false,
@@ -217,6 +214,7 @@ namespace Rasa.Game.Missions.Content.Bootcamp
             client.Player.Level = BootcampParityLevel;
             client.AccountEntry.CanSkipBootcamp = true;
             client.Player.StartingExperienceCompleted = true;
+            client.Player.PlayerFlags[CharacterFlagIds.BootcampComplete] = 1;
             DynamicObjectManager.ConvergeWaypointGrant(
                 client,
                 new CharacterTeleporterEntry(
@@ -247,10 +245,7 @@ namespace Rasa.Game.Missions.Content.Bootcamp
             uint characterId)
         {
             ReconcileBootcampParityProgression(unitOfWork, characterId);
-            EnsureQualification(
-                unitOfWork,
-                characterId,
-                CharacterQualificationKey.BootcampComplete);
+            unitOfWork.CharacterFlags.Set(characterId, CharacterFlagIds.BootcampComplete, 1);
             unitOfWork.CharacterSkills.AddOrUpdate(
                 characterId,
                 (uint)SkillId.Lightning,
@@ -398,20 +393,6 @@ namespace Rasa.Game.Missions.Content.Bootcamp
                     mission.MissionState == (uint)MissionState.Active &&
                     mission.Completeable &&
                     manager.HasPlayerTriggeredScenario(mission.MissionId));
-        }
-
-        private static void EnsureQualification(
-            ICharUnitOfWork unitOfWork,
-            uint characterId,
-            CharacterQualificationKey qualification)
-        {
-            if (!unitOfWork.CharacterQualifications.HasQualification(
-                    characterId,
-                    qualification))
-            {
-                unitOfWork.CharacterQualifications.Add(
-                    new CharacterQualificationEntry(characterId, qualification));
-            }
         }
 
         private static void EnsureWaypoint(

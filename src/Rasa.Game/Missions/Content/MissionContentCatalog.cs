@@ -141,6 +141,10 @@ namespace Rasa.Managers
                             actor.Kind == Rasa.Missions.Scenes.SceneActorKind.PublicSpawn))
                             if (!publicSpawnIds.Contains(actor.TemplateId))
                                 throw new MissionRuleException($"Experience {experience.Key}: migrated public spawn {actor.TemplateId} does not exist.");
+                        foreach (var actor in experience.Scene.Actors.Values.Where(actor => actor.Conversation != null))
+                            if (!Missions.TryGetValue(actor.Conversation.MissionId, out var mission) ||
+                                !mission.Objectives.ContainsKey(actor.Conversation.ObjectiveId))
+                                throw new MissionRuleException($"Experience {experience.Key}: object conversation has an unknown mission objective.");
                         Experiences.Add(experience);
                     }
                 }

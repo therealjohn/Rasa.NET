@@ -35,7 +35,7 @@ namespace Rasa.Test.Gameplay
     using Repositories.Char.CharacterMissionDeadline;
     using Repositories.Char.CharacterMissionProgress;
     using Repositories.Char.CharacterMissionScenario;
-    using Repositories.Char.CharacterQualification;
+    using Repositories.Char.CharacterFlag;
     using Repositories.Char.CharacterSkills;
     using Repositories.Char.CharacterStartingExperience;
     using Repositories.Char.CharacterTeleporter;
@@ -749,7 +749,7 @@ namespace Rasa.Test.Gameplay
                 characterMissionProgress: new CharacterMissionProgressRepository(context),
                 characterMissionScenario: new CharacterMissionScenarioRepository(context),
                 characterOptions: null,
-                characterQualifications: new CharacterQualificationRepository(context),
+                characterFlags: new CharacterFlagRepository(context),
                 characterSkills: new CharacterSkillsRepository(context),
                 characterStartingExperience: new CharacterStartingExperienceRepository(context),
                 characterTeleporters: new CharacterTeleporterRepository(context),

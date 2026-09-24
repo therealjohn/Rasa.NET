@@ -41,7 +41,7 @@ namespace Rasa.Game.Missions.Persistence
                     unit.CharacterMissions.Get(player.Id).ToDictionary(entry => entry.MissionId, entry => (MissionState)entry.MissionState),
                 unit == null ? player.MissionHistory :
                     unit.CharacterMissions.Runtime.History(player.Id).ToDictionary(entry => entry.MissionId, entry => (MissionState)entry.Outcome),
-                player.PlayerFlags, custom);
+                unit == null ? player.PlayerFlags : unit.CharacterFlags.Get(player.Id), custom);
         }
 
         private static bool ReadAccountEntitlement(Manifestation player, CharacterEntry character, ICharUnitOfWork unit)
@@ -57,6 +57,6 @@ namespace Rasa.Game.Missions.Persistence
         internal static bool HasCompletedStartingExperience(ICharUnitOfWork unit, uint characterId) =>
             unit.CharacterStartingExperience.Get(characterId)?.State is
                 CharacterStartingExperienceState.Completed or CharacterStartingExperienceState.Skipped ||
-            unit.CharacterQualifications.HasQualification(characterId, CharacterQualificationKey.BootcampComplete);
+            unit.CharacterFlags.HasValue(characterId, CharacterFlagIds.BootcampComplete);
     }
 }

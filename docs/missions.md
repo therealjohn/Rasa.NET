@@ -202,6 +202,21 @@ scene receipts intact during ordinary gameplay. Clearing a completed journal
 entry must not allow its rewards again. Inventory and progress changes commit
 before success packets.
 
+General character flags are stored in `character_flag`; `Manifestation.PlayerFlags`
+is their login-restored cache. Mission flag actions must not write only to the
+dictionary. Use the owning character transaction so a failed objective/reward
+operation also rolls back its flag changes. The generic repository is available
+to future reward and door checks; it is not tied to a mission assignment.
+See [flag storage and IDs](mission-reference.md#persistent-character-flags).
+
+`PersistentCharacterFlags` replaces `character_qualification` in the Char schema.
+This branch change deliberately targets **fresh databases**: it does not copy
+old qualifications or attempt to reconstruct flags that existed only in memory.
+Use fresh disposable SQLite databases as agreed for testing; the operator
+chooses when to remove old files. The server does not delete databases.
+MySQL remains manually migrated. Historical migrations remain unchanged even
+though the final schema no longer contains the qualification table.
+
 This redesign has no upgrade contract for old experimental databases. It also
 does not add an automatic reset, database deletion or background publication hook.
 Back up real databases before applying future schema/data changes.

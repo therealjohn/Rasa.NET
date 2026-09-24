@@ -268,30 +268,18 @@ namespace Rasa.Test.Missions
                 CollectionAssert.AreEquivalent(
                     new[]
                     {
-                        MissionActionKind.StartScenario
+                        MissionActionKind.CompleteObjective,
+                        MissionActionKind.StartScenario,
+                        MissionActionKind.RevealObjective,
+                        MissionActionKind.ActivateObjective
                     },
                     scoutTransition.Actions.Select(action => action.Kind).ToArray());
-                Assert.AreEqual((byte)MissionObjectiveState.Incomplete, scoutTransition.ToStateValue);
-                Assert.IsFalse(scoutTransition.Actions.Any(action => action.TargetObjectiveId.HasValue));
-
-                var survivorScene = finalMission.Scenarios[1];
-                Assert.IsTrue(survivorScene.Steps.Any(step =>
-                    step.Kind == MissionScenarioStepKind.SpawnGroup &&
-                    step.SpawnGroupId == 1U));
-                Assert.IsFalse(survivorScene.Steps.Any(step =>
-                    step.Kind == MissionScenarioStepKind.SpawnDynamicObject &&
-                    step.DynamicObjectKey == "bootcamp-conrad-corpse"));
-                Assert.IsFalse(survivorScene.Steps.Any(step =>
-                    step.Kind == MissionScenarioStepKind.SpawnDynamicObject &&
-                    step.DynamicObjectKey == "bootcamp-dropship-debris"));
-
-                var survivorConversationTransition = finalMission.Transitions[(2U, 2U)];
-                var survivorConversationTrigger = survivorConversationTransition.Triggers.Single();
-                Assert.AreEqual(MissionTriggerKind.Conversation, survivorConversationTrigger.Kind);
-                Assert.AreEqual(2584U, survivorConversationTrigger.NpcPackageId);
+                Assert.AreEqual((byte)MissionObjectiveState.Completed, scoutTransition.ToStateValue);
+                Assert.IsFalse(finalMission.Transitions.ContainsKey((2U, 2U)));
+                Assert.AreEqual(21081U, finalMission.Transitions[(3U, 1U)].Triggers.Single().SubjectId);
                 CollectionAssert.AreEqual(
                     new[] { 2U, 3U, 3U },
-                    survivorConversationTransition.Actions
+                    scoutTransition.Actions
                         .Where(action => action.TargetObjectiveId.HasValue)
                         .Select(action => action.TargetObjectiveId!.Value)
                         .ToArray());

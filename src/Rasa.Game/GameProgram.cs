@@ -30,7 +30,7 @@ namespace Rasa
     using Repositories.Char.CharacterMissionProgress;
     using Repositories.Char.CharacterMissionScenario;
     using Repositories.Char.CharacterOption;
-    using Repositories.Char.CharacterQualification;
+    using Repositories.Char.CharacterFlag;
     using Repositories.Char.CharacterSkills;
     using Repositories.Char.CharacterStartingExperience;
     using Repositories.Char.CharacterTeleporter;
@@ -116,7 +116,7 @@ namespace Rasa
             services.AddScoped<ICharacterMissionProgressRepository, CharacterMissionProgressRepository>();
             services.AddScoped<ICharacterMissionScenarioRepository, CharacterMissionScenarioRepository>();
             services.AddScoped<ICharacterOptionRepository, CharacterOptionRepository>();
-            services.AddScoped<ICharacterQualificationRepository, CharacterQualificationRepository>();
+            services.AddScoped<ICharacterFlagRepository, CharacterFlagRepository>();
             services.AddScoped<ICharacterSkillsRepository, CharacterSkillsRepository>();
             services.AddScoped<ICharacterStartingExperienceRepository, CharacterStartingExperienceRepository>();
             services.AddScoped<ICharacterTeleporterRepository, CharacterTeleporterRepository>();

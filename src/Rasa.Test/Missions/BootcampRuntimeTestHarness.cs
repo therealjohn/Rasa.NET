@@ -281,11 +281,12 @@ namespace Rasa.Test.Missions
                         new List<AugmentationType>(),
                         true));
 
-            var wreck = world.EntityClassEntries.AsNoTracking().Single(entry => entry.Id == 24586);
-            classes[(EntityClasses)wreck.Id] = new EntityClass(
-                wreck.Id, wreck.ClassName, wreck.MeshId, wreck.ClassCollisionRole,
-                wreck.AugList.Split(',').Select(value => (AugmentationType)uint.Parse(value)).ToList(),
-                wreck.TargetFlag != 0);
+            foreach (var entry in world.EntityClassEntries.AsNoTracking()
+                .Where(entry => entry.Id == 24586 || entry.Id == 21081))
+                classes[(EntityClasses)entry.Id] = new EntityClass(
+                    entry.Id, entry.ClassName, entry.MeshId, entry.ClassCollisionRole,
+                    entry.AugList.Split(',').Select(value => (AugmentationType)uint.Parse(value)).ToList(),
+                    entry.TargetFlag != 0);
 
             if (!classes.TryGetValue((EntityClasses)4001, out var creatureClass))
             {
@@ -966,6 +967,7 @@ namespace Rasa.Test.Missions
                 ConfigureRuntimePlayer(freshClient);
                 using (var reload = Context.CreateChar())
                 {
+                    freshClient.Player.PlayerFlags = new Dictionary<uint, uint>(reload.CharacterFlags.Get(characterId));
                     Manager.HydrateAndClearInvalid(freshClient.Player, reload);
                     freshClient.Player.StartingExperienceCompleted =
                         Rasa.Game.Missions.Persistence.MissionRequirementFactsAdapter.HasCompletedStartingExperience(reload, characterId);
@@ -1113,6 +1115,18 @@ namespace Rasa.Test.Missions
                 long? deltaMilliseconds = null,
                 uint actionArgId = DynamicObjectManager.LogosUseArgId)
             {
+                if (dynamicObject.MissionConversation is { } conversation)
+                {
+                    MovePlayerTo(dynamicObject);
+                    var npcs = new NpcManager(Context, Manager);
+                    npcs.RequestNpcConverse(Client, new RequestNPCConversePacket { EntityId = dynamicObject.EntityId });
+                    npcs.CompleteNPCObjective(Client, new CompleteNPCObjectivePacket
+                    {
+                        EntityId = dynamicObject.EntityId, MissionId = conversation.MissionId,
+                        ObjectiveId = conversation.DialogObjectiveId, PlayerFlagId = conversation.PlayerFlagId
+                    });
+                    return;
+                }
                 BeginUseObject(dynamicObject, actionArgId);
                 AdvanceRecovery(deltaMilliseconds ?? dynamicObject.WindupTime);
             }

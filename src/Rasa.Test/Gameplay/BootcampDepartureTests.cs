@@ -17,7 +17,7 @@ namespace Rasa.Test.Gameplay
     using Repositories.Char.Character;
     using Repositories.Char.CharacterAbilityDrawer;
     using Repositories.Char.CharacterMission;
-    using Repositories.Char.CharacterQualification;
+    using Repositories.Char.CharacterFlag;
     using Repositories.Char.CharacterSkills;
     using Repositories.Char.CharacterStartingExperience;
     using Repositories.Char.CharacterTeleporter;
@@ -150,19 +150,7 @@ namespace Rasa.Test.Gameplay
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Context.Client,
                 MissionProgressEvent.Area(1995, 435)));
-            var survivor = BootcampRuntimeTestHarness.FindNpcByPackage(
-                harness.BootcampMap,
-                BootcampRuntimeTestHarness.WoundedSurvivorPackageId);
-            Assert.IsNotNull(survivor);
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
-                harness.Context.Client,
-                survivor.EntityId,
-                1995,
-                2,
-                1));
-            Assert.IsTrue(harness.Manager.RecordProgress(
-                harness.Context.Client,
-                MissionProgressEvent.Interaction(24990)));
+            harness.UseObjectAndRecover(ConradCorpseDialogueTests.Corpse(harness));
             harness.UtcNow += TimeSpan.FromSeconds(5);
             Assert.IsFalse(harness.Manager.TickScenarios(harness.Context.Client));
             Assert.IsTrue(harness.Manager.RecordProgress(
@@ -188,9 +176,9 @@ namespace Rasa.Test.Gameplay
             Assert.AreEqual(RasaGame::Rasa.Data.ClientState.Ingame, harness.Context.Client.State);
             Assert.IsNull(harness.Context.Client.PendingTransfer);
             using var verify = harness.Context.CreateChar();
-            Assert.IsFalse(verify.CharacterQualifications.HasQualification(
+            Assert.IsFalse(verify.CharacterFlags.HasValue(
                 harness.Context.Client.Player.Id,
-                CharacterQualificationKey.BootcampComplete));
+                CharacterFlagIds.BootcampComplete));
             Assert.IsFalse(verify.GameAccounts.Get(harness.Context.Client.AccountEntry.Id).CanSkipBootcamp);
         }
 
@@ -264,9 +252,9 @@ namespace Rasa.Test.Gameplay
             Assert.AreEqual(
                 CharacterStartingExperienceState.Completed,
                 new CharacterStartingExperienceRepository(verify).Get(characterId).State);
-            Assert.IsTrue(new CharacterQualificationRepository(verify).HasQualification(
+            Assert.IsTrue(new CharacterFlagRepository(verify).HasValue(
                 characterId,
-                CharacterQualificationKey.BootcampComplete));
+                CharacterFlagIds.BootcampComplete));
             Assert.IsTrue(new GameAccountRepository(verify).Get(61).CanSkipBootcamp);
 
             var rogers = new Creature
@@ -568,9 +556,9 @@ namespace Rasa.Test.Gameplay
                 CharacterStartingExperienceState.Bootcamp,
                 new CharacterStartingExperienceRepository(verify).Get(characterId).State);
             Assert.IsFalse(new GameAccountRepository(verify).Get(62).CanSkipBootcamp);
-            Assert.IsFalse(new CharacterQualificationRepository(verify).HasQualification(
+            Assert.IsFalse(new CharacterFlagRepository(verify).HasValue(
                 characterId,
-                CharacterQualificationKey.BootcampComplete));
+                CharacterFlagIds.BootcampComplete));
         }
 
         [TestMethod]
@@ -633,9 +621,9 @@ namespace Rasa.Test.Gameplay
             {
                 Assert.AreEqual(
                     1,
-                    verify.CharacterQualificationEntries.Count(entry =>
+                    verify.CharacterFlagEntries.Count(entry =>
                         entry.CharacterId == characterId &&
-                        entry.QualificationKey == CharacterQualificationKey.BootcampComplete));
+                        entry.FlagId == CharacterFlagIds.BootcampComplete && entry.Value == 1));
                 Assert.AreEqual(
                     1,
                     verify.CharacterStartingExperienceEntries.Count(entry =>
@@ -715,9 +703,9 @@ namespace Rasa.Test.Gameplay
             {
                 Assert.AreEqual(
                     1,
-                    verify.CharacterQualificationEntries.Count(entry =>
+                    verify.CharacterFlagEntries.Count(entry =>
                         entry.CharacterId == characterId &&
-                        entry.QualificationKey == CharacterQualificationKey.BootcampComplete));
+                        entry.FlagId == CharacterFlagIds.BootcampComplete && entry.Value == 1));
                 Assert.AreEqual(
                     1,
                     verify.CharacterSkillsEntries.Count(entry =>
@@ -802,9 +790,9 @@ namespace Rasa.Test.Gameplay
                 CharacterStartingExperienceState.Bootcamp,
                 new CharacterStartingExperienceRepository(verify).Get(characterId).State);
             Assert.IsFalse(new GameAccountRepository(verify).Get(63).CanSkipBootcamp);
-            Assert.IsFalse(new CharacterQualificationRepository(verify).HasQualification(
+            Assert.IsFalse(new CharacterFlagRepository(verify).HasValue(
                 characterId,
-                CharacterQualificationKey.BootcampComplete));
+                CharacterFlagIds.BootcampComplete));
             Assert.AreEqual(49250U, new CharacterRepository(verify).Get(characterId).Experience);
             Assert.AreEqual(
                 (uint)MissionState.Active,

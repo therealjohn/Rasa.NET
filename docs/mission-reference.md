@@ -136,6 +136,47 @@ Current custom keys are `example.even-level`,
 boolean facts; Game must provide them for both runtime queries and durable
 transactions. Unknown handlers/facts fail explicitly. Nesting is bounded to 32.
 
+## Persistent character flags
+
+The Char database owns `character_flag(character_id, flag_id, value)`, keyed by
+`(character_id, flag_id)` with cascading deletion when the character is deleted.
+IDs and values are unsigned 32-bit integers. A missing row means unset;
+an explicit zero is a stored value and does not match an unset flag.
+Flags belong to the character, not its character-selection slot or account.
+
+Any subsystem can use `ICharUnitOfWork.CharacterFlags`:
+
+| Operation | Meaning |
+| --- | --- |
+| `Get(characterId)` | Read all flags as an ID/value dictionary |
+| `GetValue(characterId, flagId)` | Read a nullable value; null means unset |
+| `HasValue(characterId, flagId, value = 1)` | Match a stored value exactly |
+| `Set(characterId, flagId, value)` | Insert or update one flag |
+| `Remove(characterId, flagId)` | Unset one flag |
+| `Add(entry)` | Insert a new row, rejecting a duplicate key |
+
+Mission `SetPlayerFlag` actions write in the same transaction as their objective
+transition. NPC dialogue, ordinary progress, failure and abandonment follow the
+same rule. `SetCharacterFlagIntent(operationKey, flagId, value)` provides typed
+scene writes; a null value removes the flag. Composed scene plans publish the
+last flag snapshot in transaction order, not an earlier child plan's snapshot.
+Runtime flags change only after commit and are loaded during character selection.
+The `Manifestation.PlayerFlags` dictionary is a cache, not a persistence API.
+Transactional prerequisites and `FlagRequirement` checks use the database.
+
+Normal mission flag IDs use `1..2147483647`. IDs `2147483648..4294967295` are
+reserved for named server state declared in `CharacterFlagIds`; mission
+`SetPlayerFlag` actions cannot write that range. `BootcampComplete` is
+`0x80000001` with value `1`. Bootcamp completion/skip and requirement facts now
+use that flag instead of `character_qualification`.
+
+The old qualification enum and `SetQualificationIntent` remain only to decode
+frozen content and historical scene intents; their adapter writes the new flag.
+There is no current qualification entity, repository or table. Mission history,
+reward receipts and `character_starting_experience` remain separate records.
+The older `PlayerFlagsPacket` bitmask is a different wire contract and is not
+used to serialize this dictionary.
+
 ## Scene definitions
 
 `MissionSceneDefinition` contains `Script`, `StateVersion`, role-keyed `Actors`,
@@ -177,6 +218,17 @@ Role dictionary keys must equal `SceneActorDefinition.Role`. Created actors need
 `InitiallyInteractable`, `InitialObjectState`, `WindupMilliseconds`, loot
 bindings and mission/group/spawn attribution.
 
+An object actor can have an optional `SceneObjectConversation` binding:
+`MissionId` and `ObjectiveId` identify the progression target;
+`NpcPackageId`, `DialogObjectiveId` and `PlayerFlagId` select an existing native
+objective dialogue. Its entity class must already support the client's NPC
+augmentation. The adapter publishes NPC metadata and opens `Converse` on that
+same object, without adding a creature or sending unsupported Usable packets.
+The client must open the dialog before Continue, remain near the same object
+in the same instance, and retain the same mission assignment. Completion
+uses the existing transactional progress planner, restricted to the bound
+objective. Opening a dialog never grants inventory or advances progress.
+
 `SharedKey` is for private experience-owned actors. It does not make personal
 copies of main-world NPCs. Keep the role consistent between mission and
 experience definitions.
@@ -208,8 +260,9 @@ route or despawning an actor is not a confirmed defeat.
 | `TransitionObjectStateIntent` | Send the native usable transition to an object state, with an optional windup in milliseconds |
 
 Character intents are `GrantRewardIntent`, `GrantAbilityIntent`,
-`SetQualificationIntent`, `SetEntitlementIntent`, `ObjectiveIntent`, and
-`MissionDeadlineIntent`. Game applies them through its transaction adapters.
+`SetCharacterFlagIntent`, `SetEntitlementIntent`, `ObjectiveIntent`, and
+`MissionDeadlineIntent`. `SetQualificationIntent` is retained for historical
+content compatibility. Game applies them through its transaction adapters.
 
 Operation keys are nonempty, at most 96 characters and unique across a scene's
 authored sequences. Timers have names of at most 64 characters, a target sequence

@@ -80,6 +80,8 @@ namespace Rasa.Missions.Scenes
                     return Reject($"Scene operation {intent.OperationKey} references an invalid combat actor.");
             }
             var timerNames = new HashSet<string>(StringComparer.Ordinal);
+            if (decision.CharacterIntents.OfType<SetCharacterFlagIntent>().Any(intent => intent.FlagId == 0))
+                return Reject("Character flag IDs must be nonzero.");
             foreach (var timer in decision.Timers)
                 if (string.IsNullOrWhiteSpace(timer.Name) || timer.Name.Length > 64 || !timerNames.Add(timer.Name) ||
                     !timer.Cancel && (!timer.DueAtUtc.HasValue || timer.DueAtUtc.Value.Kind != DateTimeKind.Utc))

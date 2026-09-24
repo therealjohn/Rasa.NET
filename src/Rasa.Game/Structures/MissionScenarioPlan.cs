@@ -14,13 +14,14 @@ namespace Rasa.Structures
         private readonly List<MissionProgressPublicationPlan> _progressPlans = new();
         private readonly List<MissionFailurePublicationPlan> _failurePlans = new();
         private readonly List<MissionRewardGrant> _rewardGrants = new();
+        private IReadOnlyDictionary<uint, uint> _flags;
 
         internal List<string> StepKeysToAdd { get; } = new();
         internal List<string> StepKeyPrefixesToRemove { get; } = new();
         internal List<string> ExactStepKeysToRemove { get; } = new();
         internal List<string> DurableKeyPrefixesToRemove { get; } = new();
         internal bool HasChanges =>
-            StepKeysToAdd.Count > 0 ||
+            _flags != null || StepKeysToAdd.Count > 0 ||
             StepKeyPrefixesToRemove.Count > 0 ||
             ExactStepKeysToRemove.Count > 0 ||
             DurableKeyPrefixesToRemove.Count > 0 ||
@@ -58,17 +59,31 @@ namespace Rasa.Structures
         internal void AddProgressPlan(MissionProgressPublicationPlan publicationPlan)
         {
             if (publicationPlan.HasChanges)
+            {
                 _progressPlans.Add(publicationPlan);
+                CaptureFlags(publicationPlan.FlagSnapshot);
+            }
         }
 
         internal void AddFailurePlan(MissionFailurePublicationPlan failurePlan)
         {
             if (!ReferenceEquals(failurePlan, MissionFailurePublicationPlan.Empty))
+            {
                 _failurePlans.Add(failurePlan);
+                CaptureFlags(failurePlan.FlagSnapshot);
+            }
+        }
+
+        internal void CaptureFlags(IReadOnlyDictionary<uint, uint> flags)
+        {
+            if (flags != null)
+                _flags = flags;
         }
 
         internal void ApplyRuntime(Client client, ManifestationManager manifestationManager, MissionApplication missionManager)
         {
+            if (_flags != null)
+                client.Player.PlayerFlags = new Dictionary<uint, uint>(_flags);
             foreach (var rewardGrant in _rewardGrants)
                 rewardGrant.ConvergeRuntime(client);
             foreach (var convergence in _runtimeConvergence)
@@ -78,9 +93,10 @@ namespace Rasa.Structures
                     client,
                     missionManager,
                     missionManager.TryExecuteScenario,
-                    missionManager.TryExecuteFailureTransitionScenario);
+                    missionManager.TryExecuteFailureTransitionScenario,
+                    convergeFlags: false);
             foreach (var progressPlan in _progressPlans)
-                progressPlan.Publish(client);
+                progressPlan.Publish(client, convergeFlags: false);
             foreach (var rewardGrant in _rewardGrants)
                 rewardGrant.Publish(client, manifestationManager);
             foreach (var publication in _publications)

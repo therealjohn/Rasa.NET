@@ -917,6 +917,7 @@ namespace Rasa.Managers
             {
                 ClanId = clan?.Id ?? 0,
                 ClanName = clan?.Name,
+                PlayerFlags = new Dictionary<uint, uint>(unitOfWork.CharacterFlags.Get(character.Id)),
                 GainedWaypoints = unitOfWork.CharacterTeleporters.Get(character.Id)
                     .Where(waypoint => !StartingExperience.IsExitWaypoint(waypoint.WaypointId)).ToList(),
                 LockboxCredits = lockboxInfo?.Credits ?? 0,

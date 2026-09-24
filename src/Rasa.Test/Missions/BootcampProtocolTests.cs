@@ -67,9 +67,7 @@ namespace Rasa.Test.Missions
             using var harness = BootcampRuntimeTestHarness.Create();
             PrepareCallingForReinforcementsDeadline(harness);
 
-            Assert.IsTrue(harness.Manager.RecordProgress(
-                harness.Client,
-                MissionProgressEvent.Interaction(24990)));
+            harness.UseObjectAndRecover(ConradCorpseDialogueTests.Corpse(harness));
             var startPackets = harness.Drain();
             AssertRelativeOrder(
                 startPackets,
@@ -116,9 +114,7 @@ namespace Rasa.Test.Missions
         {
             using var harness = BootcampRuntimeTestHarness.Create();
             PrepareCallingForReinforcementsDeadline(harness);
-            Assert.IsTrue(harness.Manager.RecordProgress(
-                harness.Client,
-                MissionProgressEvent.Interaction(24990)));
+            harness.UseObjectAndRecover(ConradCorpseDialogueTests.Corpse(harness));
             harness.Drain();
 
             harness.UtcNow += BombDeadline + TimeSpan.FromSeconds(1);
@@ -329,16 +325,8 @@ namespace Rasa.Test.Missions
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Client,
                 MissionProgressEvent.Area(MissionCallingForReinforcements, MissingScoutAreaId)));
-            var survivor = BootcampRuntimeTestHarness.FindNpcByPackage(
-                harness.BootcampMap,
-                BootcampRuntimeTestHarness.WoundedSurvivorPackageId);
-            Assert.IsNotNull(survivor);
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
-                harness.Client,
-                survivor.EntityId,
-                MissionCallingForReinforcements,
-                2,
-                1));
+            Assert.AreEqual(MissionObjectiveState.Completed,
+                harness.Client.Player.Missions[MissionCallingForReinforcements].Objectives[2].State);
             harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
             harness.Drain();
 
@@ -362,9 +350,9 @@ namespace Rasa.Test.Missions
                 1,
                 "Transfer",
                 mapContextId: BootcampSelectionTestContext.BootcampMapContextId,
-                x: -255.3125,
-                y: 101.05078,
-                z: -70.4375,
+                x: -225,
+                y: 101.12099,
+                z: -71,
                 experience: 49250,
                 level: 5);
             context.SeedStartingExperience(characterId, CharacterStartingExperienceState.Bootcamp);
@@ -390,13 +378,9 @@ namespace Rasa.Test.Missions
                 BootcampSelectionTestContext.BootcampMapContextId,
                 characterId);
             Assert.IsNotNull(privateMap);
-            context.Objects.SelectWaypoint(
-                client,
-                new SelectWaypointPacket
-                {
-                    WaypointId = BootcampSelectionTestContext.ExitPadWaypointId,
-                    MapInstanceId = privateMap.InstanceId
-                });
+            new MapTriggerManager(context.Objects).TriggersProximityWorker(privateMap);
+            Assert.IsNotNull(client.PendingTransfer);
+            context.CompletePendingDeparture(client);
             AssertRelativeOrder(
                 MissionTestContext.Drain(client),
                 typeof(PreWonkavatePacket),
@@ -503,16 +487,8 @@ namespace Rasa.Test.Missions
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Client,
                 MissionProgressEvent.Area(MissionCallingForReinforcements, MissingScoutAreaId)));
-            var survivor = BootcampRuntimeTestHarness.FindNpcByPackage(
-                harness.BootcampMap,
-                BootcampRuntimeTestHarness.WoundedSurvivorPackageId);
-            Assert.IsNotNull(survivor);
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
-                harness.Client,
-                survivor.EntityId,
-                MissionCallingForReinforcements,
-                2,
-                1));
+            Assert.AreEqual(MissionObjectiveState.Completed,
+                harness.Client.Player.Missions[MissionCallingForReinforcements].Objectives[2].State);
             harness.Drain();
         }
 

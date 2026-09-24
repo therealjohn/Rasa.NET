@@ -66,26 +66,6 @@ namespace Rasa.Test.Missions
                 harness.Context.Client,
                 MissionProgressEvent.Area(1995, MissingScoutAreaId)));
             Assert.AreEqual(
-                MissionObjectiveState.Incomplete,
-                harness.Context.Client.Player.Missions[1995].Objectives[2].State);
-            Assert.AreEqual(
-                MissionObjectiveState.Inactive,
-                harness.Context.Client.Player.Missions[1995].Objectives[3].State);
-            Assert.IsNotNull(FindNpcByPackage(harness.BootcampMap, 2584));
-            Assert.IsNull(FindScenarioObject(harness.BootcampMap, "bootcamp-conrad-corpse"));
-            Assert.IsNull(FindScenarioObject(harness.BootcampMap, "bootcamp-dropship-debris"));
-
-            var survivor = FindNpcByPackage(
-                harness.BootcampMap,
-                BootcampRuntimeTestHarness.WoundedSurvivorPackageId);
-            Assert.IsNotNull(survivor);
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
-                harness.Context.Client,
-                survivor.EntityId,
-                1995,
-                2,
-                1));
-            Assert.AreEqual(
                 MissionObjectiveState.Completed,
                 harness.Context.Client.Player.Missions[1995].Objectives[2].State);
             Assert.AreEqual(
@@ -97,7 +77,7 @@ namespace Rasa.Test.Missions
 
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Context.Client,
-                MissionProgressEvent.Interaction(24990)));
+                MissionProgressEvent.Interaction(21081)));
             Assert.AreEqual(
                 MissionObjectiveState.Incomplete,
                 harness.Context.Client.Player.Missions[1995].Objectives[1].State);
@@ -139,6 +119,8 @@ namespace Rasa.Test.Missions
 
             harness.UtcNow += ArrivalDelay;
             Assert.IsTrue(harness.Manager.TickScenarios(harness.Context.Client));
+            Assert.AreEqual(MissionObjectiveState.Inactive, harness.Context.Client.Player.Missions[1995].Objectives[4].State);
+            DefeatAssault(harness);
 
             Assert.AreEqual(
                 MissionObjectiveState.Incomplete,
@@ -156,9 +138,9 @@ namespace Rasa.Test.Missions
             Assert.IsNull(harness.Context.Client.PendingTransfer);
             Assert.IsTrue(harness.Context.Client.Player.Missions[1995].Completeable);
             using var completedUnit = harness.Context.CreateChar();
-            Assert.IsFalse(completedUnit.CharacterQualifications.HasQualification(
+            Assert.IsFalse(completedUnit.CharacterFlags.HasValue(
                 harness.Context.Client.Player.Id,
-                CharacterQualificationKey.BootcampComplete));
+                CharacterFlagIds.BootcampComplete));
             Assert.IsFalse(harness.Context.Client.AccountEntry.CanSkipBootcamp);
         }
 
@@ -179,10 +161,9 @@ namespace Rasa.Test.Missions
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Context.Client,
                 MissionProgressEvent.Area(1995, MissingScoutAreaId)));
-            CompleteSurvivorConversation(harness);
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Context.Client,
-                MissionProgressEvent.Interaction(24990)));
+                MissionProgressEvent.Interaction(21081)));
             AssertMissionNotAdvertised(harness.Manager, harness.Context.Client.Player, youngblood, 2005);
 
             harness.UtcNow += BombDeadline + TimeSpan.FromSeconds(1);
@@ -208,10 +189,9 @@ namespace Rasa.Test.Missions
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Context.Client,
                 MissionProgressEvent.Area(1995, MissingScoutAreaId)));
-            CompleteSurvivorConversation(harness);
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Context.Client,
-                MissionProgressEvent.Interaction(24990)));
+                MissionProgressEvent.Interaction(21081)));
             harness.UtcNow += BombDeadline + TimeSpan.FromSeconds(1);
             Assert.IsTrue(harness.Manager.EvaluateDeadlines(harness.Context.Client));
 
@@ -254,6 +234,7 @@ namespace Rasa.Test.Missions
 
             harness.UtcNow += ArrivalDelay;
             Assert.IsTrue(harness.Manager.TickScenarios(harness.Context.Client));
+            DefeatAssault(harness);
             Assert.AreEqual(
                 MissionObjectiveState.Incomplete,
                 retryMission.Objectives[4].State);
@@ -308,18 +289,15 @@ namespace Rasa.Test.Missions
             CollectionAssert.DoesNotContain(missionIds, missionId);
         }
 
-        private static void CompleteSurvivorConversation(BootcampRuntimeHarness harness)
+        private static void DefeatAssault(BootcampRuntimeHarness harness)
         {
-            var survivor = FindNpcByPackage(
-                harness.BootcampMap,
-                BootcampRuntimeTestHarness.WoundedSurvivorPackageId)
-                ?? throw new AssertFailedException("Missing wounded survivor.");
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
-                harness.Context.Client,
-                survivor.EntityId,
-                1995,
-                2,
-                1));
+            foreach (var creature in harness.BootcampMap.MapCellInfo.Cells.Values
+                .SelectMany(cell => cell.CreatureList).Distinct()
+                .Where(creature => creature.DbId == 510228).ToArray())
+            {
+                creature.State = CharacterState.Dead;
+                harness.Manager.Scenes.RecordDefeat(harness.BootcampMap, creature, null);
+            }
         }
 
         private static Creature FindNpcByPackage(MapChannel map, uint npcPackageId, uint? missionId = null) =>
@@ -339,14 +317,14 @@ namespace Rasa.Test.Missions
         private static void PrepareBootcampScenarioClasses()
         {
             var classes = EntityClassManager.Instance.LoadedEntityClasses;
-            foreach (var entityClassId in new uint[] { 24586, 24990 })
+            foreach (var entityClassId in new uint[] { 24586, 24990, 21081, 10516 })
                 if (!classes.ContainsKey((EntityClasses)entityClassId))
                     classes.Add((EntityClasses)entityClassId, new EntityClass(
                         entityClassId,
                         $"scenario_object_{entityClassId}",
                         0,
                         0,
-                        new List<AugmentationType>(),
+                        entityClassId == 21081 ? new List<AugmentationType> { AugmentationType.NPC } : new List<AugmentationType>(),
                         true));
 
             if (!classes.TryGetValue((EntityClasses)4001, out var creatureClass))
@@ -395,7 +373,7 @@ namespace Rasa.Test.Missions
             MissionApplication manager = null;
             var now = new DateTime(2026, 9, 19, 12, 0, 0, DateTimeKind.Utc);
             var creatures = new CreatureManager(null, new ManifestationManager(context));
-            foreach (var creatureId in new[] { 39U, 50U, 510208U, 510209U })
+            foreach (var creatureId in new[] { 39U, 50U, 510208U, 510209U, 510227U, 510228U })
             {
                 creatures.LoadedCreatures[creatureId] = new Creature
                 {

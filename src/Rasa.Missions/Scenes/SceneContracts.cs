@@ -19,7 +19,10 @@ namespace Rasa.Missions.Scenes
         bool InitiallyInteractable = true, uint InitialObjectState = 0,
         uint? LootMissionId = null, uint? LootRewardId = null, uint? LootObjectiveId = null,
         string SharedKey = null, uint? WindupMilliseconds = null, uint MissionId = 0,
-        uint? GroupId = null, uint SpawnId = 0, ScenePosition FollowOffset = null);
+        uint? GroupId = null, uint SpawnId = 0, ScenePosition FollowOffset = null,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] SceneObjectConversation Conversation = null);
+    public sealed record SceneObjectConversation(uint MissionId, uint ObjectiveId, uint NpcPackageId,
+        uint DialogObjectiveId, uint PlayerFlagId = 1);
     public sealed record SceneWaypoint(ScenePosition Position, double Orientation = 0, uint PauseMilliseconds = 0);
     public sealed record SceneSpawnPose(ActorHandle Handle, uint OwnerCharacterId, ScenePosition Position, double Orientation);
     public sealed record SceneRoute(string Key, IReadOnlyList<SceneWaypoint> Points, float Speed = 6.5f, bool ResumeAtDestination = false);
@@ -68,6 +71,7 @@ namespace Rasa.Missions.Scenes
     [JsonDerivedType(typeof(GrantRewardIntent), "reward")]
     [JsonDerivedType(typeof(GrantAbilityIntent), "ability")]
     [JsonDerivedType(typeof(SetQualificationIntent), "qualification")]
+    [JsonDerivedType(typeof(SetCharacterFlagIntent), "character-flag")]
     [JsonDerivedType(typeof(SetEntitlementIntent), "entitlement")]
     [JsonDerivedType(typeof(ObjectiveIntent), "objective")]
     [JsonDerivedType(typeof(MissionDeadlineIntent), "deadline")]
@@ -75,6 +79,7 @@ namespace Rasa.Missions.Scenes
     public sealed record GrantRewardIntent(string OperationKey, uint MissionId, uint RewardId) : CharacterIntent(OperationKey);
     public sealed record GrantAbilityIntent(string OperationKey, uint SkillId, uint AbilityId, byte Level, byte? Slot) : CharacterIntent(OperationKey);
     public sealed record SetQualificationIntent(string OperationKey, byte Qualification, bool Present) : CharacterIntent(OperationKey);
+    public sealed record SetCharacterFlagIntent(string OperationKey, uint FlagId, uint? Value) : CharacterIntent(OperationKey);
     public sealed record SetEntitlementIntent(string OperationKey, bool Enabled) : CharacterIntent(OperationKey);
     public sealed record ObjectiveIntent(string OperationKey, uint MissionId, uint ObjectiveId, Data.MissionObjectiveState State) : CharacterIntent(OperationKey);
     public enum DeadlineIntentKind { Start, Satisfy, Cancel }

@@ -61,14 +61,14 @@ namespace Rasa.Test.Missions
             {
                 unit.ExecuteTransaction(() =>
                 {
-                    if (!unit.CharacterQualifications.HasQualification(
+                    if (!unit.CharacterFlags.HasValue(
                             harness.Client.Player.Id,
-                            CharacterQualificationKey.BootcampComplete))
+                            CharacterFlagIds.BootcampComplete))
                     {
-                        unit.CharacterQualifications.Add(
-                            new CharacterQualificationEntry(
+                        unit.CharacterFlags.Add(
+                            new CharacterFlagEntry(
                                 harness.Client.Player.Id,
-                                CharacterQualificationKey.BootcampComplete));
+                                CharacterFlagIds.BootcampComplete));
                     }
 
                     unit.GameAccounts.UpdateCanSkipBootcamp(harness.Client.AccountEntry.Id, true);
@@ -243,16 +243,7 @@ namespace Rasa.Test.Missions
             Assert.IsTrue(harness.Manager.RecordProgress(
                 harness.Client,
                 MissionProgressEvent.Area(1995, MissingScoutAreaId)));
-            var survivor = BootcampRuntimeTestHarness.FindNpcByPackage(
-                harness.BootcampMap,
-                BootcampRuntimeTestHarness.WoundedSurvivorPackageId)
-                ?? throw new AssertFailedException("Missing wounded survivor.");
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
-                harness.Client,
-                survivor.EntityId,
-                1995,
-                2,
-                1));
+            Assert.AreEqual(MissionObjectiveState.Completed, harness.Client.Player.Missions[1995].Objectives[2].State);
         }
 
         private static DynamicObject FindScenarioObject(
