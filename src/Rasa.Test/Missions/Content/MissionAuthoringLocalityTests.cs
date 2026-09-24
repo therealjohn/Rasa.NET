@@ -19,11 +19,9 @@ namespace Rasa.Test.Missions.Content
         [TestMethod]
         public void DataOnlyExampleCompletesKillCollectAndTalkWithoutAManagerBranch()
         {
-            var pack = Read("ordinary.inactive.json");
-            Assert.IsFalse(pack.Enabled);
-            Assert.IsTrue(pack.Synthetic);
-            Assert.IsNull(pack.Scene);
-            var snapshot = new MissionContentLoader().Load(new MissionPackStore.PackRepository(new[] { pack }));
+            var data = MissionAuthoringExampleData.Ordinary();
+            Assert.IsFalse(data.Definitions.Single().Enabled);
+            var snapshot = new MissionContentLoader().Load(data.CreateWorldUnitOfWork().MissionContent);
             var definitions = MissionDefinitionCatalog.CreateDefinitions(snapshot,
                 new MissionValidationReport(Array.Empty<MissionValidationDiagnostic>(), Array.Empty<uint>()));
             using var context = MissionTestContext.WithCustomDefinitions(definitions);
@@ -39,24 +37,15 @@ namespace Rasa.Test.Missions.Content
         [TestMethod]
         public void ScriptedExampleUsesARegisteredScriptAndExistingWorldIntents()
         {
-            var pack = Read("escort.inactive.json");
-            Assert.IsFalse(pack.Enabled);
-            Assert.IsTrue(pack.Synthetic);
-            var run = new SceneRun(Guid.NewGuid().ToString("N"), pack.Definition.ContentRevision,
-                pack.Scene.Script, 1, 1, 0, "{}", SceneStatus.Running, 1, pack.Definition.MissionId);
+            var scene = MissionAuthoringExampleData.Escort();
+            var run = new SceneRun(Guid.NewGuid().ToString("N"), "example-escort",
+                scene.Script, 1, 1, 0, "{}", SceneStatus.Running, 1, 1990);
             var result = new SceneRuntime(new SceneScriptRegistry()).Evaluate(run,
-                pack.Scene.Bindings(run.Release), new SceneObservation(SceneEventKind.Started, 1), DateTime.UnixEpoch);
+                scene.Bindings(run.Release), new SceneObservation(SceneEventKind.Started, 1), DateTime.UnixEpoch);
             Assert.IsTrue(result.Accepted, result.Rejection);
             Assert.IsTrue(result.Decision.WorldIntents.OfType<RunRouteIntent>().Any());
             Assert.IsTrue(result.Decision.WorldIntents.OfType<SetInteractionIntent>().Any());
         }
 
-        private static MissionPackDocument Read(string name)
-        {
-            var root = new DirectoryInfo(AppContext.BaseDirectory);
-            while (root != null && !File.Exists(Path.Combine(root.FullName, "Rasa.NET.sln")))
-                root = root.Parent;
-            return MissionPackCodec.Read(File.ReadAllText(Path.Combine(root!.FullName, "content", "missions", "examples", name)));
-        }
     }
 }

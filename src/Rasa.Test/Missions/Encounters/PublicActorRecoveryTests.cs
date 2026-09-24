@@ -1,4 +1,5 @@
 using System;
+using Rasa.Missions.Scenes;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;

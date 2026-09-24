@@ -11,13 +11,12 @@ There are a few required tools and steps to get everything setup before you can 
 If you are interested in helping in the development of Rasa.NET, please [join the Discord](https://discord.gg/Ph68FmA) and chat!
 
 Mission contributors should read [mission authoring and operations](docs/missions.md)
-for the new-mission workflow, typed scripts, public encounters and release publication.
-The [mission pack and script reference](docs/mission-reference.md) describes the JSON
-fields, trigger/action bindings, requirements and CLI arguments. Applying database
-migrations alone does not activate mission content; publish a validated release
-before starting Game. The [explicit PowerShell workflow](docs/missions.md#update-an-existing-world-database)
-previews changes by default and publishes only when passed `-Publish` and the
-target World database path.
+for C# data migrations, typed scripts and public encounters.
+The [mission data and script reference](docs/mission-reference.md) describes
+trigger/action bindings, requirements and shared migration helpers. SQLite
+startup creates and migrates mission content automatically; MySQL uses the
+normal manual migration process. There is no separate mission publish step.
+This branch's migration-owned mission design requires fresh databases.
 
 ## Feedback
 - Ask questions and discuss development on [Discord](https://discord.gg/Ph68FmA)

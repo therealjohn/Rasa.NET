@@ -14,10 +14,6 @@ namespace Rasa.Game.Missions.World
     using Structures;
     using Structures.Char;
 
-    public sealed record PublicEncounterBinding(
-        uint MissionId, uint SpawnId, string Role, string ScriptKey,
-        string OwnerLossPolicy = "Reset", bool IncludeEligibleParty = false);
-
     public sealed class PublicActorLeaseService
     {
         private readonly IGameUnitOfWorkFactory _factory;

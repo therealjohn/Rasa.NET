@@ -1204,32 +1204,6 @@ namespace Rasa.Migrations.SqliteWorld
                         });
                 });
 
-            modelBuilder.Entity("Rasa.Structures.World.MissionActiveReleaseEntry", b =>
-                {
-                    b.Property<int>("Id")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("id");
-
-                    b.Property<string>("ManifestHash")
-                        .IsRequired()
-                        .HasColumnType("varchar(64)")
-                        .HasColumnName("manifest_hash");
-
-                    b.Property<string>("ReleaseName")
-                        .IsRequired()
-                        .HasColumnType("varchar(32)")
-                        .HasColumnName("release_name");
-
-                    b.Property<long>("Version")
-                        .IsConcurrencyToken()
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("version");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("mission_active_release");
-                });
-
             modelBuilder.Entity("Rasa.Structures.World.MissionAreaEntry", b =>
                 {
                     b.Property<uint>("MissionId")
@@ -1322,6 +1296,12 @@ namespace Rasa.Migrations.SqliteWorld
                         .HasColumnType("varchar(64)")
                         .HasColumnName("comment");
 
+                    b.Property<bool>("Enabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false)
+                        .HasColumnName("enabled");
+
                     b.Property<uint>("GiverId")
                         .HasColumnType("int(11)")
                         .HasColumnName("giver_id");
@@ -1410,10 +1390,6 @@ namespace Rasa.Migrations.SqliteWorld
 
             modelBuilder.Entity("Rasa.Structures.World.MissionExperienceBindingEntry", b =>
                 {
-                    b.Property<string>("ReleaseName")
-                        .HasColumnType("varchar(32)")
-                        .HasColumnName("release_name");
-
                     b.Property<string>("ExperienceKey")
                         .HasColumnType("varchar(64)")
                         .HasColumnName("experience_key");
@@ -1423,11 +1399,15 @@ namespace Rasa.Migrations.SqliteWorld
                         .HasColumnType("text")
                         .HasColumnName("bindings");
 
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("enabled");
+
                     b.Property<uint>("MapContextId")
                         .HasColumnType("INTEGER")
                         .HasColumnName("map_context_id");
 
-                    b.HasKey("ReleaseName", "ExperienceKey");
+                    b.HasKey("ExperienceKey");
 
                     b.ToTable("mission_experience_binding");
                 });
@@ -1638,32 +1618,6 @@ namespace Rasa.Migrations.SqliteWorld
                     b.HasKey("MissionId", "ContentRevision", "PrerequisiteId");
 
                     b.ToTable("mission_prerequisite");
-                });
-
-            modelBuilder.Entity("Rasa.Structures.World.MissionReleaseMemberEntry", b =>
-                {
-                    b.Property<string>("ReleaseName")
-                        .HasColumnType("varchar(32)")
-                        .HasColumnName("release_name");
-
-                    b.Property<uint>("MissionId")
-                        .HasColumnType("integer")
-                        .HasColumnName("mission_id");
-
-                    b.Property<string>("ContentRevision")
-                        .IsRequired()
-                        .HasColumnType("varchar(32)")
-                        .HasColumnName("content_revision");
-
-                    b.Property<bool>("Enabled")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("enabled");
-
-                    b.HasKey("ReleaseName", "MissionId");
-
-                    b.HasIndex("MissionId", "ContentRevision");
-
-                    b.ToTable("mission_release_member");
                 });
 
             modelBuilder.Entity("Rasa.Structures.World.MissionRewardDefinitionEntry", b =>
@@ -2758,15 +2712,6 @@ namespace Rasa.Migrations.SqliteWorld
                         .IsRequired();
 
                     b.Navigation("Content");
-                });
-
-            modelBuilder.Entity("Rasa.Structures.World.MissionReleaseMemberEntry", b =>
-                {
-                    b.HasOne("Rasa.Structures.World.MissionContentDefinitionEntry", null)
-                        .WithMany()
-                        .HasForeignKey("MissionId", "ContentRevision")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("Rasa.Structures.World.MissionRewardDefinitionEntry", b =>

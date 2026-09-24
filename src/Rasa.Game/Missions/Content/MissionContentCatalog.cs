@@ -1,3 +1,4 @@
+using Rasa.Missions.Content;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -26,8 +27,8 @@ namespace Rasa.Managers
         internal Dictionary<uint, IReadOnlyDictionary<uint, MissionAreaDefinition>> Areas { get; } = new();
         internal Dictionary<uint, IReadOnlyDictionary<uint, MissionSpawnGroupDefinition>> SpawnGroups { get; } = new();
         internal Dictionary<uint, IReadOnlyDictionary<uint, MissionScenarioDefinition>> Scenarios { get; } = new();
-        internal Dictionary<uint, MissionSceneDocument> SceneBindings { get; } = new();
-        internal List<MissionExperienceDocument> Experiences { get; } = new();
+        internal Dictionary<uint, MissionSceneDefinition> SceneBindings { get; } = new();
+        internal List<MissionExperienceDefinition> Experiences { get; } = new();
         internal MissionRuntime Runtime { get; private set; }
         internal MissionValidationReport Report { get; private set; } =
             new(Array.Empty<MissionValidationDiagnostic>(), Array.Empty<uint>());
@@ -57,7 +58,7 @@ namespace Rasa.Managers
                     Missions[row.Id] = new Mission(row.Id, row.Comment, null, row.GiverId, row.ReciverId,
                         row.Level, row.GroupType, row.CategoryId, row.Shareable, row.RadioCompleteable,
                         Array.Empty<MissionObjectiveDefinition>()).DisableOperational(
-                            "legacy npc_mission rows stay inactive: source-only objectives and rewards require an explicit validated release");
+                            "legacy npc_mission rows stay inactive until an enabled, complete definition is installed by migrations");
                 foreach (var recovered in MissionDefinitionCatalog.CreateRecoveredInactiveDefinitions())
                 {
                     Missions.TryGetValue(recovered.Key, out var world);
@@ -67,14 +68,15 @@ namespace Rasa.Managers
             }
             else
             {
-                MissionActiveReleaseEntry release = null;
                 IReadOnlyDictionary<uint, string> selected = null;
-                if (unit.MissionContent is IReleasedMissionContentRepository released)
+                if (unit.MissionContent is IMigratedMissionContentRepository migrated)
                 {
-                    release = released.GetActiveRelease() ?? throw new InvalidOperationException(
-                        "No active mission release. Validate and publish content with Rasa.MissionTool before startup.");
-                    selected = released.GetReleaseMembers(release.ReleaseName).Where(member => member.Enabled)
-                        .ToDictionary(member => member.MissionId, member => member.ContentRevision);
+                    var enabled = migrated.GetEnabledDefinitions();
+                    if (enabled.Count == 0)
+                        throw new InvalidOperationException("No enabled mission definitions. Apply the required World data migrations before starting Game.");
+                    if (enabled.GroupBy(entry => entry.MissionId).Any(group => group.Count() != 1))
+                        throw new InvalidOperationException("Mission migrations enabled more than one definition for a mission.");
+                    selected = enabled.ToDictionary(entry => entry.MissionId, entry => entry.ContentRevision);
                 }
                 var snapshot = new MissionContentLoader().Load(unit.MissionContent, selected);
                 Report = new MissionContentValidator().Validate(snapshot, unit);
@@ -92,24 +94,50 @@ namespace Rasa.Managers
                     SpawnGroups[definition.MissionId] = definition.SpawnGroups;
                     Scenarios[definition.MissionId] = definition.Scenarios;
                 }
-                if (unit.MissionContent is IReleasedMissionContentRepository content)
+                if (unit.MissionContent is IMigratedMissionContentRepository content)
                 {
+                    var publicSpawnIds = (unit.Spawnpools
+                        ?? throw new InvalidOperationException("Migrated mission validation requires the World spawn repository."))
+                        .Get().Select(entry => entry.Id).ToHashSet();
                     foreach (var binding in content.GetSceneBindings().Where(binding =>
                         selected.TryGetValue(binding.MissionId, out var revision) && revision == binding.ContentRevision))
                     {
-                        var document = JsonSerializer.Deserialize<MissionSceneDocument>(binding.Bindings, MissionPackCodec.Options)
+                        var document = JsonSerializer.Deserialize<MissionSceneDefinition>(binding.Bindings, MissionContentCodec.Options)
                             ?? throw new InvalidOperationException($"Mission {binding.MissionId} has no binding document.");
                         if (document.Script != binding.ScriptKey || document.StateVersion != binding.StateVersion)
                             throw new InvalidOperationException($"Mission {binding.MissionId} has inconsistent script/version bindings.");
+                        MissionSceneValidation.Validate(binding.MissionId, binding.ContentRevision, document,
+                            Missions[binding.MissionId].Objectives.Keys);
+                        foreach (var actor in document.Actors.Values.Where(actor =>
+                            actor.Kind == Rasa.Missions.Scenes.SceneActorKind.PublicSpawn))
+                            if (!publicSpawnIds.Contains(actor.TemplateId))
+                                throw new MissionRuleException($"Mission {binding.MissionId}: migrated public spawn {actor.TemplateId} does not exist.");
+                        foreach (var credit in document.Credit.Where(entry => entry.Value.Mode != MissionCreditMode.Personal))
+                            if (Missions[binding.MissionId].Objectives[credit.Key].GetExecutableTransitionsOrLegacyDefault()
+                                .Any(transition => transition.ProgressRule?.Kind is not
+                                    (Data.MissionProgressEventKind.CreatureKilled or Data.MissionProgressEventKind.ScenarioEvent)))
+                                throw new MissionRuleException($"Mission {binding.MissionId}: objective {credit.Key} cannot share personal actions.");
                         SceneBindings.Add(binding.MissionId, document);
                         Missions[binding.MissionId] = Missions[binding.MissionId].WithPolicies(document.Credit, document.Requirement,
                             document.TurnInRequirement, document.ObjectiveRequirements);
                     }
-                    Experiences.AddRange(content.GetExperiences(release.ReleaseName).Select(entry =>
-                        JsonSerializer.Deserialize<MissionExperienceDocument>(entry.Bindings, MissionPackCodec.Options)
-                        ?? throw new InvalidOperationException($"Experience {entry.ExperienceKey} has no binding document.")));
-                    Game.Missions.Content.Bootcamp.BootcampConradPlacementCompatibility.Apply(
-                        Missions, SceneBindings, Experiences);
+                    foreach (var mission in snapshot.Definitions.Values.Where(definition => definition.Scenarios.Count > 0))
+                        if (!SceneBindings.TryGetValue(mission.MissionId, out var scene) || string.IsNullOrWhiteSpace(scene.Script))
+                            throw new MissionRuleException($"Mission {mission.MissionId} requires a migrated scene script binding.");
+                    foreach (var entry in content.GetExperiences())
+                    {
+                        var experience = JsonSerializer.Deserialize<MissionExperienceDefinition>(entry.Bindings, MissionContentCodec.Options)
+                            ?? throw new InvalidOperationException($"Experience {entry.ExperienceKey} has no binding definition.");
+                        if (experience.Key != entry.ExperienceKey || experience.MapContextId != entry.MapContextId ||
+                            !experience.PrivatePerCharacter || string.IsNullOrWhiteSpace(experience.Revision))
+                            throw new InvalidOperationException($"Experience {entry.ExperienceKey} has inconsistent migrated bindings.");
+                        MissionSceneValidation.Validate(0, experience.Revision, experience.Scene, Array.Empty<uint>());
+                        foreach (var actor in experience.Scene.Actors.Values.Where(actor =>
+                            actor.Kind == Rasa.Missions.Scenes.SceneActorKind.PublicSpawn))
+                            if (!publicSpawnIds.Contains(actor.TemplateId))
+                                throw new MissionRuleException($"Experience {experience.Key}: migrated public spawn {actor.TemplateId} does not exist.");
+                        Experiences.Add(experience);
+                    }
                 }
             }
             Runtime = new MissionRuntime(Missions.Values);

@@ -28,18 +28,13 @@ namespace Rasa.Managers
 
     internal sealed class MissionJournalAdapter
     {
-        private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
         private readonly MissionContentCatalog _catalog;
-        private readonly Func<MissionApplication> _application;
-        internal MissionJournalAdapter(IGameUnitOfWorkFactory factory, MissionContentCatalog catalog, Func<MissionApplication> application)
-        { _gameUnitOfWorkFactory = factory; _catalog = catalog; _application = application; }
+        internal MissionJournalAdapter(MissionContentCatalog catalog) => _catalog = catalog;
         internal void Hydrate(
             Manifestation player,
             IReadOnlyList<CharacterMissionEntry> rows,
             CharacterMissionProgressSnapshot progress)
         {
-            progress = MissionSaveCompatibility.NormalizeSnapshot(
-                player.Id, progress, _gameUnitOfWorkFactory, _application());
             player.Missions = BuildHydration(player.Id, rows, progress).Missions;
             foreach (var row in rows.Where(row => row.MissionState is 1 or 4))
                 player.MissionHistory[row.MissionId] = (MissionState)row.MissionState;
@@ -53,7 +48,6 @@ namespace Rasa.Managers
             Dictionary<uint, MissionState> history = null;
             unitOfWork.ExecuteTransaction(() =>
             {
-                MissionSaveCompatibility.NormalizeDurable(player.Id, unitOfWork, _application());
                 history = unitOfWork.CharacterMissions.Runtime.History(player.Id)
                     .ToDictionary(entry => entry.MissionId,
                         entry => (MissionState)entry.Outcome);
@@ -66,24 +60,6 @@ namespace Rasa.Managers
             });
             player.Missions = result.Missions;
             player.MissionHistory = history;
-        }
-
-        internal void NormalizeMissionCompatibility(Manifestation player, uint? missionId = null) =>
-            MissionSaveCompatibility.NormalizeRuntime(player, _gameUnitOfWorkFactory, _application(), missionId);
-
-        internal bool TryNormalizeMissionCompatibility(Manifestation player, uint? missionId = null)
-        {
-            try
-            {
-                NormalizeMissionCompatibility(player, missionId);
-                return true;
-            }
-            catch (Exception error) when (GameplayRejectionException.IsExpected(error))
-            {
-                Logger.WriteLog(LogType.Error,
-                    $"Refused mission operation for character {player?.Id}: compatibility update failed: {error}");
-                return false;
-            }
         }
 
         internal bool TryHydrateMission(

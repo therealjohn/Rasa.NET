@@ -405,7 +405,7 @@ namespace Rasa.Test.Gameplay
 
             _worldContext = OpenWorld();
             _worldContext.Database.Migrate();
-            Rasa.Test.Missions.Content.MissionPackTestSupport.PublishBootcamp(_worldContext);
+
 
             Missions = new MissionApplication(
                 this,
@@ -807,7 +807,7 @@ namespace Rasa.Test.Gameplay
                 MissionContent = new MissionContentRepository(context);
                 NpcPackages = new NpcPackageRepository(context);
                 RandomNames = null;
-                Spawnpools = null;
+                Spawnpools = new SpawnpoolRepository(context);
                 Teleporters = new TeleporterRepository(context);
             }
 

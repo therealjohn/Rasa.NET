@@ -156,9 +156,9 @@ applies. This does not add support for unrelated consumable ability modules.
 After selecting the controlled actor, Game publishes a complete weapon-drawer
 snapshot before the selected slot. This refreshes the initial tray without
 requiring the player to press E; it does not regrant weapons or refill ammunition.
-The starting pistol, template `17131`, uses the existing weapon profile of
-template `11557` when its own profile is absent. Both map to class `27120`;
-an explicit profile for `17131` is preserved.
+The starting pistol, template `17131`, receives its weapon profile through the
+Bootcamp data migration. Its fixed values match the authored profile for
+template `11557`, which uses the same class `27120`; no runtime fallback is needed.
 
 ### Learned abilities
 

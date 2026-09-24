@@ -16,6 +16,9 @@ namespace Rasa.Structures.World
         [Required]
         public uint MissionId { get; set; }
 
+        // Mapped in the model so historical reflection-based seed column lists stay fixed.
+        public bool Enabled { get; set; }
+
         [Column("content_revision", TypeName = "varchar(32)")]
         [Required]
         public string ContentRevision { get; set; } = string.Empty;

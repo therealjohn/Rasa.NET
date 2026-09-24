@@ -52,15 +52,6 @@ namespace Rasa.Managers
             MissionContentSnapshot snapshot,
             IWorldUnitOfWork unitOfWork) => Validate(snapshot, CreateReferences(unitOfWork));
 
-        internal MissionValidationReport ValidatePublication(
-            MissionContentSnapshot snapshot, Context.World.WorldContext context) =>
-            Validate(snapshot, new MissionContentReferenceSet(
-                context.NpcPackageEntries.Select(entry => entry.PackageId).ToArray(),
-                context.ItemTemplateItemClassEntries.ToDictionary(entry => entry.ItemTemplateId, entry => entry.ItemClass),
-                context.EntityClassEntries.Select(entry => entry.Id).ToArray(),
-                context.CreatureEntries.ToDictionary(entry => entry.Id, entry => entry.ClassId),
-                context.MapInfoEntries.Select(entry => entry.Id).ToArray()));
-
         private MissionValidationReport Validate(MissionContentSnapshot snapshot, MissionContentReferenceSet references)
         {
             var diagnostics = new List<MissionValidationDiagnostic>();

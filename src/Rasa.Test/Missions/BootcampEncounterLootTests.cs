@@ -30,7 +30,7 @@ namespace Rasa.Test.Missions
         [DataRow(99, 1)]
         public void DropProfileHasExactIndependentChanceBoundaries(int percentile, int count)
         {
-            var drops = Content.MissionPackTestSupport.ReadExperience().ActorPolicies[510210].Loot
+            var drops = Content.MissionContentTestSupport.ReadExperience().ActorPolicies[510210].Loot
                 .Roll((minimum, maximum) => maximum == 100 ? percentile : minimum).ToArray();
             Assert.AreEqual(count, drops.Length);
             Assert.AreEqual((41666U, 1U), drops.Single(drop => drop.TemplateId == 41666));
@@ -44,7 +44,7 @@ namespace Rasa.Test.Missions
         [TestMethod]
         public void OptionalAmmunitionCanReachItsInclusiveQuantityCeiling()
         {
-            var drops = Content.MissionPackTestSupport.ReadExperience().ActorPolicies[510210].Loot
+            var drops = Content.MissionContentTestSupport.ReadExperience().ActorPolicies[510210].Loot
                 .Roll((minimum, maximum) => maximum == 100 ? 0 : maximum - 1).ToArray();
             Assert.AreEqual(24U, drops.Single(drop => drop.TemplateId == 28).Quantity);
             Assert.AreEqual(16U, drops.Single(drop => drop.TemplateId == 56).Quantity);

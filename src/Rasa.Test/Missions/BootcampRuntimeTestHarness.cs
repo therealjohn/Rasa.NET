@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Numerics;
 using System.Reflection;
+using Rasa.Missions.Content;
 
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -64,9 +65,9 @@ namespace Rasa.Test.Missions
         private const byte FreshPendingSlot = 1;
 
         internal static Harness Create(bool useWorldContent = false, Action<MapChannelManager> initializeMaps = null,
-            Action<IReadOnlyList<MissionPackDocument>> configurePacks = null)
+            Action<IDictionary<uint, MissionSceneDefinition>> configureScenes = null)
         {
-            var bootstrap = CreateBootstrap(useWorldContent, configurePacks);
+            var bootstrap = CreateBootstrap(useWorldContent, configureScenes);
             initializeMaps?.Invoke(bootstrap.Maps);
             ConfigureRuntimePlayer(bootstrap.Context.Client);
             var bootcampMap = bootstrap.Maps.GetOrCreatePrivateInstance(
@@ -382,7 +383,7 @@ namespace Rasa.Test.Missions
         }
 
         private static Bootstrap CreateBootstrap(bool useWorldContent,
-            Action<IReadOnlyList<MissionPackDocument>> configurePacks = null)
+            Action<IDictionary<uint, MissionSceneDefinition>> configureScenes = null)
         {
             var databaseDirectory = Path.Combine(
                 AppContext.BaseDirectory,
@@ -391,8 +392,8 @@ namespace Rasa.Test.Missions
             Directory.CreateDirectory(databaseDirectory);
             var worldDatabase = Path.Combine(databaseDirectory, "world");
             var worldContext = (SqliteWorldContext)CreateContext(typeof(SqliteWorldContext), worldDatabase);
-            worldContext.Database.Migrate();
-            Content.MissionPackTestSupport.PublishBootcamp(worldContext, configurePacks);
+            worldContext.Initialize();
+            Content.MissionContentTestSupport.ConfigureScenes(worldContext, configureScenes);
 
             var context = MissionTestContext.WithCustomDefinitions(new Dictionary<uint, Mission>());
             PrepareBootcampScenarioClasses(worldContext);

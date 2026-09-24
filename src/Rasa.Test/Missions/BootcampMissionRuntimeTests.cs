@@ -380,9 +380,12 @@ namespace Rasa.Test.Missions
             var worldDatabase = Path.Combine(databaseDirectory, "world");
             var worldContext = (SqliteWorldContext)CreateContext(typeof(SqliteWorldContext), worldDatabase);
             worldContext.Database.Migrate();
-            Content.MissionPackTestSupport.PublishBootcamp(worldContext);
+
 
             var context = MissionTestContext.WithCustomDefinitions(new Dictionary<uint, Mission>());
+            context.AddRewardTemplate(11519, 20000064);
+            EntityClassManager.Instance.LoadedEntityClasses[(EntityClasses)20000064]
+                .ItemTemplates[11519].InventoryCategory = InventoryCategory.Mission;
             context.Map.MapInfo = new MapInfo(BootcampMapContextId, "bootcamp_runtime", 1556, 0);
             context.Client.Player.MapContextId = BootcampMapContextId;
 
@@ -620,7 +623,7 @@ namespace Rasa.Test.Missions
                 MissionContent = new MissionContentRepository(context);
                 NpcPackages = new NpcPackageRepository(context);
                 RandomNames = null;
-                Spawnpools = null;
+                Spawnpools = new SpawnpoolRepository(context);
                 Teleporters = new TeleporterRepository(context);
             }
 

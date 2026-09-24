@@ -7,10 +7,10 @@ The checked-in seed contains 218 spawn pools there: 183 have a nonzero configure
 population and 35 are empty. Empty pools are not populated with invented defaults.
 
 For mission creation, use [mission authoring and operations](missions.md) and
-the [pack/script reference](mission-reference.md). This page describes behavior
-and acceptance checks. Before launching Game, apply provider migrations **and**
-publish the complete mission release; the older Bootcamp migrations mentioned
-below describe asset/data history, not the new content-activation workflow.
+the [data/script reference](mission-reference.md). This page describes behavior
+and acceptance checks. Mission data is installed by the normal provider
+migrations: automatically at SQLite startup and manually for MySQL.
+This branch's migration-owned design targets fresh databases.
 
 ## Run the automated checks
 
@@ -391,12 +391,12 @@ bulk-grant implementation does not receive a second loadout.
 
 The historical `BootcampCrateLoot` World migration replaces the bulk grant and
 crate despawn. The modular runtime additionally needs the current World/Char
-migrations and the published Bootcamp release; see
-[deployment setup](setup.md#publish-mission-content-before-starting-game).
+migrations, including the C# Bootcamp content seed; see
+[deployment setup](setup.md#mission-data-migrations).
 The crate's world lifetime now belongs to the experience run. Its per-template
 loot-claim records still use `character_mission_scenario_step`; do not confuse
-that retained compatibility path with the new general scene receipt tables.
-No database reset is required.
+that loot ledger with the general scene receipt tables. Normal reconnect does
+not reset either; the migration-owned branch itself requires fresh databases.
 
 Run the focused server regressions with:
 
@@ -700,23 +700,17 @@ Recovering Conrad's bomb now places one native Explosives Detonator
 timeout or abandonment removes it, and accepting retry `2005` supplies one new
 bomb. Item changes share the mission/scene transaction and are published only
 after commit. Full Mission inventory rejects pickup without completing the
-objective. Existing saves already carrying an unplanted bomb in objective state
-receive a one-time inventory backfill on reconnect, preserving the original
-deadline. Planted saves do not receive a replacement. The issuance receipt
-prevents repeated reconnects from granting extra bombs.
+objective. The issuance receipt prevents repeated reconnects from granting
+extra bombs. The migration-owned design starts with fresh databases and does
+not backfill old experimental saves.
 
-The published `deployment_11` Conrad placement `(-102.4, 86.20677, 66.8)` is
-inside the client's static trench wall (class `9707`), despite having a nearby
-navmesh polygon. Game applies a narrowly matched, in-memory Bootcamp compatibility
-correction: the corpse appears at `(-99, 86.41823, 74)` and indicator `436` points
-to its ground at `(-99, 86.32086, 74)`. Both the mission and experience-owned actor
-bindings are projected together. The original published rows, release hashes,
-assignment, objectives, bomb deadline and scene receipts remain unchanged;
-custom bindings and other revisions are not overridden.
+The old Conrad placement `(-102.4, 86.20677, 66.8)` was inside the client's
+static trench wall (class `9707`), despite having a nearby navmesh polygon.
+The C# Bootcamp data migration now places the corpse at `(-99, 86.41823, 74)`
+and indicator `436` at ground `(-99, 86.32086, 74)`. Mission and experience actor
+bindings use the same authored position; no runtime coordinate patch is needed.
 
-To recover a character already waiting for Conrad, rebuild and restart Game,
-then reconnect that character. No mission republish, abandonment or character
-reset is needed. Confirm the corpse is visible beside the missing team, the
+On a fresh migrated database, confirm the corpse is visible beside the missing team, the
 marker agrees with its location, and using it advances objective `3` and starts
 the bomb deadline. Also check reconnect before pickup, after pickup and after
 planting. Source-geometry checks cover the full corpse footprint, connected
@@ -726,23 +720,17 @@ still needs the manual check.
 After rebuilding/restarting Game, check that the rifle image appears on login
 without pressing E, that the bomb appears in the Mission tab, and that the wreck
 can be right-clicked to plant it. Use a Thrax-dropped medpack as well: it must not
-disconnect the client, must consume one item and must heal. No mission
-republish or database reset is required for these corrections.
+disconnect the client, must consume one item and must heal. Mission changes
+use the normal database migration flow, not a publication script.
 
-The paired `BootcampReinforcements` World and Char migrations remove the
-unsupported objective `10`. Existing saves waiting at `10` resume objective `2`
-at the survivor conversation. Saves already past that dialogue keep their later
-objectives, deadlines and scenario receipts. Runtime hydration and live
-snapshots also apply the compatibility conversion, covering content reloads.
-Unknown legacy layouts are preserved and produce an explicit compatibility
-error rather than having the mission deleted. Back up character databases
-before migration; undoing this character-data merge requires restoring a backup.
+The migrated definition uses the client's supported objectives `2, 3, 1, 4`,
+not the old experimental objective `10`. Runtime conversion of old objective
+layouts has been removed for the fresh-database design.
 
 ### SQLite pass
 
 1. Start from disposable SQLite character/world databases and apply migrations.
-2. Publish the complete Bootcamp release to that World database, then launch
-   `Rasa.Auth` and `Rasa.Game`.
+2. Launch `Rasa.Auth` and `Rasa.Game`; normal initialization installs mission data.
 3. Confirm the Game log reaches `Server ready!`.
 4. Create a fresh account and a fresh character.
 5. In a cold client session, validate these ten scenarios and capture the
@@ -763,8 +751,7 @@ before migration; undoing this character-data merge requires restoring a backup.
 ### MySQL pass
 
 Repeat the same ten scenarios against disposable MySQL character/world databases
-after provider migrations and explicit provider-aware mission publication.
-The authoring CLI itself is SQLite-only; see [release operations](missions.md#releases-saved-state-and-rollback).
+after explicitly applying the MySQL migrations. See [migration operations](missions.md#start-the-servers).
 If your local setup includes opt-in live MySQL verification, use it. Otherwise,
 the automated suites still cover offline MySQL migrations and model parity.
 
@@ -826,13 +813,13 @@ reward, and a failed history entry is not a completion/reward claim.
 
 `MissionJournalAdapter` restores current values against the selected definitions.
 An unavailable or changed pinned revision is quarantined and preserved for an
-explicit migration/reset decision, not silently rebound to the new release.
-Legacy/unversioned or inconsistent state still follows its logged compatibility
-and invalid-row handling; loading old rows does not infer missing objectives.
+explicit migration decision, not silently rebound to another content revision.
+Inconsistent runtime state still follows explicit invalid-row handling; this
+fresh-database design does not convert old experimental objective layouts.
 
-Production definitions come from an explicitly published World release. Optional
+Production definitions come from enabled, migrated World data. Optional
 invalid and source-only content remains non-operational; required-content
-defects block readiness. A new mission is authored as a pack, optionally with a
+defects block readiness. A new mission is authored as a C# data migration, optionally with a
 registered typed script, not inserted into `MissionApplication` as special code.
 
 The independent `Rasa.Missions` core evaluates typed progress rules and indexes

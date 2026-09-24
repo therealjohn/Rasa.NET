@@ -41,7 +41,6 @@ namespace Rasa.Managers
         }
         public IReadOnlyDictionary<uint, MissionInfo> BuildStatusSnapshot(Manifestation player)
         {
-            _journal.NormalizeMissionCompatibility(player);
             var snapshot = new Dictionary<uint, MissionInfo>();
             foreach (var entry in player.Missions)
             {
@@ -60,8 +59,6 @@ namespace Rasa.Managers
 
         internal void PublishMissionStatus(Client client, uint missionId, string description)
         {
-            if (!_journal.TryNormalizeMissionCompatibility(client?.Player, missionId))
-                return;
             if (client?.Player == null ||
                 !client.Player.Missions.TryGetValue(missionId, out var runtimeMission) ||
                 !_catalog.TryGetOperational(missionId, out var definition) ||
@@ -133,8 +130,6 @@ namespace Rasa.Managers
 
         public void PublishInitialState(Client client)
         {
-            if (!_journal.TryNormalizeMissionCompatibility(client?.Player))
-                return;
             PublishMissionPacket(
                 client,
                 new MissionStatusInfoPacket(BuildStatusSnapshot(client.Player)),

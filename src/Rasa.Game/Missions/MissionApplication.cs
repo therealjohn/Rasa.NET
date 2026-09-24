@@ -128,7 +128,7 @@ namespace Rasa.Managers
             PublicActors = new Game.Missions.World.PublicActorLeaseService(gameUnitOfWorkFactory, () => this,
                 runId => Scenes?.LeaseReset(runId));
             _catalog = new MissionContentCatalog(gameUnitOfWorkFactory, definitions, rewardDefinitions);
-            _journal = new MissionJournalAdapter(gameUnitOfWorkFactory, _catalog, () => this);
+            _journal = new MissionJournalAdapter(_catalog);
             _manifestationManager = manifestationManager;
             _beforeRewardItemPublication = beforeRewardItemPublication;
             _beforeMissionPacketPublication = beforeMissionPacketPublication;
@@ -162,10 +162,6 @@ namespace Rasa.Managers
         internal bool TryHydrateMission(uint characterId, CharacterMissionEntry row,
             CharacterMissionProgressSnapshot progress, out MissionLog mission) =>
             _journal.TryHydrateMission(characterId, row, progress, out mission);
-        private void NormalizeMissionCompatibility(Manifestation player, uint? missionId = null) =>
-            _journal.NormalizeMissionCompatibility(player, missionId);
-        private bool TryNormalizeMissionCompatibility(Manifestation player, uint? missionId = null) =>
-            _journal.TryNormalizeMissionCompatibility(player, missionId);
 
         public IReadOnlyDictionary<uint, MissionInfo> BuildStatusSnapshot(Manifestation player) =>
             _protocol.BuildStatusSnapshot(player);
@@ -175,8 +171,6 @@ namespace Rasa.Managers
             _protocol.BuildPublishedMissionInfo(player, definition, mission);
         public void PublishInitialState(Client client)
         {
-            if (!TryNormalizeMissionCompatibility(client?.Player))
-                return;
             Scenes.Resume(client);
             _protocol.PublishInitialState(client);
         }
@@ -604,7 +598,7 @@ namespace Rasa.Managers
                             unitOfWork.CharacterMissionProgress.GetTracked(
                                 client.Player.Id,
                                 missionId));
-                        inventoryPublication = MissionSaveCompatibility.PlanInventory(client, unitOfWork, this, missionId);
+                        inventoryPublication = MissionInventory.Plan(client, unitOfWork, this, missionId);
                         accepted = true;
                     });
                 }
@@ -942,8 +936,6 @@ namespace Rasa.Managers
             {
                 if (!IsActivePlayer(client))
                     return Reject($"Rejected mission {missionId} objective completion: character is not active in the world.");
-                if (!TryNormalizeMissionCompatibility(client.Player, missionId))
-                    return false;
                 if (!TryGetOperationalMission(missionId, out var definition) ||
                     !definition.Objectives.TryGetValue(objectiveId, out var objectiveDefinition))
                     return Reject($"Rejected mission {missionId} objective {objectiveId}: definition is unavailable.");
@@ -1184,7 +1176,7 @@ namespace Rasa.Managers
                                 objectiveDefinition.GetExecutableTransitionsOrLegacyDefault()
                                     .Any(transition =>
                                         transition.ProgressRule?.Kind == MissionProgressEventKind.DeadlineElapsed),
-                            inventoryPublication: MissionSaveCompatibility.PlanInventory(client, unitOfWork, this, missionId));
+                            inventoryPublication: MissionInventory.Plan(client, unitOfWork, this, missionId));
                     });
                 }
                 catch (Exception error) when (GameplayRejectionException.IsExpected(error))
@@ -1235,7 +1227,7 @@ namespace Rasa.Managers
                             unitOfWork.CharacterMissionProgress.GetTracked(
                                 client.Player.Id,
                                 missionId));
-                        inventoryPublication = MissionSaveCompatibility.PlanInventory(client, unitOfWork, this, missionId);
+                        inventoryPublication = MissionInventory.Plan(client, unitOfWork, this, missionId);
                     });
                 }
                 catch (Exception error) when (GameplayRejectionException.IsExpected(error))
@@ -1482,7 +1474,7 @@ namespace Rasa.Managers
                                 objectiveDefinition.GetExecutableTransitionsOrLegacyDefault()
                                     .Any(transition =>
                                         transition.ProgressRule?.Kind == MissionProgressEventKind.DeadlineElapsed),
-                            inventoryPublication: MissionSaveCompatibility.PlanInventory(client, unitOfWork, this, missionId)));
+                            inventoryPublication: MissionInventory.Plan(client, unitOfWork, this, missionId)));
                     return true;
             }
 
@@ -1588,7 +1580,7 @@ namespace Rasa.Managers
 
                         cancelledScenes = Scenes.CancelAssignment(unitOfWork, durableMission);
                         unitOfWork.CharacterMissions.Remove(client.Player.Id, missionId);
-                        inventoryPublication = MissionSaveCompatibility.PlanInventory(client, unitOfWork, this, missionId);
+                        inventoryPublication = MissionInventory.Plan(client, unitOfWork, this, missionId);
                         removed = true;
                     });
                     if (authoredFailure)
@@ -1696,7 +1688,7 @@ namespace Rasa.Managers
                 false,
                 runtimeMission.Completeable,
                 failureActions.StartScenarioIds,
-                inventoryPublication: MissionSaveCompatibility.PlanInventory(client, unitOfWork, this, definition.MissionId));
+                inventoryPublication: MissionInventory.Plan(client, unitOfWork, this, definition.MissionId));
             QueueStartedScenarios(client, definition.MissionId, failureActions.StartScenarioIds, unitOfWork);
             return true;
         }
@@ -1720,8 +1712,6 @@ namespace Rasa.Managers
                 var plan = MissionProgressPublicationPlan.Empty;
                 try
                 {
-                    MissionSaveCompatibility.NormalizeProgress(
-                        client.Player, _gameUnitOfWorkFactory, this, progress);
                     if (!HasProgressCandidate(client, progress))
                         return false;
                     using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
@@ -2008,7 +1998,7 @@ namespace Rasa.Managers
                         progressClient,
                         progressedMissionId,
                         spawnGroupId),
-                MissionSaveCompatibility.PlanInventory(client, unitOfWork, this));
+                MissionInventory.Plan(client, unitOfWork, this));
         }
 
         private void QueueStartedScenarios(Client client, uint missionId, IEnumerable<uint> scenarioIds,
@@ -2326,8 +2316,6 @@ namespace Rasa.Managers
             foreach (var mission in _runtime.ForNpc(creature.DbId, creature.Npc.NpcPackageId))
             {
                 if (!mission.IsOperational)
-                    continue;
-                if (!TryNormalizeMissionCompatibility(player, mission.MissionId))
                     continue;
                 if (!player.Missions.TryGetValue(mission.MissionId, out var log))
                 {

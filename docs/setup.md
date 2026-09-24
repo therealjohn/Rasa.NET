@@ -26,8 +26,8 @@ There is a single Visual Studio solution that contains the projects needed for R
 - Continue the installation and let it finish
 
 ### Install .NET 10
-All solution projects target .NET 10, including `Rasa.Missions` and
-`Rasa.MissionTool`. Install the exact SDK selected by `global.json`; SDK
+All solution projects target .NET 10, including `Rasa.Missions`.
+Install the exact SDK selected by `global.json`; SDK
 roll-forward is disabled so local builds, CI and Docker use the same version.
 
 - [Download the .NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) and install version **10.0.401**. The SDK includes the runtime.
@@ -37,7 +37,7 @@ The supported portable deployment identifiers are `win-x64`, `osx-x64` and `linu
 
 ### Optional: Install MySQL Server and MySQL Workbench
 Rasa.NET uses MySQL or Sqlite to store game data. Sqlite requires no separate
-database server, but still needs the schema and mission-release steps below.
+database server; startup applies both schema and mission-data migrations.
 If you want to use MySql, download and install MySQL Community Server following
 these steps:
 
@@ -131,10 +131,9 @@ If you want to overwrite one or multiple settings from the appsettings.json of `
 - `GameDataConfig` owns enabled races, startup server flags, the knowledge-base JSON path, and `NavMeshPath`. The default navigation directory is `navmesh`.
 
 Action and action-level behavior is loaded from the world data tables. Missions
-load a validated, explicitly published release from the World database, including
-typed scene bindings. They are not activated by adding an environment setting or
-by copying JSON into the server directory. See
-[publishing mission content](#publish-mission-content-before-starting-game).
+load enabled definitions and typed scene bindings installed in the World
+database by migrations. They are not activated by adding an environment setting
+or copying JSON into the server directory. See [mission data migrations](#mission-data-migrations).
 Do not add environment keys for auction, crafting or missions unless the owning
 code first adds a supported configuration property.
 
@@ -142,21 +141,21 @@ For the exact transfer and loot validation rules and focused checks, see the [wo
 
 ### Database configuration
 There are three databases: Auth (accounts), Char (character and scene state),
-and World (shared definitions and published mission content). EF Core supports
+and World (shared definitions and migrated mission content). EF Core supports
 MySql and Sqlite providers. Connection settings are defined in
 `src\Rasa.DBL\databasesettings.json` and its environment-specific override.
 Sqlite is suitable for development and small servers; configure its file paths
-and publish mission content before Game startup.
+and start the servers normally.
 
 To setup your database settings, have a look in "Custom configuration" to learn how to create an enviroment specific settings file.
 
 To use Sqlite with EF Core, set `Provider` to `Sqlite`. Sqlite uses only the value
 _database_ of the configuration to create a file named `<database>.db`; supply a
 base path without the extension. Pending migrations run automatically at the
-corresponding server's startup, but mission release publication is a separate
-required step. An absolute World database base path avoids accidentally
-publishing into a different file when the tool and Game run from different
-working directories.
+corresponding server's startup, including the complete Bootcamp content. An
+absolute database base path avoids choosing different files when launching from
+different working directories. No preexisting World file or publication script
+is required.
 
 To access a MySql server with EF Core, set `Provider` to `MySql`. You need to provide host, port, database, user, password and timeout in the config file. Keep in mind that we fall back to the values in databasesettings.json, if your enviroment file does not overwrite a value. For MySql, you have to apply any pending migrations yourself. See "Applying migrations" for a quick start.
 
@@ -189,8 +188,8 @@ drift from the repository root:
 
 If required mission content is broken, `Rasa.Game` now logs each actionable
 mission diagnostic and refuses to print `Server ready!` until the content is
-fixed. A migrated World database without an active mission release also fails
-startup; publish the release as described below.
+fixed. Apply the matching World migrations and deploy the required C# mission
+scripts; there is no separate active-release requirement.
 
 The .NET 10 platform update does not add or regenerate database migrations or model snapshots. Apply the repository's existing migrations in their recorded order.
 
@@ -223,11 +222,10 @@ Basically, we differentiate between two types of migrations:
 - Migrations that change the model / schema of the database
 - Migrations that add or remove data to or from the database
 
-New mission definitions, rewards, routes and scene bindings normally belong in
-validated [mission packs](missions.md), not another SQL preloader or a
-per-mission schema migration. Migrations still apply to schema changes and World
-assets outside the pack format, such as creature templates and static spawns.
-Do not edit the historical Bootcamp migrations to tune the deployed release.
+Mission definitions, rewards, routes and scene bindings belong in C# **data**
+migrations, using shared helpers where appropriate. See [mission authoring](missions.md).
+Keep schema changes separate, and add a new migration instead of modifying
+previously applied migration data.
 
 Always ensure, that a migration only does one or the other. This is very easy, as we use code first approach. If you're developing a feature that requires an update to the schema of one or more of the databases, change the entry classes in RASA.DBL/Structures or add new entries by creating the class and adding a DbSet<EntryClass> to the respective DbContext. Then, create a migration applying those changes by executing the following commands:
 
@@ -257,43 +255,22 @@ As already said, we use code first approach, so **do not** change the generated 
 
 If, on the other hand, you use a migration to provide default data that needs to be imported into the database, you just create an empty migration. Ensure you didn't change any entry classes and add the migrations as descibed above. The created migration will be empty and you can use them do add data. As an example how this can be implemented for MySql and Sqlite can be seen in `20201218081744_Preload_ItemTemplate_PlayerExp_RandomName`.
 
-## Publish mission content before starting Game
+## Mission data migrations
 
-Migrations create the schema and historical seed data. They do not select the
-new runtime's mission release. Before first Game startup, validate and publish
-the complete candidate release into **the same World database Game uses**.
-Stop Game and drain encounters before replacing an existing release.
+Mission content follows the same deployment flow as other database content.
+SQLite startup creates missing files and applies pending schema/data migrations.
+MySQL requires the normal explicit `dotnet ef database update` commands before
+starting Game. Both providers use shared C# mission-data helpers.
 
-From the repository root, for a migrated SQLite World database:
+This branch's replacement of experimental pack publication targets **fresh
+databases**, with no old-release or saved-state conversion. Use fresh database
+paths, or remove your own disposable files when you intend to start over.
+The server does not delete databases or reset characters.
 
-```powershell
-$worldFile = 'C:\RasaData\rasaworld.db' # Match the physical World file Game uses.
-.\scripts\Update-MissionPacks.ps1 -WorldDatabasePath $worldFile
-.\scripts\Update-MissionPacks.ps1 -WorldDatabasePath $worldFile -Publish
-```
-
-Choose the actual path for your setup; the example is not an automatic default.
-The wrapper requires PowerShell 5.1/7 and restored solution dependencies. The
-first command previews; the second explicitly publishes. It does not infer the
-database, create it or run migrations, and does not run automatically during
-build or server startup.
-
-For a **new, unused** SQLite World path, use the separate
-[disposable initialization workflow](missions.md#try-the-authoring-workflow-safely).
-The low-level tool's `--initialize-empty` refuses existing files; never use it as
-an upgrade or reset procedure. For existing databases, back up and apply the
-appropriate migrations first.
-
-The wrapper and CLI support SQLite only. MySQL requires a provider-aware invocation of
-`MissionPackStore` with the configured `MySqlWorldContext`; there is no
-`--provider MySql` CLI switch or automatic JSON import on server startup.
-See the [release workflow and limitations](missions.md#releases-saved-state-and-rollback)
-before deploying either provider.
-
-The checked-in Bootcamp directory contains five mission packs, its private
-experience pack, and the client binding manifest. Use the
-[authoring guide](missions.md) for new missions and the
-[format/CLI reference](mission-reference.md) for exact bindings and arguments.
+The `SeedMigratedBootcamp` data migration installs five enabled missions and
+their private experience bindings. Required script and content validation
+remains part of startup. Read the [authoring guide](missions.md) and
+[data/script reference](mission-reference.md) when adding or changing missions.
 
 ## Build and run the code from Visual Studio
 You should be ready to compile Rasa.NET and run the servers.
@@ -301,7 +278,7 @@ You should be ready to compile Rasa.NET and run the servers.
 - Launch Visual Studio and open the `Rasa.NET.sln` file in the code repository
 - If you have to overwrite the default database connection parameters, see "Custom configuration" and "Database configuration"
 - Build the solution
-- Apply the database migrations and [publish the mission release](#publish-mission-content-before-starting-game) before running Game
+- For MySQL, apply pending migrations; SQLite runs them automatically on startup
 - Run the `Rasa.Auth` project via `Debug > Start without Debugging`
 - Run the `Rasa.Game` project via `Debug > Start Debugging`
 - Alternatively, define multiple start projects as follows:
@@ -322,7 +299,7 @@ dotnet test --no-build
 dotnet run --project src\Rasa.Auth\Rasa.Auth.csproj --no-build
 ```
 
-After publishing its mission release, start Game in a second terminal with
+Start Game in a second terminal with
 `dotnet run --project src\Rasa.Game\Rasa.Game.csproj --no-build`.
 For a self-contained deployment, publish each server with a portable identifier, for example:
 
@@ -333,9 +310,8 @@ dotnet publish src\Rasa.Game\Rasa.Game.csproj -c Release -r win-x64 --self-conta
 
 Use `osx-x64` or `linux-x64` for the other deployment targets.
 
-Game publishes include the mission JSON packs/manifests and navigation assets.
-They are deployment/authoring inputs, not a substitute for publishing the
-release to the selected World database. Use the published executable's
+Game publishes include compiled migration data, mission scripts and navigation
+assets. Use the published executable's
 `--check-mission-assets` diagnostic from an unrelated working directory to check
 asset discovery without starting listeners or opening databases.
 

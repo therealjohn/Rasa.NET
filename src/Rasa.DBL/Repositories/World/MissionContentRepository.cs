@@ -6,7 +6,7 @@ namespace Rasa.Repositories.World
     using Context.World;
     using Structures.World;
 
-    public class MissionContentRepository : IReleasedMissionContentRepository
+    public class MissionContentRepository : IMigratedMissionContentRepository
     {
         private readonly WorldContext _worldContext;
 
@@ -15,17 +15,14 @@ namespace Rasa.Repositories.World
             _worldContext = worldContext;
         }
 
-        public MissionActiveReleaseEntry GetActiveRelease() =>
-            _worldContext.CreateNoTrackingQuery(_worldContext.Set<MissionActiveReleaseEntry>())
-                .SingleOrDefault(entry => entry.Id == 1);
-        public List<MissionReleaseMemberEntry> GetReleaseMembers(string release) =>
-            _worldContext.CreateNoTrackingQuery(_worldContext.Set<MissionReleaseMemberEntry>())
-                .Where(entry => entry.ReleaseName == release).ToList();
+        public List<MissionContentDefinitionEntry> GetEnabledDefinitions() =>
+            _worldContext.CreateNoTrackingQuery(_worldContext.MissionContentDefinitionEntries)
+                .Where(entry => entry.Enabled).ToList();
         public List<MissionSceneBindingEntry> GetSceneBindings() =>
             _worldContext.CreateNoTrackingQuery(_worldContext.Set<MissionSceneBindingEntry>()).ToList();
-        public List<MissionExperienceBindingEntry> GetExperiences(string release) =>
+        public List<MissionExperienceBindingEntry> GetExperiences() =>
             _worldContext.CreateNoTrackingQuery(_worldContext.Set<MissionExperienceBindingEntry>())
-                .Where(entry => entry.ReleaseName == release).ToList();
+                .Where(entry => entry.Enabled).ToList();
         public List<MissionContentDefinitionEntry> GetDefinitions() =>
             _worldContext.CreateNoTrackingQuery(_worldContext.MissionContentDefinitionEntries)
                 .ToList();

@@ -1,3 +1,4 @@
+using Rasa.Missions.Content;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -34,7 +35,7 @@ namespace Rasa.Game.Missions
         private readonly Dictionary<string, DateTime> _messageRetries = new(StringComparer.Ordinal);
         private readonly Dictionary<string, DateTime> _terminationRetries = new(StringComparer.Ordinal);
         private readonly Dictionary<string, PendingPause> _pauseRetries = new(StringComparer.Ordinal);
-        private readonly Dictionary<uint, MissionExperienceDocument> _experiences = new();
+        private readonly Dictionary<uint, MissionExperienceDefinition> _experiences = new();
         private readonly Dictionary<(uint Character, MapChannel Map), Client> _resumed = new();
         private readonly SceneDueQueue _due = new();
         private readonly Queue<(string RunId, SceneObservation Observation)> _observations = new();
@@ -91,7 +92,7 @@ namespace Rasa.Game.Missions
             _experiences.Clear();
         }
 
-        internal void BindExperience(MissionExperienceDocument experience)
+        internal void BindExperience(MissionExperienceDefinition experience)
         {
             if (!experience.PrivatePerCharacter || !_runtime.Supports(experience.Scene.Script, experience.Scene.StateVersion))
                 throw new GameplayRejectionException($"Experience {experience.Key} has an unsupported host/script.");
@@ -160,7 +161,6 @@ namespace Rasa.Game.Missions
                         DrainMessages(row.RunId);
                 }
             _missions.Credit.Resume(client);
-            MissionSaveCompatibility.ReconcileInventory(client, _factory, _missions);
             _resumed[(client.Player.Id, map)] = client;
         }
 

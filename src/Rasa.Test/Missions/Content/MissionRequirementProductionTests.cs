@@ -1,3 +1,4 @@
+using Rasa.Missions.Content;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -24,8 +25,8 @@ namespace Rasa.Test.Missions.Content
         [TestMethod]
         public void LoadedAdmissionHandlerControlsOffersAndDurableAcceptanceButNotLaterStages()
         {
-            using var harness = BootcampRuntimeTestHarness.Create(configurePacks: packs =>
-                Mission(packs, 1990).Scene.Requirement = new AllRequirements(new MissionRequirement[]
+            using var harness = BootcampRuntimeTestHarness.Create(configureScenes: packs =>
+                packs[1990].Requirement = new AllRequirements(new MissionRequirement[]
                 {
                     new CustomRequirement("example.even-level"), new FlagRequirement(903, 1)
                 }));
@@ -58,8 +59,8 @@ namespace Rasa.Test.Missions.Content
         [TestMethod]
         public void LoadedObjectiveHandlerGatesNpcConversationAndItsDurableMutation()
         {
-            using var harness = BootcampRuntimeTestHarness.Create(configurePacks: packs =>
-                Mission(packs, 1992).Scene.ObjectiveRequirements[4] = new CustomRequirement("example.even-level"));
+            using var harness = BootcampRuntimeTestHarness.Create(configureScenes: packs =>
+                packs[1992].ObjectiveRequirements[4] = new CustomRequirement("example.even-level"));
             harness.SeedMission(harness.Client.Player.Id, 1990, (uint)MissionState.Completed, false);
             var giver = harness.AddNpc(BootcampRuntimeTestHarness.MajorMcAllisterCreatureId);
             var delessio = harness.AddNpc(BootcampRuntimeTestHarness.CaptainDelessioCreatureId,
@@ -81,8 +82,8 @@ namespace Rasa.Test.Missions.Content
         [TestMethod]
         public void LoadedObjectiveHandlerGatesRuntimeAndDurableWorldProgress()
         {
-            using var harness = BootcampRuntimeTestHarness.Create(configurePacks: packs =>
-                Mission(packs, 1990).Scene.ObjectiveRequirements[1] = new CustomRequirement("example.even-level"));
+            using var harness = BootcampRuntimeTestHarness.Create(configureScenes: packs =>
+                packs[1990].ObjectiveRequirements[1] = new CustomRequirement("example.even-level"));
             var giver = harness.AddNpc(BootcampRuntimeTestHarness.MajorMcAllisterCreatureId);
             Assert.IsTrue(harness.Manager.TryAcceptNpcMission(harness.Client, giver.EntityId, 1990));
             var progress = MissionProgressEvent.Area(1990, 430);
@@ -100,8 +101,8 @@ namespace Rasa.Test.Missions.Content
         [DataRow(true)]
         public void LoadedTurnInHandlerGatesNpcQueryAndDurableRewardWithoutBlockingProgress(bool legacySuccess)
         {
-            using var harness = BootcampRuntimeTestHarness.Create(configurePacks: packs =>
-                Mission(packs, 1990).Scene.TurnInRequirement = new CustomRequirement("example.even-level"));
+            using var harness = BootcampRuntimeTestHarness.Create(configureScenes: packs =>
+                packs[1990].TurnInRequirement = new CustomRequirement("example.even-level"));
             var giver = harness.AddNpc(BootcampRuntimeTestHarness.MajorMcAllisterCreatureId);
             Assert.IsTrue(harness.Manager.TryAcceptNpcMission(harness.Client, giver.EntityId, 1990));
             CompleteInitiationObjectives(harness);
@@ -131,9 +132,9 @@ namespace Rasa.Test.Missions.Content
         [TestMethod]
         public void LoadedObjectiveHandlerAlsoGatesSceneCompletionIntents()
         {
-            using var harness = BootcampRuntimeTestHarness.Create(configurePacks: packs =>
+            using var harness = BootcampRuntimeTestHarness.Create(configureScenes: packs =>
             {
-                Mission(packs, 1990).Scene = new MissionSceneDocument
+                packs[1990] = new MissionSceneDefinition
                 {
                     Script = "data.sequence",
                     ObjectiveRequirements = new() { [1] = new CustomRequirement("example.even-level") },
@@ -171,8 +172,8 @@ namespace Rasa.Test.Missions.Content
         [TestMethod]
         public void LoadedAccountHandlerUsesLiveFactsAndRechecksDurableEntitlement()
         {
-            using var harness = BootcampRuntimeTestHarness.Create(configurePacks: packs =>
-                Mission(packs, 1990).Scene.Requirement = new CustomRequirement("account.starting-experience-entitlement"));
+            using var harness = BootcampRuntimeTestHarness.Create(configureScenes: packs =>
+                packs[1990].Requirement = new CustomRequirement("account.starting-experience-entitlement"));
             var giver = harness.AddNpc(BootcampRuntimeTestHarness.MajorMcAllisterCreatureId);
             Assert.IsFalse(HasMission(Converse(harness, giver), ConversationType.MissionDispense, 1990));
             harness.Client.AccountEntry.CanSkipBootcamp = true;
@@ -189,11 +190,11 @@ namespace Rasa.Test.Missions.Content
         [DataRow("objective")]
         [DataRow("turn-in")]
         [DataRow("missing-objective")]
-        public void InvalidLoadedRequirementBindingsAreRejectedByPublicationAndStartup(string stage)
+        public void InvalidMigratedRequirementBindingsAreRejectedAtStartup(string stage)
         {
             using var harness = BootcampRuntimeTestHarness.Create();
-            var packs = MissionPackTestSupport.ReadBootcampPacks();
-            var scene = Mission(packs, 1990).Scene;
+            var packs = MissionContentTestSupport.ReadScenes(harness.WorldContext);
+            var scene = packs[1990];
             var unknown = new CustomRequirement("missing.handler");
             switch (stage)
             {
@@ -204,14 +205,8 @@ namespace Rasa.Test.Missions.Content
                     scene.ObjectiveRequirements[999] = new CustomRequirement("example.even-level");
                     break;
             }
-            var store = new MissionPackStore(harness.WorldContext);
-            var errors = store.Validate(packs, MissionPackTestSupport.ReadClientBindings());
-            Assert.IsTrue(errors.Any(error => error.Contains("requirement", StringComparison.OrdinalIgnoreCase)), string.Join("\n", errors));
-            Assert.ThrowsExactly<InvalidOperationException>(() =>
-                store.Publish(packs, MissionPackTestSupport.ReadClientBindings()));
-
             var binding = harness.WorldContext.Set<MissionSceneBindingEntry>().Find(1990U, "deployment_11");
-            binding.Bindings = JsonSerializer.Serialize(scene, MissionPackCodec.Options);
+            binding.Bindings = JsonSerializer.Serialize(scene, MissionContentCodec.Options);
             harness.WorldContext.SaveChanges();
             Assert.ThrowsExactly<MissionRuleException>(() => harness.Manager.LoadMissions());
         }
@@ -239,8 +234,6 @@ namespace Rasa.Test.Missions.Content
                 new NotRequirement(new CustomRequirement("account.starting-experience-entitlement"))));
         }
 
-        private static MissionPackDocument Mission(IEnumerable<MissionPackDocument> packs, uint id) =>
-            packs.Single(pack => pack.Experience == null && pack.Definition.MissionId == id);
 
         private static void SetLevel(BootcampRuntimeTestHarness.Harness harness, byte level)
         {

@@ -112,25 +112,5 @@ namespace Rasa.Game.Missions.Content.Bootcamp
             };
         }
 
-        internal static void Reconcile(Client client, IGameUnitOfWorkFactory factory, MissionApplication missions)
-        {
-            if (client?.Player == null || !(client.Player.Missions.ContainsKey(1995) || client.Player.Missions.ContainsKey(2005)))
-                return;
-            lock (client.SyncRoot)
-            {
-                try
-                {
-                    Action<Client> publication = null;
-                    using var unit = factory.CreateChar();
-                    unit.ExecuteTransaction(() => publication = Plan(client, unit, missions));
-                    publication?.Invoke(client);
-                }
-                catch (Exception error) when (GameplayRejectionException.IsExpected(error))
-                {
-                    Logger.WriteLog(LogType.Error, $"Unable to restore mission bomb for character {client.Player.Id}: {error.Message}");
-                    CommunicatorManager.Instance.SystemMessage(client, error.Message);
-                }
-            }
-        }
     }
 }

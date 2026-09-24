@@ -1,4 +1,5 @@
 using System;
+using Rasa.Missions.Scenes;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;

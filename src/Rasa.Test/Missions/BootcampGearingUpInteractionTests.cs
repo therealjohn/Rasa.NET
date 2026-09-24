@@ -114,27 +114,6 @@ namespace Rasa.Test.Missions
                     creature.DbId == BootcampRuntimeTestHarness.LightningDummyCreatureId));
         }
 
-        [TestMethod]
-        public void StartingPistolUsesItsAuthoredSameClassWeaponProfileWithoutOverwritingAnOverride()
-        {
-            using var harness = BootcampRuntimeTestHarness.Create();
-            var templates = harness.WorldContext.Set<ItemTemplateItemClassEntry>()
-                .Where(entry => entry.ItemTemplateId == 17131 || entry.ItemTemplateId == 11557)
-                .ToArray().ToDictionary(entry => entry.ItemTemplateId, entry => new ItemTemplate(entry));
-            var profile = new WeaponInfo(harness.WorldContext.Set<ItemTemplateWeaponEntry>().Single(entry => entry.Id == 11557));
-            templates[11557].WeaponInfo = profile;
-            Assert.IsNull(templates[17131].WeaponInfo);
-
-            BootcampItemCompatibility.Apply(templates);
-
-            Assert.AreSame(profile, templates[17131].WeaponInfo);
-            Assert.AreEqual(1U, templates[17131].WeaponInfo.AmmoPerShot);
-            Assert.AreEqual(80U, templates[17131].WeaponInfo.Range);
-            var custom = new WeaponInfo(new ItemTemplateWeaponEntry { Range = 47 });
-            templates[17131].WeaponInfo = custom;
-            BootcampItemCompatibility.Apply(templates);
-            Assert.AreSame(custom, templates[17131].WeaponInfo);
-        }
 
         [TestMethod]
         public void AssigningPlayerRefreshesTheWeaponDrawerAfterSelectingTheControlledActor()
