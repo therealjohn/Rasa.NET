@@ -708,6 +708,9 @@ the old hillside location. Bootcamp no longer creates an always-on hovering
 ship at map entry. The boarding window and ready ship become available only
 after check-in, including reconnect at that stage. Other public-world dropship
 pads keep their existing visuals.
+The forward `BootcampEvacuationReadyCleanup` migration also clears a retained
+wreck when an already-checked-in character reconnects from the previous scene
+data, before staging the ready ship.
 
 `BootcampFinalePresentation` is a forward data migration for both providers.
 It updates the versioned C# scene/experience definitions and pad location;

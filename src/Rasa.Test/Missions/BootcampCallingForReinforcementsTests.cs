@@ -43,6 +43,34 @@ namespace Rasa.Test.Missions
         private static readonly TimeSpan ArrivalDelay = TimeSpan.FromSeconds(2);
 
         [TestMethod]
+        public void ReconnectingAnAlreadyCheckedInCharacterClearsTheOldWreckBeforeStagingEvacuation()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true,
+                configureScenes: scenes => scenes[1995] = Rasa.Services.Preloader.Missions.BootcampMissionDataV1.Mission1995());
+            StartCrashSiteScene(harness);
+            harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
+            harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-dropship-debris"));
+            harness.UtcNow += TimeSpan.FromSeconds(5);
+            harness.Manager.TickScenarios(harness.Client);
+            harness.UtcNow += ArrivalDelay;
+            harness.Manager.TickScenarios(harness.Client);
+            Assert.IsNotNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-dropship-debris"));
+            using (var unit = harness.Context.CreateChar())
+                unit.ExecuteTransaction(() =>
+                {
+                    unit.CharacterMissionProgress.GetTracked(harness.Client.Player.Id, 1995)[4].ObjectiveState =
+                        (byte)MissionObjectiveState.Completed;
+                    unit.CharacterMissions.GetByCharacterAndMission(harness.Client.Player.Id, 1995).Completeable = true;
+                });
+
+            harness.ReconnectFresh();
+
+            Assert.IsNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-dropship-debris"));
+            Assert.IsNotNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-evacuation-ship"));
+            Assert.IsNull(harness.Client.PendingTransfer);
+        }
+
+        [TestMethod]
         public void BombDetonationPublishesTheNativeWreckExplosionTransition()
         {
             using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);
