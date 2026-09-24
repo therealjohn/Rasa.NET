@@ -30,6 +30,112 @@ namespace Rasa.Test.Gameplay
     public class BootcampDepartureTests
     {
         [TestMethod]
+        public void StandingInALockedExtractionBeamDoesNotAutoBoardWhenCheckInUnlocksIt()
+        {
+            using var context = new BootcampSelectionTestContext();
+            context.SeedAccount(6192);
+            var characterId = context.SeedCharacter(6192, 1, "WaitForEntry",
+                mapContextId: BootcampSelectionTestContext.BootcampMapContextId,
+                x: -225, y: 101.12099, z: -71);
+            context.SeedStartingExperience(characterId, CharacterStartingExperienceState.Bootcamp);
+            context.SeedMission(characterId, BootcampSelectionTestContext.MissionFinale,
+                MissionState.Active, completeable: true);
+            var client = context.CreateSelectionClient(6192);
+            context.Characters.RequestSwitchToCharacterInSlot(client,
+                new Packets.Game.Client.RequestSwitchToCharacterInSlotPacket { SlotNum = 1 });
+            context.MaterializeLoadedClient(client);
+            var triggers = new MapTriggerManager(context.Objects);
+            var mission = client.Player.Missions[BootcampSelectionTestContext.MissionFinale];
+            mission.Completeable = false;
+            triggers.TriggersProximityWorker(client.Player.MapChannel);
+            mission.Completeable = true;
+
+            triggers.TriggersProximityWorker(client.Player.MapChannel);
+
+            Assert.IsNull(client.PendingTransfer,
+                "An availability change must not count as the player's decision to enter the beam.");
+            client.Player.Position += new System.Numerics.Vector3(10, 0, 0);
+            triggers.TriggersProximityWorker(client.Player.MapChannel);
+            client.Player.Position -= new System.Numerics.Vector3(10, 0, 0);
+            triggers.TriggersProximityWorker(client.Player.MapChannel);
+            Assert.IsNotNull(client.PendingTransfer);
+        }
+
+        [TestMethod]
+        public void EnteringReadyBootcampBeamBoardsDirectlyWithoutDiscoveringWaypoint()
+        {
+            using var context = new BootcampSelectionTestContext();
+            context.SeedAccount(6190);
+            var characterId = context.SeedCharacter(6190, 1, "DirectExtraction",
+                mapContextId: BootcampSelectionTestContext.BootcampMapContextId,
+                x: -225, y: 101.12099, z: -71);
+            context.SeedStartingExperience(characterId, CharacterStartingExperienceState.Bootcamp);
+            context.SeedMission(characterId, BootcampSelectionTestContext.MissionFinale,
+                MissionState.Active, completeable: true);
+            var client = context.CreateSelectionClient(6190);
+            context.Characters.RequestSwitchToCharacterInSlot(client,
+                new Packets.Game.Client.RequestSwitchToCharacterInSlotPacket { SlotNum = 1 });
+            context.MaterializeLoadedClient(client);
+            MissionTestContext.Drain(client);
+
+            new MapTriggerManager(context.Objects).TriggersProximityWorker(client.Player.MapChannel);
+
+            Assert.IsNotNull(client.PendingTransfer,
+                "Entering the ready extraction beam must start departure without a waypoint selection.");
+            Assert.IsTrue(client.PendingTransfer.IsDropship);
+            Assert.AreEqual(BootcampSelectionTestContext.WildernessMapContextId,
+                client.PendingTransfer.DestinationMap.MapInfo.MapContextId);
+            Assert.IsFalse(client.Player.GainedWaypoints.Any(waypoint =>
+                waypoint.WaypointId == BootcampSelectionTestContext.ExitPadWaypointId));
+            var packets = MissionTestContext.Drain(client);
+            Assert.IsFalse(packets.OfType<EnteredWaypointPacket>().Any());
+            Assert.IsFalse(packets.OfType<WaypointGainedPacket>().Any(packet =>
+                packet.WaypointId == BootcampSelectionTestContext.ExitPadWaypointId));
+            using var verify = context.OpenChar();
+            Assert.IsFalse(verify.CharacterTeleporterEntries.Any(waypoint =>
+                waypoint.CharacterId == characterId &&
+                waypoint.WaypointId == BootcampSelectionTestContext.ExitPadWaypointId));
+        }
+
+        [TestMethod]
+        [DataRow(false)]
+        [DataRow(true)]
+        public void PreviouslyDiscoveredBootcampPadCannotBeOfferedOrSelectedForReturn(bool select)
+        {
+            using var context = new BootcampSelectionTestContext();
+            context.SeedAccount(6191);
+            var source = context.Objects.Teleporters.Values.First(station =>
+                station.MapContextId == BootcampSelectionTestContext.WildernessMapContextId &&
+                station.ObjectData is WaypointInfo { WaypointType: WaypointType.Dropship });
+            var characterId = context.SeedCharacter(6191, 1, "NoReturn",
+                x: source.Position.X, y: source.Position.Y, z: source.Position.Z);
+            context.SeedStartingExperience(characterId, CharacterStartingExperienceState.Completed);
+            context.SeedWaypoint(characterId, BootcampSelectionTestContext.ExitPadWaypointId, WaypointType.Dropship);
+            var client = context.CreateSelectionClient(6191);
+            context.Characters.RequestSwitchToCharacterInSlot(client,
+                new Packets.Game.Client.RequestSwitchToCharacterInSlotPacket { SlotNum = 1 });
+            context.MaterializeLoadedClient(client);
+
+            if (select)
+            {
+                context.Objects.SelectWaypoint(client, new SelectWaypointPacket
+                {
+                    WaypointId = BootcampSelectionTestContext.ExitPadWaypointId,
+                    MapInstanceId = 0
+                });
+                Assert.IsNull(client.PendingTransfer,
+                    "An old discovery row or forged selection must not admit travel back to Bootcamp.");
+            }
+            else
+            {
+                var destinations = context.Objects.CreateListOfDropships(client);
+                Assert.IsFalse(destinations.Values.SelectMany(map => map.Waypoints).Any(waypoint =>
+                    waypoint.WaypointId == BootcampSelectionTestContext.ExitPadWaypointId),
+                    "Bootcamp extraction must never be advertised as a return destination.");
+            }
+        }
+
+        [TestMethod]
         public void VanHandoffNoLongerTransfersOrGrantsDepartureUntilTheExitPadIsUsed()
         {
             using var harness = BootcampRuntimeTestHarness.Create();
@@ -71,6 +177,7 @@ namespace Rasa.Test.Gameplay
                 harness.BootcampMap,
                 BootcampRuntimeTestHarness.CorporalVanValkenbergPackageId);
             Assert.IsNotNull(van);
+            BootcampExtractionAssaultTests.DefeatAll(harness);
             Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
                 harness.Context.Client,
                 van.EntityId,

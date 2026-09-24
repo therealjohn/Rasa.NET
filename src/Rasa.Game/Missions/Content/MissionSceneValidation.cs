@@ -45,6 +45,11 @@ namespace Rasa.Game.Missions.Content
                     throw new MissionRuleException($"Mission {missionId}: invalid route {route.Key}.");
             if (scene.Credit.Keys.Any(id => !objectiveIds.Contains(id)))
                 throw new MissionRuleException($"Mission {missionId}: credit policy names an unknown objective.");
+            if (scene.DefeatSequences?.Any(entry =>
+                !scene.Actors.TryGetValue(entry.Key, out var actor) ||
+                actor.Kind is not (SceneActorKind.Creature or SceneActorKind.PublicSpawn) ||
+                !scene.Sequences.ContainsKey(entry.Value)) == true)
+                throw new MissionRuleException($"Mission {missionId}: invalid actor defeat sequence.");
             var keys = new HashSet<string>(StringComparer.Ordinal);
             var runtime = new SceneRuntime(scripts);
             foreach (var sequence in scene.Sequences)

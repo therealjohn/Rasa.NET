@@ -45,6 +45,10 @@ The finale sends `Use` on wreck class `24586` for the native `31 -> 91`
 transition, then removes the wreck after its presentation interval.
 Manual evacuation uses the normal dropship states, boarding fade, map-load
 handshake and arrival flight rather than an immediate map change.
+Once the assault and Van check-in are complete, entering the beam starts that
+flight directly. Extraction emits neither `EnteredWaypoint` nor
+`WaypointGained` for Bootcamp trigger `60`; normal public dropship menus are
+unchanged. A saved discovery or stale selection cannot authorize a return trip.
 
 Mission reward previews retain the native fixed-currency/item and selectable-item
 tuple. The currency slots are credits and prestige; XP is granted separately

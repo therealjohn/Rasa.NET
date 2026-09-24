@@ -350,6 +350,12 @@ namespace Rasa.Game.Missions
                         OwnerCharacterId = owner.Run.OwnerCharacterId, MapContextId = map.MapInfo.MapContextId,
                         SharedKey = pool.SceneSharedKey
                     });
+                    if (owner.Bindings.DefeatSequences.TryGetValue(pool.SceneActorRole, out var sequence))
+                        store.Add(new MissionSceneMessageEntry
+                        {
+                            RunId = owner.Run.Id, Generation = owner.Run.Generation,
+                            OperationKey = $"defeated-{pool.SceneActorRole}", SequenceId = sequence
+                        });
                     if (credited != null)
                         recipients = _missions.Credit.FreezeWorld(unit, credited, MissionProgressEvent.Creature(creature.DbId),
                             creature.Position, Guid.NewGuid().ToString("N"), owner.Run.Id, owner.Run.Generation);
@@ -357,6 +363,8 @@ namespace Rasa.Game.Missions
             _missions.Credit.Schedule(recipients);
             if (credited != null)
                 _missions.Credit.Deliver(credited);
+            if (owner.Bindings.DefeatSequences.ContainsKey(pool.SceneActorRole))
+                DrainMessages(owner.Run.Id);
         }
 
         internal void EndDeadline(Repositories.Char.ICharUnitOfWork unit, SceneRun run, uint missionId)

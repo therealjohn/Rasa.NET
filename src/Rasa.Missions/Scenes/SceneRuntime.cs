@@ -71,6 +71,13 @@ namespace Rasa.Missions.Scenes
                      definition.Points.Count == 0 || route.StartWaypoint < 0 || route.StartWaypoint >= definition.Points.Count ||
                      bindings.Actors[route.Role].Kind is SceneActorKind.Object or SceneActorKind.PracticeTarget))
                     return Reject($"Scene operation {intent.OperationKey} references an invalid route or actor.");
+                if (intent is AttackActorIntent attack &&
+                    (attack.Role == null || !bindings.Actors.TryGetValue(attack.Role, out var attacker) ||
+                     attacker.Kind is not (SceneActorKind.Creature or SceneActorKind.PublicSpawn) ||
+                     attack.TargetRole != null && (!bindings.Actors.TryGetValue(attack.TargetRole, out var target) ||
+                         target.Kind is not (SceneActorKind.Creature or SceneActorKind.PublicSpawn) ||
+                         attack.TargetRole == attack.Role)))
+                    return Reject($"Scene operation {intent.OperationKey} references an invalid combat actor.");
             }
             var timerNames = new HashSet<string>(StringComparer.Ordinal);
             foreach (var timer in decision.Timers)

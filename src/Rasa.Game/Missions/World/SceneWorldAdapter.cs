@@ -132,6 +132,7 @@ namespace Rasa.Game.Missions.World
                     WorldEffectResult.Failed($"Actor role {intent.Role} is unavailable.");
             if (intent is RemoveActorIntent)
             {
+                _routes.Cancel(run.Id, intent.Role);
                 if (definition.Kind == SceneActorKind.PublicSpawn)
                 {
                     if (!world.Map.IsPrivateInstance)
@@ -179,6 +180,32 @@ namespace Rasa.Game.Missions.World
             if (intent is RunRouteIntent route)
                 return actor.Creature == null ? WorldEffectResult.Failed("Only a creature can follow a route.") :
                     _routes.Start(world.Map, actor.Handle, actor.Creature, route, world.Bindings.Routes[route.Route]);
+            if (intent is AttackActorIntent attack)
+            {
+                Actor target;
+                if (attack.TargetRole == null)
+                {
+                    if (world.Owner?.State != ClientState.Ingame || world.Owner.PendingTransfer != null ||
+                        !CreatureManager.IsLivingOnMap(world.Map, world.Owner.Player))
+                        return WorldEffectResult.Deferred();
+                    target = world.Owner.Player;
+                    if (world.Owner.Player.GmFlagAlwaysFriendly)
+                        return WorldEffectResult.Suppressed("The owner is protected from hostile targeting.");
+                }
+                else
+                {
+                    if (!world.Actors.TryGetValue(attack.TargetRole, out var targetActor) ||
+                        !IsCurrent(world, targetActor))
+                        TryBindExisting(world, world.Bindings.Actors[attack.TargetRole], out targetActor);
+                    target = targetActor?.Creature;
+                }
+                if (actor.Creature == null || !CreatureManager.IsLivingOnMap(world.Map, actor.Creature) ||
+                    !CreatureManager.IsLivingOnMap(world.Map, target) ||
+                    actor.Creature.Faction == (target is Creature enemy ? enemy.Faction : Factions.AFS))
+                    return WorldEffectResult.Failed("Combat requires living hostile actors in the same runtime map.");
+                BehaviorManager.Instance.SetActionFighting(actor.Creature, target.EntityId);
+                return WorldEffectResult.Applied();
+            }
             if (intent is FollowActorIntent follow)
             {
                 if (actor.Creature?.SpawnPool == null)

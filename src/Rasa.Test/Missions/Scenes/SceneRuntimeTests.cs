@@ -11,6 +11,28 @@ namespace Rasa.Test.Missions.Scenes
     public class SceneRuntimeTests
     {
         [TestMethod]
+        [DataRow(null, true)]
+        [DataRow("enemy", true)]
+        [DataRow("guide", false)]
+        [DataRow("missing", false)]
+        public void CombatIntentsValidateTheirActorRoles(string target, bool accepted)
+        {
+            var bindings = new SceneBindings("test",
+                new Dictionary<string, SceneActorDefinition>
+                {
+                    ["guide"] = new("guide", SceneActorKind.Creature, 77, new ScenePosition(0, 0, 0)),
+                    ["enemy"] = new("enemy", SceneActorKind.Creature, 78, new ScenePosition(1, 0, 0))
+                }, new Dictionary<string, SceneRoute>(),
+                new Dictionary<uint, SceneSequence>
+                { [1] = new(new WorldIntent[] { new AttackActorIntent("engage", "guide", target) }) });
+
+            var result = new SceneRuntime(new SceneScriptRegistry()).Evaluate(Run("data.sequence"), bindings,
+                new SceneObservation(SceneEventKind.Signal, 1, SequenceId: 1), DateTime.UnixEpoch);
+
+            Assert.AreEqual(accepted, result.Accepted);
+        }
+
+        [TestMethod]
         public void TypedScriptAndDataSequenceUseTheSameValidatedDecisionBoundary()
         {
             var registry = new SceneScriptRegistry();

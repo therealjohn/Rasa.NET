@@ -44,8 +44,8 @@ namespace Rasa.Managers
         }
 
         /// <summary>
-        /// A player has walked onto a dropship pad: they gain it, the first time, the way a
-        /// waypoint is gained, and the travel window opens with the pads they can fly to.
+        /// Ordinary pads grant discovery and open travel. A ready one-way extraction
+        /// starts its authored departure without joining the waypoint network.
         /// </summary>
         internal void PlayerEnterTriggerRange(Client client, MapTrigger mapTrigger)
         {
@@ -53,6 +53,13 @@ namespace Rasa.Managers
                 client.Player?.MapChannel?.MapInfo.MapContextId == mapTrigger.MapContextId &&
                 client.Player.IsNear5m(mapTrigger))
             {
+                if (Objects.IsOneWayExit(mapTrigger.MapContextId, mapTrigger.TriggerId))
+                {
+                    if (mapTrigger.ExitOccupants.Add(client) &&
+                        Objects.IsStationAvailable(client, mapTrigger.MapContextId, mapTrigger.TriggerId))
+                        Objects.BeginOneWayDeparture(client);
+                    return;
+                }
                 if (mapTrigger.TriggeredBy.Contains(client))
                     return;
                 if (!Objects.IsStationAvailable(client, mapTrigger.MapContextId, mapTrigger.TriggerId))
@@ -76,6 +83,14 @@ namespace Rasa.Managers
         }
         internal void PlayerExitTriggerRange(Client client, MapTrigger mapTrigger)
         {
+            if (Objects.IsOneWayExit(mapTrigger.MapContextId, mapTrigger.TriggerId))
+            {
+                if (client.State != ClientState.Ingame || client.PendingTransfer != null ||
+                    client.Player?.MapChannel?.MapInfo.MapContextId != mapTrigger.MapContextId ||
+                    !client.Player.IsNear5m(mapTrigger))
+                    mapTrigger.ExitOccupants.Remove(client);
+                return;
+            }
             if (client.State != ClientState.Ingame || client.PendingTransfer != null ||
                 client.Player?.MapChannel?.MapInfo.MapContextId != mapTrigger.MapContextId ||
                 !Objects.IsStationAvailable(client, mapTrigger.MapContextId, mapTrigger.TriggerId) ||
@@ -93,7 +108,7 @@ namespace Rasa.Managers
             var triggers = mapChannel.MapCellInfo.Cells.Values.SelectMany(cell => cell.MapTriggers).Distinct().ToArray();
             foreach (var trigger in triggers)
             {
-                foreach (var previous in trigger.TriggeredBy.ToArray())
+                foreach (var previous in trigger.TriggeredBy.Concat(trigger.ExitOccupants).ToArray())
                     PlayerExitTriggerRange(previous, trigger);
                 foreach (var client in mapChannel.ClientList.ToArray())
                 {

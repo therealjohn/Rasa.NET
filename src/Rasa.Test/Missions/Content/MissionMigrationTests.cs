@@ -24,6 +24,38 @@ namespace Rasa.Test.Missions.Content
     public class MissionMigrationTests
     {
         [TestMethod]
+        public void ExtractionAssaultMigrationsMatchAcrossProvidersAndKeepTheNativeObjectiveIds()
+        {
+            var sqlite = new Rasa.Migrations.SqliteWorld.BootcampExtractionAssault().UpOperations;
+            var mysql = new Rasa.Migrations.MySqlWorld.BootcampExtractionAssault().UpOperations;
+            CollectionAssert.AreEqual(sqlite.OfType<SqlOperation>().Select(operation => operation.Sql).ToArray(),
+                mysql.OfType<SqlOperation>().Select(operation => operation.Sql).ToArray());
+            CollectionAssert.AreEqual(sqlite.OfType<UpdateDataOperation>().SelectMany(operation =>
+                    operation.Values.Cast<object>().Select(value => value?.ToString())).ToArray(),
+                mysql.OfType<UpdateDataOperation>().SelectMany(operation =>
+                    operation.Values.Cast<object>().Select(value => value?.ToString())).ToArray());
+            foreach (var mission in new[] { 1995U, 2005U })
+            {
+                var scene = BootcampExtractionDataV5.Scene(mission);
+                Assert.AreEqual(6, scene.DefeatSequences.Count);
+                Assert.IsTrue(scene.DefeatSequences.Keys.All(role =>
+                    scene.Actors[role].TemplateId == BootcampExtractionDataV5.AssaultTemplate));
+                Assert.IsTrue(scene.Sequences.Values.SelectMany(sequence => sequence.Character)
+                    .OfType<ObjectiveIntent>().All(intent => intent.ObjectiveId is 1 or 4));
+            }
+        }
+
+        [TestMethod]
+        public void InvalidActorDefeatSequenceIsRejectedAtContentLoad()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create();
+            MissionContentTestSupport.ConfigureScenes(harness.WorldContext, scenes =>
+                scenes[1995].DefeatSequences["missing-actor"] = 9);
+            var error = Assert.ThrowsExactly<MissionRuleException>(() => harness.Manager.LoadMissions());
+            StringAssert.Contains(error.Message, "actor defeat sequence");
+        }
+
+        [TestMethod]
         public void FreshSqliteInitializationInstallsRunnableBootcampWithoutPublishing()
         {
             using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);

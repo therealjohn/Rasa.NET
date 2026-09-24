@@ -24,8 +24,9 @@ namespace Rasa.Game.Missions.Content.Bootcamp
         { _gameUnitOfWorkFactory = factory; _missionManager = missions; }
         public string ContentRevision => Deployment11StartingExperienceRevision;
         public bool CanSkip(GameAccountEntry account) => account?.CanSkipBootcamp == true;
+        public bool IsExitWaypoint(uint waypointId) => waypointId == BootcampExitPadWaypointId;
         public bool IsExitPad(uint mapContextId, uint waypointId) =>
-            mapContextId == BootcampPrivateMapContextId && waypointId == BootcampExitPadWaypointId;
+            mapContextId == BootcampPrivateMapContextId && IsExitWaypoint(waypointId);
         public bool IsDepartureReady(Client client) =>
             client?.Player != null && IsOwnedBootcampPlayer(client.Player) &&
             !client.Player.StartingExperienceCompleted &&

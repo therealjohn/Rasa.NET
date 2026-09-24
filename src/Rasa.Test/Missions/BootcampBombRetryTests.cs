@@ -122,8 +122,10 @@ namespace Rasa.Test.Missions
                 .ToArray();
             Assert.AreEqual(1, vanValkenbergs.Length);
             Assert.AreEqual(
-                MissionObjectiveState.Incomplete,
+                MissionObjectiveState.Inactive,
                 harness.Client.Player.Missions[2005].Objectives[4].State);
+            BootcampExtractionAssaultTests.DefeatAll(harness);
+            Assert.AreEqual(MissionObjectiveState.Incomplete, harness.Client.Player.Missions[2005].Objectives[4].State);
         }
 
         [TestMethod]
@@ -170,7 +172,7 @@ namespace Rasa.Test.Missions
             harness.UtcNow += ArrivalDelay;
             Assert.IsTrue(harness.Manager.TickScenarios(harness.Client));
             Assert.AreEqual(
-                MissionObjectiveState.Incomplete,
+                MissionObjectiveState.Inactive,
                 harness.Client.Player.Missions[2005].Objectives[4].State);
             Assert.IsNotNull(BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, 2564));
         }

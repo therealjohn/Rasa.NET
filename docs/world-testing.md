@@ -185,6 +185,11 @@ the matching type: the existing proximity ranges are two units for local
 waypoints and five for dropship triggers. Discovery is persisted before its
 runtime grant and notification.
 
+One-way starting-experience extraction is not part of this network. Entering
+its ready beam starts the authored departure directly, without discovery or a
+travel menu. Old Bootcamp discovery rows are ignored during character loading
+and destination enumeration, and requests to fly back there are rejected.
+
 Destination map context comes from the waypoint definition. It is not an alias
 for the instance identifier. The current shared-world implementation advertises
 instance `1`; private operations and population instances are separate work.
@@ -706,31 +711,50 @@ Entering area `435` reveals the survivor without completing objective `2`.
 Speaking to survivor package `2584` completes that objective and reveals
 Conrad's bomb interaction. Recovering the bomb starts the 600-second deadline;
 finishing the 1400 ms planting windup satisfies it before the fuse and
-reinforcement arrival. After the five-second fuse, the wreck receives its native
-closed-to-open destruction transition. Two seconds later the wreck is removed
-and Van Valkenberg appears. Checking in enables evacuation on the cleared pad;
-it does not board the player automatically.
+reinforcement arrival. Planting also starts one six-Thrax assault at the foot
+of the hill. The attackers follow a grounded uphill route and engage the player;
+combat can interrupt their advance without counting as a death.
+After the five-second fuse, the wreck receives its native closed-to-open
+destruction transition. Two seconds later the wreck clears and the evacuation
+ship appears with Van Valkenberg and two AFS soldiers. The soldiers defend the
+pad through normal AI and damage. They do not replace the player's earlier
+Forean companions.
 
-Walk onto the cleared pad and choose to board in the dropship travel window.
-The ready hovering ship is replaced by the normal departure flight, followed
-by the wilderness load and arrival flight at Alia Das. Departure commits the
+Van's check-in stays locked until all six assault enemies are defeated.
+Soldier final blows count even without player reward credit. Defeats and their
+scene inputs are saved together, so reconnect restores only surviving attackers
+and a delayed scene write can recover the final unlock. There are no recurring
+assault respawns. Abandonment removes the attempt's attackers, soldiers and ship;
+the `2005` retry gets its own encounter.
+
+After checking in, walk into the ship's beam to depart directly. There is no
+Bootcamp waypoint notification or travel menu, and no normal travel back to
+Bootcamp afterward. Checking in alone does not board the player. If already
+inside the beam while boarding was locked, step out and back in after check-in.
+The hovering ship is replaced by the normal departure flight, followed by the wilderness
+load and arrival flight at Alia Das. Departure commits the
 existing Bootcamp progression/entitlement changes once, and the old private map
 is released after destination persistence succeeds. The mission remains ready
 for its existing Rogers turn-in in the wilderness.
 
-Waypoint 60 now uses the wreck's pad at `(-225, 101.12099, -71)`, rather than
-the old hillside location. Bootcamp no longer creates an always-on hovering
-ship at map entry. The boarding window and ready ship become available only
-after check-in, including reconnect at that stage. Other public-world dropship
-pads keep their existing visuals.
+Internal extraction trigger `60` uses the wreck's pad at
+`(-225, 101.12099, -71)`, rather than the old hillside location. It is not a
+discoverable waypoint. Bootcamp does not create an always-on hovering ship at
+map entry. Other public-world dropship pads keep their existing visuals and menus.
 The forward `BootcampEvacuationReadyCleanup` migration also clears a retained
 wreck when an already-checked-in character reconnects from the previous scene
 data, before staging the ready ship.
 
-`BootcampFinalePresentation` is a forward data migration for both providers.
-It updates the versioned C# scene/experience definitions and pad location;
-SQLite applies it normally on startup. It does not require another database
-reset or a mission publish step.
+`BootcampExtractionAssault` extends the earlier `BootcampFinalePresentation`
+and ready-state cleanup with a forward World data migration for both providers.
+It adds the assault and reinforcement templates and updates the typed scene
+bindings. SQLite applies it on startup; MySQL remains manually migrated.
+No database reset or mission publish step is required. A character who already
+reached the old check-in stage is not forced to replay a newly added battle.
+
+The new encounter positions and balance are authored server behavior, not
+claimed retail measurements. Native acceptance must check the uphill advance,
+ship/beam appearance, allied combat, locked/unlocked check-in, and direct boarding.
 
 The bomb target uses tutorial wreck class `24586`, not dropship-crate class
 `24911`. Its authored shared role and experience-owned effects drive reconnect

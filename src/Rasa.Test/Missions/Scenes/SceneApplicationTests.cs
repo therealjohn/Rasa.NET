@@ -20,6 +20,40 @@ namespace Rasa.Test.Missions.Scenes
     public class SceneApplicationTests
     {
         [TestMethod]
+        public void AuthoredActorDefeatQueuesOneDurableSequenceWithoutARewardRecipient()
+        {
+            using var context = MissionTestContext.WithDefinitions(321);
+            var app = Application(context, new WorldBoundary());
+            var bindings = new SceneBindings("test",
+                new Dictionary<string, SceneActorDefinition>
+                { ["hostile"] = new("hostile", SceneActorKind.Creature, 77, new ScenePosition(0, 0, 0)) },
+                new Dictionary<string, SceneRoute>(),
+                new Dictionary<uint, SceneSequence>
+                {
+                    [0] = new(),
+                    [1] = new(characterIntents: new CharacterIntent[]
+                    { new SetQualificationIntent("defeat-qualification", (byte)CharacterQualificationKey.BootcampComplete, true) })
+                }, defeatSequences: new Dictionary<string, uint> { ["hostile"] = 1 });
+            var id = app.Start(context.Client, "data.sequence", bindings);
+            var creature = context.AddNpc(77);
+            creature.SpawnPool = new SpawnPool
+            {
+                SceneRunId = id, SceneActorRole = "hostile", SceneGeneration = 1,
+                ScenarioOwnerCharacterId = context.Client.Player.Id
+            };
+
+            app.RecordDefeat(context.Map, creature, null);
+            app.RecordDefeat(context.Map, creature, null);
+
+            Assert.IsTrue(context.Client.Player.StartingExperienceCompleted);
+            using var verify = context.CreateChar();
+            Assert.HasCount(1, verify.CharacterMissions.Runtime.ActorStates(id));
+            var input = verify.CharacterMissions.Runtime.Messages(id).Single();
+            Assert.AreEqual("Handled", input.Status);
+            Assert.AreEqual(1U, input.SequenceId);
+        }
+
+        [TestMethod]
         public void QualificationChangesConvergeTheCharacterRequirementFactAfterCommit()
         {
             using var context = MissionTestContext.WithDefinitions(321);

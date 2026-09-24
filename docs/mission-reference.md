@@ -184,6 +184,15 @@ experience definitions.
 `SceneRoute` contains ordered `SceneWaypoint` records, speed in metres/second
 and optional `ResumeAtDestination`. Waypoint orientation is radians; pauses are
 milliseconds. Scripted movement needs a complete loaded-navmesh route.
+`RunRouteIntent.ResumeAfterCombat` lets a combat-capable actor pause its route
+while fighting and resume it afterward. Removing that actor cancels its route.
+
+Optional `MissionSceneDefinition.DefeatSequences` maps actor roles to sequence
+IDs. A confirmed defeat persists the actor outcome and queues that sequence in
+one transaction, even when no player receives kill rewards. The normal durable
+scene inbox delivers it once and retries failed scene writes. Scripts can track
+the defeated roles in their checkpoint to gate a finite encounter; losing a
+route or despawning an actor is not a confirmed defeat.
 
 | World intent | Purpose |
 | --- | --- |
@@ -191,6 +200,7 @@ milliseconds. Scripted movement needs a complete loaded-navmesh route.
 | `RemoveActorIntent` | Remove/release its role |
 | `SetInteractionIntent` | Set enabled/object-state properties |
 | `RunRouteIntent` | Run an authored route |
+| `AttackActorIntent` | Engage a living hostile actor in the same map; omitted `TargetRole` means the run's owner |
 | `FollowActorIntent` | Follow a character; ID zero means owner |
 | `PresentationIntent` | Tutorial, audio or greeting using an existing ID |
 | `TransferIntent` | Transfer to a map and authored position |
@@ -234,6 +244,11 @@ The subsequent
 shows a forward migration that changes the finale without editing the first seed.
 [BootcampAudioAndCreditsV3.cs](../src/Rasa.DBL/Services/Preloader/Missions/BootcampAudioAndCreditsV3.cs)
 then supplies native audio bindings and the configured credit rewards.
+[BootcampExtractionDataV5.cs](../src/Rasa.DBL/Services/Preloader/Missions/BootcampExtractionDataV5.cs)
+authors a finite assault, allied defenders and defeat-sequence bindings.
+The mission-local extraction script keeps its additive checkpoint compatible
+with earlier sequence-only saves; the generic mission manager has no
+Bootcamp-specific enemy counters or spawn coordinates.
 
 ## Migration helper interface
 

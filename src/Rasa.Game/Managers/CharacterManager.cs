@@ -917,7 +917,8 @@ namespace Rasa.Managers
             {
                 ClanId = clan?.Id ?? 0,
                 ClanName = clan?.Name,
-                GainedWaypoints = unitOfWork.CharacterTeleporters.Get(character.Id),
+                GainedWaypoints = unitOfWork.CharacterTeleporters.Get(character.Id)
+                    .Where(waypoint => !StartingExperience.IsExitWaypoint(waypoint.WaypointId)).ToList(),
                 LockboxCredits = lockboxInfo?.Credits ?? 0,
                 // Floored: the free tab is not bought, so a missing or zeroed lockbox row must
                 // not cost it. Sending 0 tells the client every tab is locked, including that

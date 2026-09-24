@@ -104,6 +104,8 @@ namespace Rasa.Test.Missions
                 });
 
             ConfigureRuntimePlayer(client);
+            client.Player.MapChannel.QueuedClients.Clear();
+            client.Player.MapChannel.ClientList.Add(client);
             RouteMapLoaded(client);
 
             return new Harness(
@@ -264,7 +266,12 @@ namespace Rasa.Test.Missions
         private static void PrepareBootcampScenarioClasses(SqliteWorldContext world)
         {
             var classes = EntityClassManager.Instance.LoadedEntityClasses;
-            foreach (var entityClassId in new uint[] { 24911, 24990, 7862, 29877, 29365 })
+            foreach (var entityClassId in new uint[]
+            {
+                24911, 24990, 7862, 29877, 29365,
+                (uint)EntityClasses.UsableTwoStateHumDropshipBeam,
+                (uint)EntityClasses.UsableCrSpawnerHumDropshipV01
+            })
                 if (!classes.ContainsKey((EntityClasses)entityClassId))
                     classes.Add((EntityClasses)entityClassId, new EntityClass(
                         entityClassId,
@@ -414,12 +421,13 @@ namespace Rasa.Test.Missions
                          TizzikGiCreatureId,
                          PracticeDummyCreatureId,
                          LightningDummyCreatureId,
-                         510213U, 510214U, 510215U
+                         510213U, 510214U, 510215U, 510227U, 510228U
                      })
             {
                 creatures.LoadedCreatures[creatureId] = new Creature
                 {
                     DbId = creatureId,
+                    Faction = creatureId == 510227 ? Factions.AFS : Factions.Bane,
                     EntityClass = (EntityClasses)4001,
                     Npc = new Npc
                     {
@@ -507,6 +515,7 @@ namespace Rasa.Test.Missions
                 social,
                 factory);
             LoadBootcampLootContent(worldContext);
+            LoadBootcampNav(maps);
             if (useWorldContent)
                 LoadBootcampWorldContent(worldContext, creatures, manager, maps);
             objects.InitTeleporters();
@@ -614,6 +623,11 @@ namespace Rasa.Test.Missions
                 creatures.LoadedCreatures[entry.Id] = creature;
             }
 
+            SpawnPoolManager.Instance.SpawnPoolInit();
+        }
+
+        private static void LoadBootcampNav(MapChannelManager maps)
+        {
             var root = new DirectoryInfo(AppContext.BaseDirectory);
             while (root != null && !File.Exists(Path.Combine(root.FullName, "Rasa.NET.sln")))
                 root = root.Parent;
@@ -621,7 +635,6 @@ namespace Rasa.Test.Missions
                 throw new DirectoryNotFoundException("Repository root not found.");
             maps.MapChannelArray[BootcampMapContextId].NavMesh = new NavMeshQuery(NavMeshFile.Read(
                 NavMeshFile.PathFor(Path.Combine(root.FullName, "navmesh"), "adv_bootcamp")));
-            SpawnPoolManager.Instance.SpawnPoolInit();
         }
 
         private static void SeedFreshPendingCharacter(MissionTestContext context)
@@ -841,12 +854,13 @@ namespace Rasa.Test.Missions
                              TizzikGiCreatureId,
                              PracticeDummyCreatureId,
                              LightningDummyCreatureId,
-                             510213U, 510214U, 510215U
+                             510213U, 510214U, 510215U, 510227U, 510228U
                          })
                 {
                     creatures.LoadedCreatures[creatureId] = new Creature
                     {
                         DbId = creatureId,
+                        Faction = creatureId == 510227 ? Factions.AFS : Factions.Bane,
                         EntityClass = (EntityClasses)4001,
                         Npc = new Npc
                         {
@@ -935,6 +949,7 @@ namespace Rasa.Test.Missions
                     social,
                     factory);
                 LoadBootcampLootContent(WorldContext);
+                LoadBootcampNav(maps);
                 if (_useWorldContent)
                     LoadBootcampWorldContent(WorldContext, creatures, manager, maps);
                 objects.InitTeleporters();

@@ -43,6 +43,58 @@ namespace Rasa.Test.Missions
         private static readonly TimeSpan ArrivalDelay = TimeSpan.FromSeconds(2);
 
         [TestMethod]
+        public void PlantingBombStartsExactlySixHostileAssaultActorsBeforeTheFuseEnds()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);
+            StartCrashSiteScene(harness);
+            harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
+
+            harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-dropship-debris"));
+
+            var attackers = harness.BootcampMap.MapCellInfo.Cells.Values
+                .SelectMany(cell => cell.CreatureList).Distinct()
+                .Where(actor => actor.SpawnPool?.SceneActorRole?.StartsWith("assault-", StringComparison.Ordinal) == true)
+                .ToArray();
+            Assert.HasCount(6, attackers, "Planting must begin the authored uphill assault.");
+            Assert.IsTrue(attackers.All(actor => actor.Faction == Factions.Bane));
+            Assert.IsTrue(attackers.All(actor =>
+                actor.SpawnPool.ScenarioOwnerCharacterId == harness.Client.Player.Id));
+            Assert.IsTrue(attackers.All(actor => actor.Position.Y < 96),
+                "Attackers must begin below the extraction hill, not spawn on the player.");
+            Assert.IsNull(harness.Client.PendingTransfer);
+        }
+
+        [TestMethod]
+        public void EvacuationArrivesWithTwoSoldiersWhileVanCheckInRemainsLockedByTheAssault()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);
+            StartCrashSiteScene(harness);
+            harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
+            harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-dropship-debris"));
+            harness.UtcNow += TimeSpan.FromSeconds(5);
+            harness.Manager.TickScenarios(harness.Client);
+            harness.UtcNow += ArrivalDelay;
+            harness.Manager.TickScenarios(harness.Client);
+
+            Assert.IsNotNull(BootcampRuntimeTestHarness.FindScenarioObject(
+                harness.BootcampMap, "bootcamp-evacuation-ship"),
+                "The evacuation ship must arrive before the assault is over, bringing reinforcements.");
+            var soldiers = harness.BootcampMap.MapCellInfo.Cells.Values
+                .SelectMany(cell => cell.CreatureList).Distinct()
+                .Where(actor => actor.SpawnPool?.SceneActorRole?.StartsWith("reinforcement-", StringComparison.Ordinal) == true)
+                .ToArray();
+            Assert.HasCount(2, soldiers);
+            Assert.IsTrue(soldiers.All(actor => actor.Faction == Factions.AFS && actor.Actions.Count > 0));
+            var van = BootcampRuntimeTestHarness.FindNpcByPackage(
+                harness.BootcampMap, BootcampRuntimeTestHarness.CorporalVanValkenbergPackageId);
+            Assert.IsNotNull(van);
+            harness.MovePlayerTo(van);
+            Assert.IsFalse(harness.Manager.TryCompleteNpcObjective(harness.Client, van.EntityId, 1995, 4, 1),
+                "The check-in must wait for all assault enemies to be defeated.");
+            Assert.IsNull(harness.Client.PendingTransfer);
+        }
+
+        [TestMethod]
         public void ReconnectingAnAlreadyCheckedInCharacterClearsTheOldWreckBeforeStagingEvacuation()
         {
             using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true,
@@ -62,11 +114,15 @@ namespace Rasa.Test.Missions
                         (byte)MissionObjectiveState.Completed;
                     unit.CharacterMissions.GetByCharacterAndMission(harness.Client.Player.Id, 1995).Completeable = true;
                 });
+            Content.MissionContentTestSupport.ConfigureScenes(harness.WorldContext,
+                scenes => scenes[1995] = Rasa.Services.Preloader.Missions.BootcampExtractionDataV5.Scene(1995));
 
             harness.ReconnectFresh();
 
             Assert.IsNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-dropship-debris"));
             Assert.IsNotNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-evacuation-ship"));
+            Assert.IsFalse(harness.BootcampMap.SpawnPools.Any(pool =>
+                pool.SpawnSlot.Any(slot => slot.CreatureId == Rasa.Services.Preloader.Missions.BootcampExtractionDataV5.AssaultTemplate)));
             Assert.IsNull(harness.Client.PendingTransfer);
         }
 
@@ -98,9 +154,12 @@ namespace Rasa.Test.Missions
         [TestMethod]
         [DataRow(false)]
         [DataRow(true)]
-        public void EvacuationShipAppearsOnlyAfterTheWreckClearsAndVanChecksIn(bool reconnect)
+        public void EvacuationArrivesAfterWreckClearanceButBoardingWaitsForAssaultAndCheckIn(bool reconnect)
         {
             using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);
+            using (var unit = harness.Context.CreateChar())
+                unit.CharacterStartingExperience.Add(new CharacterStartingExperienceEntry(
+                    harness.Client.Player.Id, "deployment_11", CharacterStartingExperienceState.Bootcamp));
             Assert.IsFalse(harness.BootcampMap.DynamicObjects.Any(obj =>
                 obj.EntityClassId == EntityClasses.UsableTwoStateHumDropshipBeam),
                 "Bootcamp must not start with an evacuation ship hovering over its old pad.");
@@ -116,28 +175,24 @@ namespace Rasa.Test.Missions
             harness.UtcNow += ArrivalDelay;
             harness.Manager.TickScenarios(harness.Client);
             Assert.IsFalse(harness.BootcampMap.DynamicObjects.Contains(wreck));
-            Assert.IsNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-evacuation-ship"));
+            Assert.IsNotNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-evacuation-ship"));
             harness.MovePlayerTo(pad);
             CellManager.Instance.UpdateVisibility(harness.Client);
             harness.Drain();
             new MapTriggerManager().TriggersProximityWorker(harness.BootcampMap);
             Assert.IsFalse(harness.Drain().OfType<EnteredWaypointPacket>().Any(),
-                "The boarding menu must stay closed until Van's check-in is complete.");
+                "Extraction must not open a waypoint menu.");
+            Assert.IsNull(harness.Client.PendingTransfer);
             var van = BootcampRuntimeTestHarness.FindNpcByPackage(
                 harness.BootcampMap, BootcampRuntimeTestHarness.CorporalVanValkenbergPackageId);
 
+            BootcampExtractionAssaultTests.DefeatAll(harness);
             CompleteNativeObjective(harness, van, 4);
 
             var evacuation = FindScenarioObject(harness, "bootcamp-evacuation-ship");
             Assert.IsNotNull(evacuation);
             Assert.AreEqual(pad.Position, evacuation.Position);
             Assert.IsNull(harness.Client.PendingTransfer, "Check-in must not board the player automatically.");
-            harness.MovePlayerTo(pad);
-            CellManager.Instance.UpdateVisibility(harness.Client);
-            harness.Drain();
-            new MapTriggerManager().TriggersProximityWorker(harness.BootcampMap);
-            Assert.IsTrue(harness.Drain().OfType<EnteredWaypointPacket>().Any(),
-                "The cleared pad must offer manual boarding once the check-in completes.");
             if (reconnect)
             {
                 harness.ReconnectFresh();
@@ -145,6 +200,13 @@ namespace Rasa.Test.Missions
                 Assert.IsNotNull(FindScenarioObject(harness, "bootcamp-evacuation-ship"));
                 Assert.IsNull(harness.Client.PendingTransfer);
             }
+            harness.MovePlayerTo(pad);
+            CellManager.Instance.UpdateVisibility(harness.Client);
+            harness.Drain();
+            new MapTriggerManager().TriggersProximityWorker(harness.BootcampMap);
+            Assert.IsFalse(harness.Drain().OfType<EnteredWaypointPacket>().Any());
+            Assert.IsNotNull(harness.Client.PendingTransfer,
+                "Walking into the beam after check-in must start the one-way flight.");
         }
 
         [TestMethod]
@@ -370,15 +432,15 @@ namespace Rasa.Test.Missions
                 new Vector3(-225, 101.12099f, -71), wreck.Position));
             foreach (var missionId in new[] { 1995U, 2005U })
             {
-                foreach (var (creatureId, position) in new[]
+                foreach (var (spawnId, creatureId, position) in new[]
                          {
-                             (39U, new Vector3(-218, 101.08475f, -78)),
-                             (50U, new Vector3(-221, 101.2538f, -74)),
-                             (510209U, new Vector3(-223, 101.269646f, -76))
+                             (1U, Rasa.Services.Preloader.Missions.BootcampExtractionDataV5.SoldierTemplate, new Vector3(-218, 101.08475f, -78)),
+                             (2U, Rasa.Services.Preloader.Missions.BootcampExtractionDataV5.SoldierTemplate, new Vector3(-221, 101.2538f, -74)),
+                             (1U, 510209U, new Vector3(-223, 101.269646f, -76))
                          })
                 {
                     var spawn = harness.WorldContext.MissionSpawnEntries.Single(row =>
-                        row.MissionId == missionId && row.CreatureId == creatureId);
+                        row.MissionId == missionId && row.CreatureId == creatureId && row.SpawnId == spawnId);
                     Assert.AreEqual(position.X, spawn.PosX, 0.0001);
                     Assert.AreEqual(position.Y, spawn.PosY, 0.0001);
                     Assert.AreEqual(position.Z, spawn.PosZ, 0.0001);
@@ -501,6 +563,7 @@ namespace Rasa.Test.Missions
             Assert.IsNotNull(van);
             Assert.AreEqual((EntityClasses)3846, van.EntityClass,
                 "The real-content regression must load the authored handoff model.");
+            BootcampExtractionAssaultTests.DefeatAll(harness);
             CompleteNativeObjective(harness, van, 4);
             Assert.AreEqual(MissionObjectiveState.Completed, harness.Client.Player.Missions[1995].Objectives[4].State);
             Assert.IsTrue(harness.Client.Player.Missions[1995].Completeable);
@@ -523,6 +586,7 @@ namespace Rasa.Test.Missions
         {
             harness.MovePlayerTo(npc);
             CellManager.Instance.UpdateVisibility(harness.Client);
+            new MapTriggerManager().TriggersProximityWorker(harness.BootcampMap);
             using var stream = new MemoryStream();
             using (var writer = new PythonWriter(new BinaryWriter(stream, System.Text.Encoding.UTF8, true)))
             {
@@ -759,7 +823,7 @@ namespace Rasa.Test.Missions
             harness.UtcNow += ArrivalDelay;
             Assert.IsTrue(harness.Manager.TickScenarios(harness.Client));
             Assert.AreEqual(
-                MissionObjectiveState.Incomplete,
+                MissionObjectiveState.Inactive,
                 harness.Client.Player.Missions[1995].Objectives[4].State);
             Assert.IsNotNull(BootcampRuntimeTestHarness.FindNpcByPackage(
                 harness.BootcampMap,
@@ -912,7 +976,7 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(retryDeadline.DueAtUtc, ReadDeadline(harness, 2005).DueAtUtc);
         }
 
-        private static Creature StartCrashSiteScene(BootcampRuntimeTestHarness.Harness harness)
+        internal static Creature StartCrashSiteScene(BootcampRuntimeTestHarness.Harness harness)
         {
             var youngblood = harness.AddNpc(
                 BootcampRuntimeTestHarness.CaptainYoungbloodCreatureId,

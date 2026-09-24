@@ -147,6 +147,8 @@ rather than parsing runtime entity IDs or legacy scenario-key strings.
 
 - `Script` and `StateVersion`, identifying the registered implementation.
 - `Actors`, `Routes`, `Sequences` and `Names`, defining its authored scene.
+- Optional `DefeatSequences`, mapping actor roles to durable sequence inputs
+  after confirmed deaths, independent of player kill-reward eligibility.
 - `Requirement`, `ObjectiveRequirements` and `TurnInRequirement`, binding
   admission, progress and turn-in eligibility.
 - `Credit` and optional `PublicEncounter`, controlling eligible group credit
@@ -158,6 +160,9 @@ rather than parsing runtime entity IDs or legacy scenario-key strings.
 Use `data.sequence` for ordinary authored sequences. Bootcamp scripts and
 `example.escort` show how to add unusual behavior without enlarging the
 mission manager.
+`BootcampExtractionScene` is an example of counting a finite assault in the
+script checkpoint, waiting for both ship arrival and enemy defeats, then
+unlocking an NPC objective. Enemy movement and combat use shared world intents.
 
 Recovery is defined by the script checkpoint, route resume settings and
 public encounter policy. There is no generic `Recovery` string that dispatches

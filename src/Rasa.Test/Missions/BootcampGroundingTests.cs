@@ -9,6 +9,26 @@ namespace Rasa.Test.Missions
     public class BootcampGroundingTests
     {
         [TestMethod]
+        public void ExtractionAssaultApproachRemainsGroundedAndConnected()
+        {
+            var nav = LoadNav();
+            var destination = new Vector3(-218, 101.08475f, -78);
+            foreach (var actor in Rasa.Services.Preloader.Missions.BootcampExtractionDataV5.Scene(1995).Actors.Values)
+            {
+                if (actor.TemplateId != Rasa.Services.Preloader.Missions.BootcampExtractionDataV5.AssaultTemplate)
+                    continue;
+                var point = new Vector3(actor.Position.X, actor.Position.Y, actor.Position.Z);
+                var ground = nav.Nearest(point);
+                Assert.IsNotNull(ground);
+                Assert.IsLessThan(0.1f, Vector3.Distance(point, ground.Value));
+                Assert.IsLessThan(90f, point.Y);
+                var route = nav.FindPath(ground.Value, destination, out var complete);
+                Assert.IsTrue(complete, $"No uphill route from {ground} to the extraction pad.");
+                Assert.IsLessThan(0.1f, Vector3.Distance(route[^1], destination));
+            }
+        }
+
+        [TestMethod]
         [DataRow(93.2f, 137.5f, 109.11104f)]
         [DataRow(89.2f, 137.5f, 109.11104f)]
         [DataRow(97.2f, 137.5f, 109.11104f)]

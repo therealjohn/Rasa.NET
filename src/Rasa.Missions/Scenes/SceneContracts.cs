@@ -45,12 +45,17 @@ namespace Rasa.Missions.Scenes
     [JsonDerivedType(typeof(TransferIntent), "transfer")]
     [JsonDerivedType(typeof(RestoreActorPoseIntent), "restore-pose")]
     [JsonDerivedType(typeof(TransitionObjectStateIntent), "object-state")]
+    [JsonDerivedType(typeof(AttackActorIntent), "attack")]
     public abstract record WorldIntent(string OperationKey, string Role);
     public sealed record EnsureActorIntent(string OperationKey, string Role, ScenePosition RestorePosition = null) : WorldIntent(OperationKey, Role);
     public sealed record RemoveActorIntent(string OperationKey, string Role) : WorldIntent(OperationKey, Role);
     public sealed record SetInteractionIntent(string OperationKey, string Role, bool Enabled, uint? ObjectState = null,
         bool IfPresent = false) : WorldIntent(OperationKey, Role);
-    public sealed record RunRouteIntent(string OperationKey, string Role, string Route, int StartWaypoint = 0) : WorldIntent(OperationKey, Role);
+    public sealed record RunRouteIntent(string OperationKey, string Role, string Route, int StartWaypoint = 0,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool ResumeAfterCombat = false)
+        : WorldIntent(OperationKey, Role);
+    public sealed record AttackActorIntent(string OperationKey, string Role, string TargetRole = null)
+        : WorldIntent(OperationKey, Role);
     public sealed record FollowActorIntent(string OperationKey, string Role, uint CharacterId, bool Enabled = true) : WorldIntent(OperationKey, Role);
     public sealed record PresentationIntent(string OperationKey, PresentationKind Kind, uint Value) : WorldIntent(OperationKey, null);
     public sealed record TransferIntent(string OperationKey, uint MapContextId, ScenePosition Position, double Orientation) : WorldIntent(OperationKey, null);
@@ -104,9 +109,10 @@ namespace Rasa.Missions.Scenes
         public IReadOnlyDictionary<string, SceneRoute> Routes { get; }
         public IReadOnlyDictionary<uint, SceneSequence> Sequences { get; }
         public IReadOnlyDictionary<string, uint> Names { get; }
+        public IReadOnlyDictionary<string, uint> DefeatSequences { get; }
         public SceneBindings(string release, IDictionary<string, SceneActorDefinition> actors,
             IDictionary<string, SceneRoute> routes, IDictionary<uint, SceneSequence> sequences,
-            IDictionary<string, uint> names = null)
+            IDictionary<string, uint> names = null, IDictionary<string, uint> defeatSequences = null)
         {
             Release = release;
             Actors = new ReadOnlyDictionary<string, SceneActorDefinition>(new Dictionary<string, SceneActorDefinition>(actors));
@@ -114,6 +120,8 @@ namespace Rasa.Missions.Scenes
             Sequences = new ReadOnlyDictionary<uint, SceneSequence>(new Dictionary<uint, SceneSequence>(sequences));
             Names = new ReadOnlyDictionary<string, uint>(new Dictionary<string, uint>(
                 names ?? new Dictionary<string, uint>()));
+            DefeatSequences = new ReadOnlyDictionary<string, uint>(new Dictionary<string, uint>(
+                defeatSequences ?? new Dictionary<string, uint>()));
         }
     }
 

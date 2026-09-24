@@ -160,6 +160,7 @@ namespace Rasa.Test.Missions
                 harness.BootcampMap,
                 BootcampRuntimeTestHarness.CorporalVanValkenbergPackageId);
             Assert.IsNotNull(van);
+            BootcampExtractionAssaultTests.DefeatAll(harness);
             Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
                 harness.Client,
                 van.EntityId,
@@ -600,6 +601,7 @@ namespace Rasa.Test.Missions
                 harness.BootcampMap,
                 BootcampRuntimeTestHarness.CorporalVanValkenbergPackageId);
             Assert.IsNotNull(van);
+            BootcampExtractionAssaultTests.DefeatAll(harness);
             Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
                 harness.Client,
                 van.EntityId,
@@ -719,13 +721,10 @@ namespace Rasa.Test.Missions
                     teleporter.ObjectData is WaypointInfo waypoint &&
                     waypoint.WaypointId == BootcampSelectionTestContext.ExitPadWaypointId);
             harness.MovePlayerTo(exitPad);
-            DynamicObjectManager.Instance.SelectWaypoint(
-                harness.Client,
-                new SelectWaypointPacket
-                {
-                    WaypointId = BootcampSelectionTestContext.ExitPadWaypointId,
-                    MapInstanceId = harness.BootcampMap.InstanceId
-                });
+            Assert.IsTrue(harness.BootcampMap.ClientList.Contains(harness.Client));
+            Assert.IsTrue(DynamicObjectManager.Instance.IsStationAvailable(harness.Client,
+                BootcampSelectionTestContext.BootcampMapContextId, BootcampSelectionTestContext.ExitPadWaypointId));
+            new MapTriggerManager().TriggersProximityWorker(harness.BootcampMap);
             Assert.IsNotNull(harness.Client.PendingTransfer);
             var objects = DynamicObjectManager.Instance;
             var departure = objects.Dropships[harness.Client.PendingTransfer.DropshipId];

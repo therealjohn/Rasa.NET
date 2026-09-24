@@ -15,6 +15,7 @@ namespace Rasa.Game.Missions.Integration
         MapChannel ResolveMap(CharacterEntry character, CharacterStartingExperienceState? state);
         void OfferStartingExperienceMission(Client client);
         bool CanAcceptRadio(Manifestation player, uint missionId, ICharUnitOfWork unit);
+        bool IsExitWaypoint(uint waypointId);
         bool IsExitPad(uint mapContextId, uint waypointId);
         bool IsDepartureReady(Client client);
         bool TryDepart(Client client, DynamicObjectManager objects);

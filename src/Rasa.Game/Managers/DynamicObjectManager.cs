@@ -1013,6 +1013,8 @@ namespace Rasa.Managers
 
         internal void CheckPlayerWaypoint(Client client, WaypointInfo objectData)
         {
+            if (Characters.StartingExperience.IsExitWaypoint(objectData.WaypointId))
+                return;
             lock (client.SyncRoot)
             {
                 foreach (var waypoint in client.Player.GainedWaypoints)
@@ -1152,6 +1154,11 @@ namespace Rasa.Managers
                 var isDropship = info.WaypointType == WaypointType.Dropship;
                 var isStartingExperienceExit =
                     Characters.StartingExperience.IsExitPad(client.Player.MapContextId, packet.WaypointId);
+                if (Characters.StartingExperience.IsExitWaypoint(packet.WaypointId) && !isStartingExperienceExit)
+                {
+                    RejectTravel(client, "One-way extraction is not a travel destination.");
+                    return;
+                }
                 if ((packet.MapInstanceId != 0 && packet.MapInstanceId != destinationMap.InstanceId) ||
                     info.Contested ||
                     (!isStartingExperienceExit &&
@@ -1182,6 +1189,7 @@ namespace Rasa.Managers
 
                 var nearbySource = origin.Teleporters.Values.Any(source =>
                     source.ObjectData is WaypointInfo sourceInfo && sourceInfo.WaypointType == info.WaypointType &&
+                    (isStartingExperienceExit || !Characters.StartingExperience.IsExitWaypoint(sourceInfo.WaypointId)) &&
                     MapInstanceScope.Contains(origin, source) &&
                     (isDropship ? client.Player.IsNear5m(source) : client.Player.IsNear2m(source)));
                 var destination = isDropship ? teleporter.Position : teleporter.Position + new Vector3(0, 1, 0);
@@ -1250,8 +1258,18 @@ namespace Rasa.Managers
                 timeout > 0 && !Dropships.Values.Any(ship => ship.Client == client && ship.DropshipType == DropshipType.Teleporter);
         }
 
+        internal bool IsOneWayExit(uint mapContextId, uint waypointId) =>
+            Characters.StartingExperience.IsExitPad(mapContextId, waypointId);
+
+        internal void BeginOneWayDeparture(Client client)
+        {
+            lock (client.SyncRoot)
+                if (!Characters.StartingExperience.TryDepart(client, this))
+                    RejectTravel(client, "Starting-experience departure is not available.");
+        }
+
         internal bool IsStationAvailable(Client client, uint mapContextId, uint waypointId) =>
-            !Characters.StartingExperience.IsExitPad(mapContextId, waypointId) ||
+            !IsOneWayExit(mapContextId, waypointId) ||
             Characters.StartingExperience.IsDepartureReady(client);
 
         internal bool TryBeginDropshipTravel(Client client, MapChannel destination, Vector3 position, double rotation,
@@ -1583,7 +1601,7 @@ namespace Rasa.Managers
             {
                 if (teleporter.ObjectData is not WaypointInfo info ||
                     info.WaypointType != WaypointType.Dropship ||
-                    info.Contested)
+                    info.Contested || Characters.StartingExperience.IsExitWaypoint(info.WaypointId))
                     continue;
 
                 if (!gained.Contains(info.WaypointId))
@@ -1642,7 +1660,8 @@ namespace Rasa.Managers
 
             foreach (var teleporter in Teleporters.Values)
             {
-                if (!(teleporter.ObjectData is WaypointInfo info) || info.WaypointType != WaypointType.Dropship)
+                if (!(teleporter.ObjectData is WaypointInfo info) || info.WaypointType != WaypointType.Dropship ||
+                    Characters.StartingExperience.IsExitWaypoint(info.WaypointId))
                     continue;
 
                 if (client.Player.GainedWaypoints.Any(w => w.WaypointId == info.WaypointId))

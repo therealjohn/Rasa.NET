@@ -16,6 +16,7 @@ namespace Rasa.Missions.Content
         public Dictionary<string, SceneRoute> Routes { get; set; } = new(StringComparer.Ordinal);
         public Dictionary<uint, SceneSequenceDefinition> Sequences { get; set; } = new();
         public Dictionary<string, uint> Names { get; set; } = new();
+        public Dictionary<string, uint> DefeatSequences { get; set; }
         public Dictionary<uint, MissionCreditPolicy> Credit { get; set; } = new();
         public MissionRequirement Requirement { get; set; }
         public MissionRequirement TurnInRequirement { get; set; }
@@ -24,7 +25,7 @@ namespace Rasa.Missions.Content
 
         public SceneBindings Bindings(string revision) => new(revision, Actors, Routes,
             Sequences.ToDictionary(entry => entry.Key, entry => new SceneSequence(
-                entry.Value.World, entry.Value.Character, entry.Value.Signals, entry.Value.Timers)), Names);
+                entry.Value.World, entry.Value.Character, entry.Value.Signals, entry.Value.Timers)), Names, DefeatSequences);
     }
 
     public sealed class MissionExperienceDefinition

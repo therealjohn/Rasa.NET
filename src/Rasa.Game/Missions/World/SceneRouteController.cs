@@ -63,6 +63,20 @@ namespace Rasa.Game.Missions.World
             foreach (var run in _routes.Values.Where(run => run.Map == map).ToArray())
             {
                 var actor = _resolve(map, run.Handle);
+                if (actor != null && actor.State != Data.CharacterState.Dead &&
+                    run.Intent.ResumeAfterCombat && actor.Controller.CurrentAction != BehaviorManager.BehaviorActionScriptedMove)
+                {
+                    if (actor.Controller.CurrentAction == BehaviorManager.BehaviorActionFighting)
+                        continue;
+                    if (!Move(run, actor))
+                    {
+                        RestoreSpeed(run);
+                        _observe(run.Handle.RunId, new SceneObservation(SceneEventKind.Cancelled,
+                            run.Handle.Generation, "route-blocked", run.Handle.Role, run.Intent.OperationKey));
+                        _routes.Remove((run.Handle.RunId, run.Handle.Role));
+                    }
+                    continue;
+                }
                 if (actor == null || actor.State == Data.CharacterState.Dead ||
                     !ReferenceEquals(actor.Controller.ScriptedMove, run.Move))
                 {
@@ -116,9 +130,10 @@ namespace Rasa.Game.Missions.World
                 run.Actor.RunSpeed = run.PreviousSpeed;
         }
 
-        internal void Cancel(string runId)
+        internal void Cancel(string runId, string role = null)
         {
-            foreach (var entry in _routes.Where(entry => entry.Key.Run == runId).ToArray())
+            foreach (var entry in _routes.Where(entry =>
+                entry.Key.Run == runId && (role == null || entry.Key.Role == role)).ToArray())
             {
                 var actor = _resolve(entry.Value.Map, entry.Value.Handle) ?? entry.Value.Actor;
                 if (actor != null && MapInstanceScope.Contains(entry.Value.Map, actor) &&

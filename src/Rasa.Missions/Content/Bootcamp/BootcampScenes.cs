@@ -40,7 +40,7 @@ namespace Rasa.Missions.Content.Bootcamp
     {
         public SceneDecision Handle(SceneContext context, SceneObservation observation)
         {
-            var decision = BootcampSequence.Apply(context, observation);
+            var decision = BootcampExtractionScene.Handle(context, observation);
             return observation.Kind == SceneEventKind.Signal &&
                 context.Bindings.Names.TryGetValue("reset", out var reset) && reset == observation.SequenceId
                     ? BootcampSequence.End(decision) : decision;
@@ -52,7 +52,7 @@ namespace Rasa.Missions.Content.Bootcamp
     {
         public SceneDecision Handle(SceneContext context, SceneObservation observation)
         {
-            var decision = BootcampSequence.Apply(context, observation);
+            var decision = BootcampExtractionScene.Handle(context, observation);
             return observation.Kind == SceneEventKind.Signal &&
                 context.Bindings.Names.TryGetValue("reset", out var reset) && reset == observation.SequenceId
                     ? BootcampSequence.End(decision) : decision;
