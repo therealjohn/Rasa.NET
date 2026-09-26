@@ -94,6 +94,7 @@ namespace Rasa.Structures
         /// </summary>
         public int HarvestAttemptsLeft { get; set; }
         internal Manifestation CombatParticipant { get; set; }
+        internal Game.Missions.World.ActorGameplayBinding GameplayBinding { get; set; }
 
         public Creature(CreatureEntry data)
         {

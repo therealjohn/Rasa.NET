@@ -41,6 +41,144 @@ namespace Rasa.Test.Missions
         };
 
         [TestMethod]
+        public void MissionIntegrationUpgradePreservesBaselineWorldContentAndAddsOnlyAuthoredCapabilities()
+        {
+            WithDisposableSqliteWorld((context, _) =>
+            {
+                const string baseline = "20260924180050_BootcampCorpseDialogue";
+                context.GetService<IMigrator>().Migrate(baseline);
+                Assert.AreEqual(baseline, context.Database.GetAppliedMigrations().Last());
+                string Definitions() => System.Text.Json.JsonSerializer.Serialize(context.MissionContentDefinitionEntries
+                    .AsNoTracking().OrderBy(row => row.MissionId).ThenBy(row => row.ContentRevision).ToArray());
+                string Rewards() => System.Text.Json.JsonSerializer.Serialize(context.MissionRewardDefinitionEntries
+                    .AsNoTracking().OrderBy(row => row.MissionId).ThenBy(row => row.ContentRevision)
+                    .ThenBy(row => row.RewardId).ToArray());
+                string Actions() => System.Text.Json.JsonSerializer.Serialize(context.MissionActionEntries
+                    .AsNoTracking().Where(row => (byte)row.Kind < 10).OrderBy(row => row.MissionId)
+                    .ThenBy(row => row.ContentRevision).ThenBy(row => row.ObjectiveId)
+                    .ThenBy(row => row.TransitionId).ThenBy(row => row.ActionId)
+                    .Select(row => new
+                    {
+                        row.MissionId, row.ContentRevision, row.ObjectiveId, row.TransitionId, row.ActionId,
+                        row.Requirement, row.Kind, row.Sequence, row.TargetObjectiveId, row.ObjectiveState,
+                        row.RewardId, row.ScenarioId, row.SpawnGroupId, row.IndicatorId, row.NpcPackageId,
+                        row.PlayerFlagId, row.PlayerFlagValue, row.Comment
+                    }).ToArray());
+                var definitions = Definitions();
+                var rewards = Rewards();
+                var actions = Actions();
+                var scenes = Content.MissionContentTestSupport.ReadScenes(context);
+
+                context.Database.Migrate();
+
+                Assert.AreEqual(definitions, Definitions());
+                Assert.AreEqual(rewards, Rewards());
+                Assert.AreEqual(actions, Actions());
+                foreach (var (id, upgraded) in Content.MissionContentTestSupport.ReadScenes(context))
+                {
+                    if (id is 1995 or 2005)
+                    {
+                        Assert.AreEqual("bomb", upgraded.Items.Single().ItemKey);
+                        Assert.AreEqual(11519U, upgraded.Items.Single().ItemTemplateId);
+                        if (id == 2005)
+                            Assert.AreEqual(new Rasa.Missions.Scenes.IssueMissionItemIntent(
+                                "accept-bomb", 2005, "bomb", 11519, 1), upgraded.AcceptanceItems.Single());
+                    }
+                    upgraded.Items = null;
+                    upgraded.AcceptanceItems = null;
+                    Assert.AreEqual(
+                        System.Text.Json.JsonSerializer.Serialize(scenes[id], Rasa.Missions.Content.MissionContentCodec.Options),
+                        System.Text.Json.JsonSerializer.Serialize(upgraded, Rasa.Missions.Content.MissionContentCodec.Options),
+                        $"Mission {id}'s existing scene and dialogue must survive the combined upgrade.");
+                }
+                Assert.AreEqual(3, context.MissionActionEntries.Count(row => (byte)row.Kind >= 10));
+                Assert.IsEmpty(context.Set<MissionRepeatPolicyEntry>().ToArray());
+                var channel = context.Set<MissionChannelPolicyEntry>().Single();
+                Assert.AreEqual(1990U, channel.MissionId);
+                Assert.AreEqual(Rasa.Missions.Definitions.MissionChannel.Mixed, channel.AcceptanceChannel);
+                Assert.AreEqual(Rasa.Missions.Definitions.MissionChannel.Npc, channel.CompletionChannel);
+                CollectionAssert.AreEquivalent(AllMissionIds,
+                    context.MissionContentDefinitionEntries.Where(row => row.Enabled).Select(row => row.MissionId).ToArray());
+                Assert.IsFalse(Validate(LoadSnapshot(context), context).BlocksReadiness);
+                Assert.IsFalse(context.Database.GetPendingMigrations().Any());
+            });
+        }
+
+        [TestMethod]
+        public void RadioChannelMigrationPreservesWorldRowsAndSupportsActuallyNullableNpcIds()
+        {
+            WithDisposableSqliteWorld((context, _) =>
+            {
+                context.GetService<IMigrator>().Migrate("20260925190929_MissionRepeatPolicies");
+                var before = System.Text.Json.JsonSerializer.Serialize(
+                    context.MissionContentDefinitionEntries.AsNoTracking().OrderBy(entry => entry.MissionId)
+                        .ThenBy(entry => entry.ContentRevision).ToArray());
+                context.Database.Migrate();
+                Assert.AreEqual(before, System.Text.Json.JsonSerializer.Serialize(
+                    context.MissionContentDefinitionEntries.AsNoTracking().OrderBy(entry => entry.MissionId)
+                        .ThenBy(entry => entry.ContentRevision).ToArray()));
+                var policies = context.Set<MissionChannelPolicyEntry>().ToArray();
+                Assert.HasCount(1, policies);
+                Assert.AreEqual(1990U, policies[0].MissionId);
+                Assert.AreEqual(Rasa.Missions.Definitions.MissionChannel.Mixed, policies[0].AcceptanceChannel);
+                Assert.AreEqual(Rasa.Missions.Definitions.MissionChannel.Npc, policies[0].CompletionChannel);
+                var snapshot = LoadSnapshot(context);
+                Assert.IsTrue(snapshot.Definitions[1990].Mission.RadioSources.Single().OwnedPrivateMap);
+                Assert.IsTrue(snapshot.Definitions.Values.Where(entry => AllMissionIds.Contains(entry.MissionId))
+                    .All(entry => entry.Mission.RepeatPolicy.Kind == Rasa.Missions.Runtime.MissionRepeatKind.Once &&
+                        entry.Mission.Shareable == false && entry.Mission.RadioCompletable == false));
+                Assert.IsFalse(context.MissionContentDefinitionEntries.Any(entry => entry.Enabled &&
+                    !AllMissionIds.Contains(entry.MissionId)), "No Wilderness definition may be enabled.");
+
+                var initiation = context.MissionContentDefinitionEntries.Single(entry =>
+                    entry.MissionId == 1990 && entry.ContentRevision == BootcampRevision);
+                initiation.GiverId = null;
+                initiation.ReceiverId = null;
+                policies[0].AcceptanceChannel = Rasa.Missions.Definitions.MissionChannel.Radio;
+                policies[0].CompletionChannel = Rasa.Missions.Definitions.MissionChannel.Radio;
+                context.SaveChanges();
+                var radio = LoadSnapshot(context).Definitions[1990].Mission;
+                Assert.IsTrue(radio.IsOperational, radio.OperationalDiagnostic);
+                Assert.IsNull(radio.MissionGiver);
+                Assert.IsNull(radio.MissionReciver);
+                Assert.IsTrue(radio.RadioCompletable);
+                Assert.IsEmpty(new Rasa.Missions.Runtime.MissionRuntime(new[] { radio }).ForNpc(0, 0));
+            });
+        }
+
+        [TestMethod]
+        public void RadioSourceMetadataRejectsAnUnknownMapBeforeContentBecomesReady()
+        {
+            WithDisposableSqliteWorld((context, _) =>
+            {
+                context.Database.Migrate();
+                var policy = context.Set<MissionChannelPolicyEntry>().Single();
+                policy.RadioSources = System.Text.Json.JsonSerializer.Serialize(new[]
+                {
+                    new Rasa.Missions.Definitions.MissionOfferSourceDefinition(
+                        Rasa.Missions.Definitions.MissionOfferSourceKind.ServerEvent, "fixture.arrival", uint.MaxValue)
+                });
+                context.SaveChanges();
+                var report = Validate(LoadSnapshot(context), context);
+                Assert.IsTrue(report.BlocksReadiness);
+                Assert.IsTrue(report.Diagnostics.Any(diagnostic => diagnostic.MissionId == 1990 &&
+                    diagnostic.Code == "missing-radio-source-map"));
+            });
+        }
+
+        [TestMethod]
+        [DataRow(false)]
+        [DataRow(true)]
+        public void RadioSchemaChangesKeepDataInASubsequentMigration(bool mysql)
+        {
+            Migration schema = mysql
+                ? new Rasa.Migrations.MySqlWorld.MissionRadioChannels()
+                : new Rasa.Migrations.SqliteWorld.MissionRadioChannels();
+            Assert.IsEmpty(schema.UpOperations.OfType<Microsoft.EntityFrameworkCore.Migrations.Operations.SqlOperation>(),
+                "SQLite defers the nullable-ID table rebuild; seed data only in a later migration.");
+        }
+
+        [TestMethod]
         public void SqliteBootcampMissionContentLoadsAndValidatesAgainstFreshMigratedDatabase()
         {
             WithDisposableSqliteWorld((context, _) =>
@@ -67,7 +205,7 @@ namespace Rasa.Test.Missions
                 Assert.AreEqual(1250U, snapshot.Definitions[1992].Rewards[1].Experience);
                 Assert.AreEqual(200U, snapshot.Definitions[1992].Rewards[1].Credits);
                 Assert.AreEqual(5000U, snapshot.Definitions[1994].Rewards[1].Experience);
-                Assert.AreEqual(0U, snapshot.Definitions[1994].Rewards[1].Credits);
+                Assert.AreEqual(200U, snapshot.Definitions[1994].Rewards[1].Credits);
                 Assert.AreEqual(MissionContentRequirement.Required, snapshot.Definitions[2005].Requirement);
             });
         }
@@ -92,8 +230,16 @@ namespace Rasa.Test.Missions
                     objective.Requirement == MissionContentRequirement.Required));
                 Assert.IsTrue(retryMission.Transitions.Values.All(transition =>
                     transition.Requirement == MissionContentRequirement.Required &&
-                    transition.Triggers.All(trigger => trigger.Requirement == MissionContentRequirement.Required) &&
-                    transition.Actions.All(action => action.Requirement == MissionContentRequirement.Required)));
+                    transition.Triggers.All(trigger => trigger.Requirement == MissionContentRequirement.Required)));
+                CollectionAssert.AreEqual(
+                    new[] { (4U, 1U, 3U, MissionContentRequirement.Optional, MissionActionKind.GrantReward, (uint?)1U) },
+                    retryMission.Transitions.Values.SelectMany(transition => transition.Actions)
+                        .Where(action => action.Requirement != MissionContentRequirement.Required)
+                        .Select(action => (action.ObjectiveId, action.TransitionId, action.ActionId,
+                            action.Requirement, action.Kind, action.RewardId)).ToArray(),
+                    "The later finale migration authors an optional reward reference, not optional retry progress.");
+                Assert.AreEqual(MissionContentRequirement.Optional, retryMission.Rewards[1].Requirement);
+                Assert.AreEqual(200U, retryMission.Rewards[1].Credits);
                 Assert.IsTrue(retryMission.Scenarios.Values.All(scenario =>
                     scenario.Requirement == MissionContentRequirement.Required &&
                     scenario.Steps.All(step => step.Requirement == MissionContentRequirement.Required)));
@@ -376,9 +522,11 @@ namespace Rasa.Test.Missions
                 Assert.AreEqual(
                     MissionEvidenceSourceKind.Reconstruction,
                     reconstructionEvidence.SourceKind);
-                StringAssert.Contains(
-                    reconstructionEvidence.ReconstructionNote,
-                    "no client objective 10 exists");
+                Assert.IsFalse(snapshot.Definitions[1995].Objectives.ContainsKey(10));
+                var corpse = Content.MissionContentTestSupport.ReadScenes(context)[1995].Actors["bootcamp-conrad-corpse"];
+                Assert.AreEqual(21081U, corpse.TemplateId);
+                Assert.AreEqual(new Rasa.Missions.Scenes.SceneObjectConversation(1995, 3, 2584, 2), corpse.Conversation,
+                    "Native objective 2 is the corpse dialogue alias; Continue advances bomb objective 3.");
             });
         }
 
@@ -418,9 +566,20 @@ namespace Rasa.Test.Missions
                     }
 
                     CollectionAssert.AreEquivalent(
-                        definition.Scenarios.Keys.OrderBy(id => id).ToArray(),
+                        missionId == 1995 ? new uint[] { 2, 3, 4, 5, 6, 7 } : definition.Scenarios.Keys.ToArray(),
                         reachableScenarioIds.OrderBy(id => id).ToArray(),
                         $"Mission {missionId} contains unreachable scenarios.");
+                    if (missionId == 1995)
+                    {
+                        CollectionAssert.AreEquivalent(new uint[] { 1 },
+                            definition.Scenarios.Keys.Except(reachableScenarioIds).ToArray());
+                        var retired = Content.MissionContentTestSupport.ReadScenes(context)[1995].Sequences[1];
+                        Assert.HasCount(1, retired.World);
+                        Assert.AreEqual(new Rasa.Missions.Scenes.RemoveActorIntent(
+                            "retire-scout-survivor", "group-1-spawn-1-0"), retired.World.Single());
+                        Assert.IsEmpty(retired.Character);
+                        Assert.IsEmpty(retired.Timers);
+                    }
                 }
 
                 var retryPrerequisite = snapshot.Definitions[2005].Prerequisites.Single();
@@ -461,7 +620,7 @@ namespace Rasa.Test.Missions
                     context.MissionScenarioStepEntries.AsNoTracking().Single(step =>
                         step.MissionId == 1992 && step.ScenarioId == 2 && step.StepId == 1).Kind);
 
-                migrator.Migrate();
+                migrator.Migrate("20260921183000_BootcampCrateLoot");
 
                 var steps = context.MissionScenarioStepEntries.AsNoTracking().Where(step =>
                     step.MissionId == 1992 && step.ScenarioId == 2).ToArray();
@@ -472,7 +631,6 @@ namespace Rasa.Test.Missions
                     step.Kind == MissionScenarioStepKind.GrantRewardPackage ||
                     step.Kind == MissionScenarioStepKind.DespawnDynamicObject));
                 Assert.AreEqual(2, steps.Count(step => step.Kind == MissionScenarioStepKind.GrantSkillAbility));
-                Assert.IsFalse(Validate(LoadSnapshot(context), context).BlocksReadiness);
 
                 migrator.Migrate(previous);
 
@@ -543,7 +701,7 @@ namespace Rasa.Test.Missions
             {
                 var migrator = context.GetService<IMigrator>();
                 migrator.Migrate("20260921183000_BootcampCrateLoot");
-                migrator.Migrate();
+                migrator.Migrate("20260921203000_BootcampPracticeTargets");
                 var triggers = context.MissionTriggerEntries.AsNoTracking()
                     .Where(trigger => trigger.MissionId == 1992 &&
                         (trigger.ObjectiveId == 3 || trigger.ObjectiveId == 8)).ToArray();
@@ -557,7 +715,6 @@ namespace Rasa.Test.Missions
                 Assert.AreEqual(2, steps.Length);
                 Assert.IsTrue(steps.All(step => step.Kind == MissionScenarioStepKind.EnableInteraction &&
                     step.EntityClassId == 29365 && step.SpawnGroupId == null));
-                Assert.IsFalse(Validate(LoadSnapshot(context), context).BlocksReadiness);
 
                 migrator.Migrate("20260921183000_BootcampCrateLoot");
                 triggers = context.MissionTriggerEntries.AsNoTracking()
@@ -605,11 +762,11 @@ namespace Rasa.Test.Missions
                         entry.PosX, entry.PosY, entry.PosZ, entry.Radius)).ToArray(),
                     after.Select(entry => (entry.MissionId, entry.ObjectiveId, entry.IndicatorId,
                         entry.PosX, entry.PosY, entry.PosZ, entry.Radius)).ToArray());
-                Assert.IsFalse(Validate(LoadSnapshot(context), context).BlocksReadiness);
-
                 migrator.Migrate("20260921203000_BootcampPracticeTargets");
                 Assert.IsTrue(context.MissionIndicatorEntries.AsNoTracking()
                     .Where(entry => AllMissionIds.Contains(entry.MissionId)).All(entry => entry.Show3DEffect));
+                migrator.Migrate();
+                Assert.IsFalse(Validate(LoadSnapshot(context), context).BlocksReadiness);
             });
         }
 
@@ -638,7 +795,7 @@ namespace Rasa.Test.Missions
                 Assert.AreEqual(0U, context.Set<CreatureEntry>().AsNoTracking()
                     .Single(entry => entry.Id == 510203).RunSpeed);
 
-                migrator.Migrate();
+                migrator.Migrate("20260921231500_BootcampWorldSetup");
 
                 var after = context.SpawnPoolEntries.AsNoTracking().Single(entry => entry.Id == 510206);
                 Assert.AreEqual(120.059, after.PosY, 0.001);
@@ -648,7 +805,6 @@ namespace Rasa.Test.Missions
                 Assert.AreEqual(before.Creature1Id, after.Creature1Id);
                 Assert.AreEqual(7U, context.Set<CreatureEntry>().AsNoTracking()
                     .Single(entry => entry.Id == 510203).RunSpeed);
-                Assert.IsFalse(Validate(LoadSnapshot(context), context).BlocksReadiness);
 
                 migrator.Migrate("20260921204500_BootcampObjectiveIndicators");
 
@@ -656,6 +812,8 @@ namespace Rasa.Test.Missions
                     .Single(entry => entry.Id == 510206).PosY);
                 Assert.AreEqual(0U, context.Set<CreatureEntry>().AsNoTracking()
                     .Single(entry => entry.Id == 510203).RunSpeed);
+                migrator.Migrate();
+                Assert.IsFalse(Validate(LoadSnapshot(context), context).BlocksReadiness);
             });
         }
 
@@ -688,7 +846,7 @@ namespace Rasa.Test.Missions
                 var beforeIndicator = (indicator.ObjectiveId, indicator.PosX, indicator.PosY,
                     indicator.PosZ, indicator.Radius, indicator.Show3DEffect);
 
-                migrator.Migrate();
+                migrator.Migrate("20260922004500_BootcampCaptureTheFlag");
 
                 area = context.MissionAreaEntries.AsNoTracking()
                     .Single(entry => entry.MissionId == 1994 && entry.AreaId == 439);
@@ -708,7 +866,6 @@ namespace Rasa.Test.Missions
                 Assert.AreEqual(3, context.MissionSpawnEntries.Count(entry => entry.MissionId == 1994 && entry.SpawnGroupId == 1));
                 Assert.IsTrue(context.MissionSpawnGroupEntries.AsNoTracking()
                     .Single(entry => entry.MissionId == 1994 && entry.SpawnGroupId == 1).Enabled);
-                Assert.IsFalse(Validate(LoadSnapshot(context), context).BlocksReadiness);
 
                 migrator.Migrate("20260921231500_BootcampWorldSetup");
 
@@ -721,6 +878,8 @@ namespace Rasa.Test.Missions
                 Assert.AreEqual(39U, restored.CreatureId);
                 Assert.AreEqual(2U, restored.Quantity);
                 Assert.AreEqual(0U, context.CreatureEntries.AsNoTracking().Single(entry => entry.Id == 510210).Action1);
+                migrator.Migrate();
+                Assert.IsFalse(Validate(LoadSnapshot(context), context).BlocksReadiness);
             });
         }
 
@@ -746,20 +905,23 @@ namespace Rasa.Test.Missions
             {
                 var migrator = context.GetService<IMigrator>();
                 migrator.Migrate("20260921231500_BootcampWorldSetup");
-                uint? FirstGreeting() => context.MissionActionEntries.AsNoTracking().Single(entry =>
+                uint? FirstGreeting() => context.MissionActionEntries.AsNoTracking().Where(entry =>
                     entry.MissionId == 1990 && entry.ContentRevision == BootcampRevision &&
-                    entry.ObjectiveId == 1 && entry.Kind == MissionActionKind.ShowAmbientConversation).NpcPackageId;
+                    entry.ObjectiveId == 1 && entry.Kind == MissionActionKind.ShowAmbientConversation)
+                    .Select(entry => entry.NpcPackageId).Single();
                 Assert.AreEqual(1635U, FirstGreeting());
 
-                migrator.Migrate();
+                migrator.Migrate("20260922013000_BootcampLightningCue");
                 Assert.AreEqual(1634U, FirstGreeting());
-                Assert.AreEqual(1636U, context.MissionActionEntries.AsNoTracking().Single(entry =>
+                Assert.AreEqual(1636U, context.MissionActionEntries.AsNoTracking().Where(entry =>
                     entry.MissionId == 1990 && entry.ContentRevision == BootcampRevision &&
-                    entry.ObjectiveId == 2 && entry.Kind == MissionActionKind.ShowAmbientConversation).NpcPackageId);
-                Assert.IsFalse(Validate(LoadSnapshot(context), context).BlocksReadiness);
+                    entry.ObjectiveId == 2 && entry.Kind == MissionActionKind.ShowAmbientConversation)
+                    .Select(entry => entry.NpcPackageId).Single());
 
                 migrator.Migrate("20260921231500_BootcampWorldSetup");
                 Assert.AreEqual(1635U, FirstGreeting());
+                migrator.Migrate();
+                Assert.IsFalse(Validate(LoadSnapshot(context), context).BlocksReadiness);
             });
         }
 

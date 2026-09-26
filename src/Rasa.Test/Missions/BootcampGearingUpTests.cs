@@ -80,11 +80,11 @@ namespace Rasa.Test.Missions
 
             harness.SeedMission(harness.Client.Player.Id, BootcampRuntimeTestHarness.MissionInitiation, (uint)MissionState.Completed, false);
 
-            Assert.IsFalse(harness.Manager.TryAcceptNpcMission(
+            Assert.IsFalse(harness.Manager.AcceptOfferedMission(
                 harness.Client,
                 delessio.EntityId,
                 BootcampRuntimeTestHarness.MissionGearingUp));
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(
                 harness.Client,
                 mcAllister.EntityId,
                 BootcampRuntimeTestHarness.MissionGearingUp));
@@ -108,7 +108,7 @@ namespace Rasa.Test.Missions
                 (9U, MissionObjectiveState.Inactive),
                 (8U, MissionObjectiveState.Inactive),
                 (7U, MissionObjectiveState.Inactive));
-            Assert.IsFalse(harness.Manager.TryAcceptNpcMission(
+            Assert.IsFalse(harness.Manager.AcceptOfferedMission(
                 harness.Client,
                 mcAllister.EntityId,
                 BootcampRuntimeTestHarness.MissionGearingUp));
@@ -116,13 +116,13 @@ namespace Rasa.Test.Missions
                 0,
                 harness.Context.Drain().OfType<MissionGainedPacket>().Count());
 
-            Assert.IsFalse(harness.Manager.TryCompleteNpcObjective(
+            Assert.IsFalse(harness.Manager.CompleteOfferedObjective(
                 harness.Client,
                 hartmann.EntityId,
                 BootcampRuntimeTestHarness.MissionGearingUp,
                 4,
                 1));
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+            Assert.IsTrue(harness.Manager.CompleteOfferedObjective(
                 harness.Client,
                 delessio.EntityId,
                 BootcampRuntimeTestHarness.MissionGearingUp,
@@ -188,7 +188,7 @@ namespace Rasa.Test.Missions
                 (8U, MissionObjectiveState.Inactive),
                 (7U, MissionObjectiveState.Inactive));
 
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+            Assert.IsTrue(harness.Manager.CompleteOfferedObjective(
                 harness.Client,
                 BootcampRuntimeTestHarness.FindNpcByPackage(
                     harness.BootcampMap,
@@ -196,7 +196,7 @@ namespace Rasa.Test.Missions
                 BootcampRuntimeTestHarness.MissionGearingUp,
                 5,
                 1));
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+            Assert.IsTrue(harness.Manager.CompleteOfferedObjective(
                 harness.Client,
                 BootcampRuntimeTestHarness.FindNpcByPackage(
                     harness.BootcampMap,
@@ -235,11 +235,11 @@ namespace Rasa.Test.Missions
                 BootcampRuntimeTestHarness.CorporalDeSimonePackageId);
 
             harness.SeedMission(harness.Client.Player.Id, BootcampRuntimeTestHarness.MissionInitiation, (uint)MissionState.Completed, false);
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(
                 harness.Client,
                 mcAllister.EntityId,
                 BootcampRuntimeTestHarness.MissionGearingUp));
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+            Assert.IsTrue(harness.Manager.CompleteOfferedObjective(
                 harness.Client,
                 delessio.EntityId,
                 BootcampRuntimeTestHarness.MissionGearingUp,
@@ -249,13 +249,13 @@ namespace Rasa.Test.Missions
             var inventory = new InventoryManager(harness.Context, harness.Manager);
             PrepareEquipping(harness);
             Assert.IsTrue(RecordTemplateEquipProgress(harness, 13066));
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+            Assert.IsTrue(harness.Manager.CompleteOfferedObjective(
                 harness.Client,
                 delessio.EntityId,
                 BootcampRuntimeTestHarness.MissionGearingUp,
                 5,
                 1));
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+            Assert.IsTrue(harness.Manager.CompleteOfferedObjective(
                 harness.Client,
                 hartmann.EntityId,
                 BootcampRuntimeTestHarness.MissionGearingUp,
@@ -272,7 +272,7 @@ namespace Rasa.Test.Missions
                 MissionObjectiveState.Completed,
                 harness.Client.Player.Missions[BootcampRuntimeTestHarness.MissionGearingUp].Objectives[3].State);
 
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+            Assert.IsTrue(harness.Manager.CompleteOfferedObjective(
                 harness.Client,
                 hartmann.EntityId,
                 BootcampRuntimeTestHarness.MissionGearingUp,
@@ -314,7 +314,7 @@ namespace Rasa.Test.Missions
                     PracticeTargetManager.EntityClassId,
                     (uint)ActionId.AaRecruitLightning)));
 
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+            Assert.IsTrue(harness.Manager.CompleteOfferedObjective(
                 harness.Client,
                 BootcampRuntimeTestHarness.FindNpcByPackage(
                     harness.BootcampMap,
@@ -327,7 +327,7 @@ namespace Rasa.Test.Missions
             var currentDeSimone = BootcampRuntimeTestHarness.FindNpcByPackage(
                 harness.BootcampMap,
                 BootcampRuntimeTestHarness.CorporalDeSimonePackageId);
-            Assert.IsTrue(harness.Manager.TryCompleteNpcMission(
+            Assert.IsTrue(harness.Manager.CompleteOfferedMission(
                 harness.Client,
                 currentDeSimone.EntityId,
                 BootcampRuntimeTestHarness.MissionGearingUp,
@@ -337,7 +337,7 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(beforeReward.Experience + 1250U, afterReward.Experience);
             Assert.AreEqual(beforeReward.Credits + 200, afterReward.Credits);
 
-            Assert.IsFalse(harness.Manager.TryRewardNpcMission(
+            Assert.IsFalse(harness.Manager.RewardOfferedMission(
                 harness.Client,
                 currentDeSimone.EntityId,
                 BootcampRuntimeTestHarness.MissionGearingUp,
@@ -363,13 +363,13 @@ namespace Rasa.Test.Missions
                 (uint)MissionState.Completed,
                 false);
 
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(
                 harness.Client,
                 mcAllister.EntityId,
                 BootcampRuntimeTestHarness.MissionGearingUp));
             harness.Drain();
 
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+            Assert.IsTrue(harness.Manager.CompleteOfferedObjective(
                 harness.Client,
                 delessio.EntityId,
                 BootcampRuntimeTestHarness.MissionGearingUp,
@@ -753,7 +753,7 @@ namespace Rasa.Test.Missions
             GearingUpActors actors,
             MissionBoundary stage)
         {
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(
                 harness.Client,
                 actors.McAllister.EntityId,
                 BootcampRuntimeTestHarness.MissionGearingUp));
@@ -761,7 +761,7 @@ namespace Rasa.Test.Missions
             if (stage == MissionBoundary.Accepted)
                 return;
 
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+            Assert.IsTrue(harness.Manager.CompleteOfferedObjective(
                 harness.Client,
                 actors.Delessio.EntityId,
                 BootcampRuntimeTestHarness.MissionGearingUp,
@@ -779,7 +779,7 @@ namespace Rasa.Test.Missions
             if (stage == MissionBoundary.AfterEquip)
                 return;
 
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+            Assert.IsTrue(harness.Manager.CompleteOfferedObjective(
                 harness.Client,
                 actors.Delessio.EntityId,
                 BootcampRuntimeTestHarness.MissionGearingUp,
@@ -788,7 +788,7 @@ namespace Rasa.Test.Missions
             if (stage == MissionBoundary.AfterDelessioFollowUp)
                 return;
 
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+            Assert.IsTrue(harness.Manager.CompleteOfferedObjective(
                 harness.Client,
                 actors.Hartmann.EntityId,
                 BootcampRuntimeTestHarness.MissionGearingUp,
@@ -805,7 +805,7 @@ namespace Rasa.Test.Missions
             if (stage == MissionBoundary.AfterFirearmDummy)
                 return;
 
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+            Assert.IsTrue(harness.Manager.CompleteOfferedObjective(
                 harness.Client,
                 actors.Hartmann.EntityId,
                 BootcampRuntimeTestHarness.MissionGearingUp,
@@ -822,7 +822,7 @@ namespace Rasa.Test.Missions
             if (stage == MissionBoundary.AfterLightningDummy)
                 return;
 
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+            Assert.IsTrue(harness.Manager.CompleteOfferedObjective(
                 harness.Client,
                 actors.Hartmann.EntityId,
                 BootcampRuntimeTestHarness.MissionGearingUp,

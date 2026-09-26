@@ -31,7 +31,7 @@ namespace Rasa.Test.Missions.Scenes
                 MissionProgressRule.CompleteOnScenarioEvent(321, 1, 1), utcNow: () => now);
             context.Manager.Scenes.Bind(321, "data.sequence", TimedSignal());
             var giver = context.AddNpc(77);
-            Assert.IsTrue(context.Manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            Assert.IsTrue(context.Manager.AcceptOfferedMission(context.Client, giver.EntityId, 321));
             context.Manager.PublishInitialState(context.Client);
             var maps = Maps(context);
             context.Client.State = ClientState.Disconnected;
@@ -56,7 +56,7 @@ namespace Rasa.Test.Missions.Scenes
             var giver = context.AddNpc(77);
             giver.State = CharacterState.Idle;
             giver.AppearanceData = new Dictionary<EquipmentData, AppearanceData>();
-            Assert.IsTrue(context.Manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            Assert.IsTrue(context.Manager.AcceptOfferedMission(context.Client, giver.EntityId, 321));
             context.Manager.PublishInitialState(context.Client);
             var maps = Maps(context);
             var destination = new MapChannel
@@ -95,7 +95,7 @@ namespace Rasa.Test.Missions.Scenes
                 Position = giver.Position
             };
             context.Map.SpawnPools.Add(giver.SpawnPool);
-            Assert.IsTrue(context.Manager.TryAcceptNpcMission(member, giver.EntityId, 321));
+            Assert.IsTrue(context.Manager.AcceptOfferedMission(member, giver.EntityId, 321));
             using var party = new GroupMissionCreditTests.PartyScope(context.Client, member);
             var sequence = TimedSignal();
             var bindings = new SceneBindings(sequence.Release,
@@ -103,7 +103,7 @@ namespace Rasa.Test.Missions.Scenes
                 new Dictionary<string, SceneRoute>(), sequence.Sequences.ToDictionary(entry => entry.Key, entry => entry.Value));
             context.Manager.Scenes.Bind(321, "data.sequence", bindings);
             context.Manager.PublicActors.Bind(new PublicEncounterBinding(321, 77, "guide", "data.sequence", "Continue", true));
-            Assert.IsTrue(context.Manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            Assert.IsTrue(context.Manager.AcceptOfferedMission(context.Client, giver.EntityId, 321));
             context.Manager.PublishInitialState(context.Client);
             context.Client.State = ClientState.Disconnected;
             Maps(context).CleanupDisconnected(context.Client);
@@ -125,7 +125,7 @@ namespace Rasa.Test.Missions.Scenes
                 MissionProgressRule.CompleteOnScenarioEvent(321, 1, 1), utcNow: () => now);
             context.Manager.Scenes.Bind(321, "data.sequence", TimedSignal(SceneClockPolicy.ActiveScene));
             var giver = context.AddNpc(77);
-            Assert.IsTrue(context.Manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            Assert.IsTrue(context.Manager.AcceptOfferedMission(context.Client, giver.EntityId, 321));
             context.Manager.PublishInitialState(context.Client);
             context.BeforeSave = database =>
             {
@@ -158,7 +158,7 @@ namespace Rasa.Test.Missions.Scenes
             var giver = context.AddNpc(77);
             giver.State = CharacterState.Idle;
             giver.AppearanceData = new();
-            Assert.IsTrue(context.Manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            Assert.IsTrue(context.Manager.AcceptOfferedMission(context.Client, giver.EntityId, 321));
             context.Manager.PublishInitialState(context.Client);
             context.BeforeSave = database =>
             {

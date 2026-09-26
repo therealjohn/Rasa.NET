@@ -42,7 +42,7 @@ namespace Rasa.Test.Missions
                 classId);
             OverrideManifestationSingleton(context);
 
-            Assert.IsTrue(manager.TryAcceptNpcMission(
+            Assert.IsTrue(manager.AcceptOfferedMission(
                 context.Client,
                 giver.EntityId,
                 321));
@@ -82,7 +82,7 @@ namespace Rasa.Test.Missions
             var inventory = new InventoryManager(context, manager);
             OverrideManifestationSingleton(context);
 
-            Assert.IsTrue(manager.TryAcceptNpcMission(
+            Assert.IsTrue(manager.AcceptOfferedMission(
                 context.Client,
                 giver.EntityId,
                 321));

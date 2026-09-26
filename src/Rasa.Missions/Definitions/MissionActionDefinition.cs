@@ -25,6 +25,8 @@ namespace Rasa.Structures.Missions
         public uint? PlayerFlagValue { get; init; }
         public uint? NpcPackageId { get; init; }
         public string Comment { get; init; }
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public global::Rasa.Missions.Scenes.CharacterIntent ItemIntent { get; init; }
 
         public bool HasDefinedKind() =>
             Enum.IsDefined(typeof(MissionActionKind), Kind);

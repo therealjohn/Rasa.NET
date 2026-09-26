@@ -22,7 +22,7 @@ namespace Rasa.Game.Missions.Integration
                 if (document.Script != null)
                     scenes.Bind(binding.Key, document.Script, document.Bindings(catalog.Missions[binding.Key].ContentRevision));
                 if (document.PublicEncounter != null)
-                    actors.Bind(document.PublicEncounter);
+                    actors.Bind(document.PublicEncounter, document.Actors[document.PublicEncounter.Role].GameplayPolicy);
             }
             foreach (var experience in catalog.Experiences)
             {

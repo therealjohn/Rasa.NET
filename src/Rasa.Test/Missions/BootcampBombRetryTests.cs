@@ -33,7 +33,7 @@ namespace Rasa.Test.Missions
                 harness.BootcampMap,
                 BootcampRuntimeTestHarness.CaptainYoungbloodCreatureId);
             Assert.IsNotNull(youngblood);
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(
                 harness.Client,
                 youngblood.EntityId,
                 2005));
@@ -77,7 +77,7 @@ namespace Rasa.Test.Missions
 
             harness.Client.ReloadGameAccountEntry();
 
-            Assert.IsFalse(harness.Manager.TryAcceptNpcMission(
+            Assert.IsFalse(harness.Manager.AcceptOfferedMission(
                 harness.Client,
                 youngblood.EntityId,
                 2005));
@@ -96,7 +96,7 @@ namespace Rasa.Test.Missions
                 harness.BootcampMap,
                 BootcampRuntimeTestHarness.CaptainYoungbloodCreatureId);
             Assert.IsNotNull(youngblood);
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(
                 harness.Client,
                 youngblood.EntityId,
                 2005));
@@ -141,7 +141,7 @@ namespace Rasa.Test.Missions
                 harness.BootcampMap,
                 BootcampRuntimeTestHarness.CaptainYoungbloodCreatureId);
             Assert.IsNotNull(youngblood);
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(
                 harness.Client,
                 youngblood.EntityId,
                 2005));
@@ -194,7 +194,7 @@ namespace Rasa.Test.Missions
                 dropship,
                 expectedDeadlineState: CharacterMissionDeadlineState.Cancelled);
 
-            Assert.IsFalse(harness.Manager.TryAcceptNpcMission(
+            Assert.IsFalse(harness.Manager.AcceptOfferedMission(
                 harness.Client,
                 youngblood.EntityId,
                 2005));
@@ -220,7 +220,7 @@ namespace Rasa.Test.Missions
                 dropship,
                 expectedDeadlineState: CharacterMissionDeadlineState.Cancelled);
 
-            Assert.IsFalse(harness.Manager.TryAcceptNpcMission(
+            Assert.IsFalse(harness.Manager.AcceptOfferedMission(
                 harness.Client,
                 youngblood.EntityId,
                 2005));
@@ -236,7 +236,7 @@ namespace Rasa.Test.Missions
 
             harness.SeedMission(1, 1994, (uint)MissionState.Completed, completeable: true);
 
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(
                 harness.Client,
                 youngblood.EntityId,
                 1995));
@@ -272,7 +272,7 @@ namespace Rasa.Test.Missions
                 harness.BootcampMap,
                 BootcampRuntimeTestHarness.CaptainYoungbloodCreatureId)
                 ?? throw new AssertFailedException("Missing Captain Youngblood.");
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(
                 harness.Client,
                 youngblood.EntityId,
                 2005));

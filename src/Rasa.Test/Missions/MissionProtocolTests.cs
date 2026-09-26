@@ -21,6 +21,17 @@ namespace Rasa.Test.Missions
     public class MissionProtocolTests
     {
         [TestMethod]
+        public void NativeRadioCompletionIsRegisteredWithoutAnNpcField()
+        {
+            if (Logger.Config == null)
+                Logger.UpdateConfig(new Logger.LoggerConfig());
+            var packetType = new PacketRouter<ClientPacketHandler, GameOpcode>()
+                .GetPacketType(GameOpcode.CompleteRadioMission);
+            Assert.AreEqual(432, (int)GameOpcode.CompleteRadioMission);
+            Assert.AreEqual("Rasa.Packets.MapChannel.Client.CompleteRadioMissionPacket", packetType?.FullName);
+        }
+
+        [TestMethod]
         public void NullableMissionFieldsAcceptNoneOrIntAndRejectBoolLongAndWrongTupleSize()
         {
             var none = Decode<CompleteNPCMissionPacket>(WritePayload(writer =>
@@ -60,6 +71,26 @@ namespace Rasa.Test.Missions
                 writer.WriteUInt(1990);
             }));
             Assert.AreEqual(1990U, radio.MissionId);
+
+            var radioCompletion = Decode<CompleteRadioMissionPacket>(WritePayload(writer =>
+            {
+                writer.WriteTuple(3);
+                writer.WriteUInt(731);
+                writer.WriteInt(1);
+                writer.WriteNoneStruct();
+            }));
+            Assert.AreEqual(731U, radioCompletion.MissionId);
+            Assert.AreEqual(1, radioCompletion.SelectionIdx);
+            Assert.IsNull(radioCompletion.Rating);
+            var ratedRadio = Decode<CompleteRadioMissionPacket>(WritePayload(writer =>
+            {
+                writer.WriteTuple(3);
+                writer.WriteUInt(731);
+                writer.WriteNoneStruct();
+                writer.WriteInt(2);
+            }));
+            Assert.IsNull(ratedRadio.SelectionIdx);
+            Assert.AreEqual(2, ratedRadio.Rating);
 
             var objective = Decode<CompleteNPCObjectivePacket>(WritePayload(writer =>
             {
@@ -106,6 +137,21 @@ namespace Rasa.Test.Missions
                         writer.WriteNoneStruct();
                         invalidNullable(writer);
                     })));
+                foreach (var invalidSelection in new[] { true, false })
+                    Assert.ThrowsExactly<InvalidDataException>(() =>
+                        Decode<CompleteRadioMissionPacket>(WritePayload(writer =>
+                        {
+                            writer.WriteTuple(3);
+                            writer.WriteUInt(731);
+                            if (invalidSelection)
+                                invalidNullable(writer);
+                            else
+                                writer.WriteNoneStruct();
+                            if (invalidSelection)
+                                writer.WriteNoneStruct();
+                            else
+                                invalidNullable(writer);
+                        })));
             }
 
             AssertWrongTuple<AssignNPCMissionPacket>(1);
@@ -113,6 +159,8 @@ namespace Rasa.Test.Missions
             AssertWrongTuple<AssignRadioMissionPacket>(2);
             AssertWrongTuple<CompleteNPCObjectivePacket>(3);
             AssertWrongTuple<CompleteNPCMissionPacket>(3);
+            AssertWrongTuple<CompleteRadioMissionPacket>(2);
+            AssertWrongTuple<CompleteRadioMissionPacket>(4);
             AssertWrongTuple<RewardNPCMissionPacket>(3);
             AssertWrongTuple<AbandonMissionPacket>(2);
         }
@@ -128,6 +176,7 @@ namespace Rasa.Test.Missions
                 (new CompleteNPCMissionPacket(), GameOpcode.CompleteNPCMission, 430, typeof(CompleteNPCMissionPacket)),
                 (new CompleteNPCObjectivePacket(), GameOpcode.CompleteNPCObjective, 431,
                     typeof(CompleteNPCObjectivePacket)),
+                (new CompleteRadioMissionPacket(), GameOpcode.CompleteRadioMission, 432, typeof(CompleteRadioMissionPacket)),
                 (new RewardNPCMissionPacket(), GameOpcode.RewardNPCMission, 540, typeof(RewardNPCMissionPacket))
             };
             var router = new PacketRouter<ClientPacketHandler, GameOpcode>();
@@ -226,6 +275,8 @@ namespace Rasa.Test.Missions
                         (firstObjectiveNpc, 5U, 11U),
                         (secondObjectiveNpc, 9U, 12U)
                     })
+                    {
+                        Assert.IsTrue(context.Manager.OpenNpcConversation(context.Client, npc.EntityId));
                         router.RoutePacket(handler, new CompleteNPCObjectivePacket
                         {
                             EntityId = npc.EntityId,
@@ -233,6 +284,7 @@ namespace Rasa.Test.Missions
                             ObjectiveId = objectiveId,
                             PlayerFlagId = flagId
                         });
+                    }
                     Assert.IsTrue(context.Client.Player.Missions[missionId].Completeable);
                     Assert.AreEqual(before, context.ReadRewardTotals());
                 }

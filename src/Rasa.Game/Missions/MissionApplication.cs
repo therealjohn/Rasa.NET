@@ -8,8 +8,12 @@ using Rasa.Missions.Runtime;
 using ProgressCandidate = Rasa.Missions.Runtime.MissionProgressCandidate;
 using System.Text.Json;
 using Rasa.Game.Missions.Content;
+using Rasa.Game.Missions.Integration;
 using Rasa.Repositories.World;
 using Rasa.Game.Missions.Persistence;
+using Rasa.Game.Missions.Protocol;
+using Rasa.Game.Missions;
+using Rasa.Missions.Definitions;
 
 namespace Rasa.Managers
 {
@@ -47,9 +51,12 @@ namespace Rasa.Managers
         internal int LastRuleEvaluations => _runtime.LastRuleEvaluations;
         internal long TotalRuleEvaluations => _runtime.TotalRuleEvaluations;
         public Game.Missions.World.PublicActorLeaseService PublicActors { get; }
+        public MissionOfferAuthority Offers { get; }
+        public MissionSharing Sharing { get; }
         internal Game.Missions.SceneApplication Scenes { get; }
         internal Game.Missions.GroupCreditService Credit { get; }
         internal Game.Missions.MissionObjectConversations ObjectConversations { get; }
+        internal Game.Missions.Integration.MissionInteractionPolicy Interactions { get; }
         internal Rasa.Missions.Definitions.ActorPolicyCatalog ActorPolicies { get; } = new();
         internal IMissionSceneHost ScenarioService => _scenarioService;
         internal Action<Item> BeforeRewardItemPublication => _beforeRewardItemPublication;
@@ -134,7 +141,10 @@ namespace Rasa.Managers
             _beforeRewardItemPublication = beforeRewardItemPublication;
             _beforeMissionPacketPublication = beforeMissionPacketPublication;
             _utcNow = utcNow ?? deadlineService?.Clock ?? (() => DateTime.UtcNow);
-            _protocol = new MissionProtocolAdapter(gameUnitOfWorkFactory, _catalog, _journal, _utcNow, beforeMissionPacketPublication);
+            Offers = new MissionOfferAuthority(gameUnitOfWorkFactory, this, _utcNow);
+            Sharing = new MissionSharing(gameUnitOfWorkFactory, this);
+            _protocol = new MissionProtocolAdapter(gameUnitOfWorkFactory, _catalog, _journal, _utcNow,
+                beforeMissionPacketPublication, Sharing.CanShare);
             _deadlineService = deadlineService ?? new MissionDeadlineService(
                 () => _gameUnitOfWorkFactory,
                 () => this,
@@ -145,6 +155,7 @@ namespace Rasa.Managers
                 _manifestationManager);
             Scenes = new Game.Missions.SceneApplication(_gameUnitOfWorkFactory, this, _manifestationManager, utcNow: _utcNow);
             Credit = new Game.Missions.GroupCreditService(_gameUnitOfWorkFactory, this);
+            Interactions = new Game.Missions.Integration.MissionInteractionPolicy(this);
             ObjectConversations = new Game.Missions.MissionObjectConversations(_gameUnitOfWorkFactory, this);
             Game.Missions.Integration.MissionRuntimeComposition.Bind(_catalog, Scenes, PublicActors, ActorPolicies);
         }
@@ -173,6 +184,19 @@ namespace Rasa.Managers
             _protocol.BuildPublishedMissionInfo(player, definition, mission);
         internal void PublishAnnouncementAudio(Client client, uint missionId, uint greetingId) =>
             _protocol.PublishAnnouncementAudio(client, missionId, greetingId);
+        internal bool PublishCharacterFlags(Client client) => _protocol.PublishCharacterFlags(client);
+        internal void RetryCharacterFlagPublications(MapChannel map)
+        {
+            foreach (var client in map.ClientList.ToArray())
+            {
+                if (client == null)
+                    continue;
+                lock (client.SyncRoot)
+                    if (client.Player?.MapChannel == map && IsActivePlayer(client))
+                        PublishCharacterFlags(client);
+            }
+        }
+
         public void PublishInitialState(Client client)
         {
             Scenes.Resume(client);
@@ -200,28 +224,17 @@ namespace Rasa.Managers
                         $"NPC {npc.EntityId} conversation status after mission progress");
         }
 
-        internal void OfferRadioMission(Client client, uint missionId)
+        internal void PublishRadioOffer(Client client, Mission definition, bool forceDialog)
         {
-            if (!IsActivePlayer(client) ||
-                client.Player.Missions.ContainsKey(missionId))
-                return;
-
-            using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
-            if (unitOfWork.CharacterMissions.GetByCharacterAndMission(client.Player.Id, missionId) != null ||
-                !ArePrerequisitesSatisfied(client.Player, missionId, unitOfWork, out _))
-                return;
-
-            if (!TryGetOperationalMission(missionId, out var definition))
-            {
-                Logger.WriteLog(LogType.Error,
-                    $"Unable to offer radio mission {missionId} to character {client.Player.Id}: definition is not operational.");
-                return;
-            }
-
             var offer = _protocol.BuildOfferInfo(definition);
-            PublishMissionPacket(client, new DispenseRadioMissionPacket(missionId, offer, true),
-                $"radio mission {missionId} offer");
+            PublishMissionPacket(client, new DispenseRadioMissionPacket(definition.MissionId, offer, forceDialog),
+                $"radio mission {definition.MissionId} offer");
         }
+
+        internal void PublishSharedOffer(Client client, Mission definition, ulong sourceEntityId) =>
+            PublishMissionPacket(client,
+                new DispenseSharedMissionPacket(sourceEntityId, definition.MissionId, _protocol.BuildOfferInfo(definition)),
+                $"shared mission {definition.MissionId} offer");
 
         internal bool TryGetAreaDefinition(
             uint missionId,
@@ -473,17 +486,18 @@ namespace Rasa.Managers
         public bool TryAcceptNpcMission(Client client, ulong npcEntityId, uint missionId) =>
             TryAcceptMission(client, missionId, npcEntityId);
 
-        internal bool TryAcceptRadioMission(
-            Client client,
-            uint missionId,
-            Func<Manifestation, uint, ICharUnitOfWork, bool> canAccept) =>
-            TryAcceptMission(client, missionId, null, canAccept);
+        internal bool TryAcceptRadioMission(Client client, uint missionId) =>
+            TryAcceptMission(client, missionId, null);
+
+        internal bool TryAcceptSharedMission(Client client, ulong sourceEntityId, uint missionId) =>
+            sourceEntityId != 0 ? TryAcceptMission(client, missionId, null, sourceEntityId) :
+                Reject("Shared assignment requires a nonzero source actor.");
 
         private bool TryAcceptMission(
             Client client,
             uint missionId,
             ulong? npcEntityId,
-            Func<Manifestation, uint, ICharUnitOfWork, bool> canAcceptRadio = null)
+            ulong? sharedSourceEntityId = null)
         {
             if (client == null)
                 return false;
@@ -494,49 +508,67 @@ namespace Rasa.Managers
                     return Reject($"Rejected mission {missionId}: character is not active in the world.");
                 if (!TryGetOperationalMission(missionId, out var definition))
                     return Reject($"Rejected mission {missionId}: definition is not operational.");
+                if (sharedSourceEntityId.HasValue ? !Sharing.CanShare(definition) :
+                    !definition.AcceptanceChannel.HasFlag(npcEntityId.HasValue ? MissionChannel.Npc : MissionChannel.Radio))
+                    return Reject($"Rejected mission {missionId}: the acceptance channel is not authorized.");
+                MissionConversationSession conversation = null;
+                MissionConversationTopic offeredTopic = null;
+                MissionOfferAuthority.Authorization radioOffer = null;
                 if (npcEntityId.HasValue)
                 {
-                    if (!TryGetNpcOnPlayerMap(client.Player, npcEntityId.Value, out var npc))
-                        return Reject($"Rejected mission {missionId}: NPC entity {npcEntityId} is not in the current map instance.");
+                    if (!Interactions.TryGetTopic(client, npcEntityId.Value,
+                        new(MissionConversationTopicKind.Acceptance, missionId), out conversation, out offeredTopic) ||
+                        conversation.Target.Creature is not { } npc)
+                        return Reject($"Rejected mission {missionId}: NPC offer was not opened or is no longer available.");
                     if (npc.Npc == null || npc.DbId != definition.MissionGiver)
                         return Reject($"Rejected mission {missionId}: NPC {npc.DbId} is not its authoritative giver.");
                 }
-                else if (canAcceptRadio == null)
-                    return Reject($"Rejected radio mission {missionId}: no admission policy is available.");
                 if (!ArePrerequisitesSatisfied(client.Player, missionId, out var prerequisiteFailure))
                     return Reject($"Rejected mission {missionId}: {prerequisiteFailure}");
-                if (client.Player.Missions.ContainsKey(missionId))
+                if (client.Player.Missions.TryGetValue(missionId, out var previousLog) &&
+                    previousLog.State is MissionState.Active or MissionState.Success)
                     return Reject($"Rejected mission {missionId}: character {client.Player.Id} already has it.");
 
-                if (!PublicActors.TryPrepare(client, missionId, definition.ContentRevision,
-                        out var reservation, out var reservationFailure))
+                Game.Missions.World.PublicActorLeaseService.Reservation reservation = null;
+                if (!sharedSourceEntityId.HasValue && !PublicActors.TryPrepare(client, missionId, definition.ContentRevision,
+                        out reservation, out var reservationFailure))
                     return Reject($"Rejected mission {missionId}: {reservationFailure}");
                 using var admission = reservation;
                 var objectiveLogs = definition.CreateInitialObjectiveLogs();
                 var initialCompleteable = MissionRuntime.IsComplete(definition,
                     objectiveLogs.ToDictionary(entry => entry.Key, entry => entry.Value.State));
-                var log = new MissionLog(
-                    missionId,
-                    MissionState.Active,
-                    initialCompleteable,
-                    objectiveLogs);
+                MissionLog log = null;
                 var accepted = false;
+                var replacedTerminal = false;
                 var durableLogFull = false;
                 Action<Client> inventoryPublication = null;
+                IReadOnlyList<string> cancelledScenes = Array.Empty<string>();
                 try
                 {
                     using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
                     unitOfWork.ExecuteTransaction(() =>
                     {
+                        if (npcEntityId.HasValue && !Interactions.ValidateDurable(
+                            client, conversation, offeredTopic, unitOfWork, admission))
+                            throw new GameplayRejectionException("Mission offer changed before acceptance.");
                         if (!npcEntityId.HasValue &&
-                            !canAcceptRadio(client.Player, missionId, unitOfWork))
+                            !Offers.TryResolve(client, definition, unitOfWork, out radioOffer))
                         {
                             prerequisiteFailure = "the character is not eligible for this radio mission offer.";
                             return;
                         }
-                        if (MissionRuntime.Admit(true, false, false,
-                                unitOfWork.CharacterMissions.Count(client.Player.Id)).Rejection ==
-                            MissionRejection.JournalFull)
+                        if (radioOffer != null && (sharedSourceEntityId.HasValue
+                            ? radioOffer.Source.Kind != MissionOfferSourceKind.Party ||
+                                radioOffer.Source.Party?.SourceEntityId != sharedSourceEntityId
+                            : radioOffer.Source.Kind == MissionOfferSourceKind.Party))
+                        {
+                            prerequisiteFailure = "the callback does not match this offer's source and channel.";
+                            return;
+                        }
+                        if (!CanAdmit(client.Player, definition, unitOfWork, out prerequisiteFailure))
+                            return;
+                        var previous = unitOfWork.CharacterMissions.GetByCharacterAndMission(client.Player.Id, missionId);
+                        if (!HasJournalCapacity(client.Player.Id, missionId, unitOfWork))
                         {
                             durableLogFull = true;
                             return;
@@ -547,19 +579,37 @@ namespace Rasa.Managers
                                 unitOfWork,
                                 out prerequisiteFailure))
                             return;
-                        if (unitOfWork.CharacterMissions.Runtime.HasHistory(client.Player.Id, missionId) ||
-                            unitOfWork.CharacterMissions.GetByCharacterAndMission(
-                                client.Player.Id, missionId) != null)
-                            return;
-
-                        unitOfWork.CharacterMissions.Add(new CharacterMissionEntry(
+                        var requirements = _requirements.Capture(
+                            client.Player, AdmissionRequirement(definition, radioOffer == null ? null :
+                                Offers.SourceRequirement(definition, radioOffer.Source)), unitOfWork);
+                        var latest = unitOfWork.CharacterMissions.Runtime.LatestTerminal(client.Player.Id, missionId);
+                        var assignment = new CharacterMissionEntry(
                             client.Player.Id,
                             missionId,
                             (uint)MissionState.Active)
                         {
                             Completeable = initialCompleteable,
-                            ContentRevision = definition.ContentRevision
-                        });
+                            ContentRevision = definition.ContentRevision,
+                            Generation = checked(Math.Max(previous?.Generation ?? 0, latest?.AssignmentGeneration ?? 0) + 1)
+                        };
+                        if (previous != null)
+                        {
+                            cancelledScenes = Scenes.CancelAssignment(unitOfWork, previous);
+                            inventoryPublication = MissionInventory.PlanTermination(client, unitOfWork, this, previous,
+                                MissionItemTermination.Replacement, removingAssignment: true, replacement: assignment);
+                            unitOfWork.CharacterMissions.Runtime.Archive(previous, _utcNow());
+                            MissionRequirementService.ExpectHistory(unitOfWork, client.Player.Id, missionId,
+                                (MissionState)previous.MissionState);
+                            unitOfWork.CharacterMissionProgress.Remove(client.Player.Id, missionId);
+                            unitOfWork.CharacterMissions.Remove(client.Player.Id, missionId);
+                            replacedTerminal = true;
+                        }
+                        unitOfWork.CharacterMissions.Add(assignment);
+                        MissionRequirementService.ExpectAssignment(unitOfWork, client.Player.Id, missionId, MissionState.Active);
+                        if (radioOffer != null)
+                            Offers.Consume(unitOfWork, radioOffer, assignment);
+                        else
+                            Offers.Cancel(unitOfWork, assignment.CharacterId, assignment.MissionId);
                         unitOfWork.CharacterMissionProgress.AddObjectives(
                             definition.Objectives.Values.Select(objective =>
                             {
@@ -584,8 +634,9 @@ namespace Rasa.Managers
                                         counter.Value.InitialValue));
                                 return entry;
                             }));
-                        var assignment = unitOfWork.CharacterMissions.GetByCharacterAndMission(client.Player.Id, missionId);
-                        if (admission != null)
+                        if (radioOffer?.Source is { Kind: MissionOfferSourceKind.Party, Generation: > 0 } shared)
+                            Scenes.AttachSharedAssignment(unitOfWork, assignment, shared);
+                        else if (admission != null)
                             admission.Persist(unitOfWork, assignment);
                         else
                             Scenes.PrepareAssignment(unitOfWork, client, assignment);
@@ -599,7 +650,24 @@ namespace Rasa.Managers
                             unitOfWork.CharacterMissionProgress.GetTracked(
                                 client.Player.Id,
                                 missionId));
-                        inventoryPublication = MissionInventory.Plan(client, unitOfWork, this, missionId);
+                        inventoryPublication += MissionInventory.PlanAcceptance(client, unitOfWork, this, missionId);
+                        log = new MissionLog(missionId, MissionState.Active, initialCompleteable, objectiveLogs,
+                            assignment.AssignmentId, assignment.Generation, assignment.ContentRevision);
+                        if (npcEntityId.HasValue && !Interactions.ValidateSession(client, conversation, offeredTopic))
+                            throw new GameplayRejectionException("Mission offer changed during acceptance.");
+                        TransactionValidation.AtCommitBoundary(unitOfWork, () =>
+                        {
+                            if (!HasJournalCapacity(client.Player.Id, missionId, unitOfWork))
+                                throw new GameplayRejectionException("Mission journal capacity changed before acceptance committed.");
+                            requirements?.Validate();
+                            var current = unitOfWork.CharacterMissions.Runtime.ReadAssignment(client.Player.Id, missionId);
+                            if (current == null || !log.MatchesAssignment(current.AssignmentId, current.Generation, current.ContentRevision) ||
+                                npcEntityId.HasValue &&
+                                !Interactions.ValidateAfterPlanning(client, conversation, offeredTopic, unitOfWork, admission))
+                                throw new GameplayRejectionException("Mission offer changed during final persistence.");
+                            if (radioOffer != null)
+                                Offers.ValidateConsumed(client, definition, radioOffer, log, unitOfWork);
+                        });
                         accepted = true;
                     });
                 }
@@ -621,8 +689,13 @@ namespace Rasa.Managers
                         : $"Rejected mission {missionId}: {prerequisiteFailure}");
 
                 admission?.Commit();
+                if (npcEntityId.HasValue)
+                    client.MissionConversation = null;
+                client.Player.Missions[missionId] = log;
                 inventoryPublication?.Invoke(client);
-                client.Player.Missions.Add(missionId, log);
+                Scenes.CompleteAssignmentCancellation(cancelledScenes);
+                if (replacedTerminal)
+                    PublishMissionPacket(client, new MissionClearedPacket(missionId), $"mission {missionId} retired attempt");
                 client.CallMethod(
                     client.Player.EntityId,
                     new MissionGainedPacket(
@@ -632,8 +705,9 @@ namespace Rasa.Managers
                             definition,
                             log)));
 
-                TryPublish(() => _scenarioService.OnMissionAccepted(client, missionId),
-                    $"mission {missionId} acceptance world state");
+                if (radioOffer?.Source is not { Kind: MissionOfferSourceKind.Party, Generation: > 0 })
+                    TryPublish(() => _scenarioService.OnMissionAccepted(client, missionId),
+                        $"mission {missionId} acceptance world state");
                 TryPublish(() => Scenes.MissionChanged(client, missionId, "Accepted"),
                     $"mission {missionId} experience acceptance");
                 _protocol.PublishAudio(client, missionId, Rasa.Missions.Content.MissionAudioEvent.Accepted);
@@ -645,6 +719,31 @@ namespace Rasa.Managers
                 RefreshNpcConversationStatuses(client);
                 return true;
             }
+        }
+
+        internal bool CanAdmit(Manifestation player, Mission definition, ICharUnitOfWork unit, out string failure)
+        {
+            failure = null;
+            var assignment = unit.CharacterMissions.GetByCharacterAndMission(player.Id, definition.MissionId);
+            var store = unit.CharacterMissions.Runtime;
+            if (assignment != null && assignment.MissionState is not (2 or 4) ||
+                store.HasPendingReward(player.Id, definition.MissionId))
+                failure = "an active assignment or unsettled reward already exists.";
+            else if (assignment?.MissionState == (uint)MissionState.Failed && definition.RepeatPolicy.Kind == MissionRepeatKind.Once)
+                failure = "a Once mission retains its failed journal until it is dismissed.";
+            else if (!definition.RepeatPolicy.Allows(_utcNow(),
+                assignment?.MissionState == 4 || store.EverSucceeded(player.Id, definition.MissionId),
+                store.LastRewardedAtUtc(player.Id, definition.MissionId)))
+                failure = "the repeat policy is not eligible at the current UTC time.";
+            return failure == null;
+        }
+
+        internal bool HasJournalCapacity(uint characterId, uint missionId, ICharUnitOfWork unit)
+        {
+            var previous = unit.CharacterMissions.GetByCharacterAndMission(characterId, missionId);
+            return MissionRuntime.Admit(true, false, false, unit.CharacterMissions.Count(characterId) -
+                (previous != null && previous.MissionState != (uint)MissionState.Completed ? 1 : 0)).Rejection !=
+                MissionRejection.JournalFull;
         }
 
         internal bool TryCompleteNpcMission(
@@ -663,7 +762,7 @@ namespace Rasa.Managers
                 var alreadySuccessful = client.Player != null &&
                     client.Player.Missions.TryGetValue(missionId, out var mission) &&
                     mission.State == MissionState.Success;
-                return TryGrantNpcMission(
+                return TryGrantMission(
                     client,
                     npcEntityId,
                     missionId,
@@ -671,7 +770,8 @@ namespace Rasa.Managers
                     rating,
                     alreadySuccessful ? MissionState.Success : MissionState.Active,
                     requireCompletable: !alreadySuccessful,
-                    publishCompleted: !alreadySuccessful);
+                    publishCompleted: !alreadySuccessful,
+                    topicKind: MissionConversationTopicKind.MissionCompletion);
             }
         }
 
@@ -687,32 +787,55 @@ namespace Rasa.Managers
                 selectionIndex,
                 null);
 
-        private bool TryGrantNpcMission(
+        internal bool TryCompleteRadioMission(Client client, uint missionId, int? selectionIndex, int? rating)
+        {
+            if (client == null)
+                return false;
+            lock (client.SyncRoot)
+            {
+                var successful = client.Player?.Missions.TryGetValue(missionId, out var mission) == true &&
+                    mission.State == MissionState.Success;
+                return TryGrantMission(client, null, missionId, selectionIndex, rating,
+                    successful ? MissionState.Success : MissionState.Active, !successful, !successful,
+                    MissionConversationTopicKind.MissionCompletion);
+            }
+        }
+
+        private bool TryGrantMission(
             Client client,
-            ulong npcEntityId,
+            ulong? npcEntityId,
             uint missionId,
             int? selectionIndex,
             int? rating,
             MissionState expectedState,
             bool requireCompletable,
-            bool publishCompleted)
+            bool publishCompleted,
+            MissionConversationTopicKind topicKind)
         {
             if (client == null)
                 return false;
 
             lock (client.SyncRoot)
             {
-                if (!IsActivePlayer(client))
-                    return Reject($"Rejected mission {missionId} turn-in: character is not active in the world.");
+                MissionConversationSession conversation = null;
+                MissionConversationTopic offeredTopic = null;
+                var radioSession = npcEntityId.HasValue ? null : MissionSessionIdentity.Capture(client);
+                if (npcEntityId.HasValue &&
+                    (!Interactions.TryGetTopic(client, npcEntityId.Value, new(topicKind, missionId),
+                        out conversation, out offeredTopic) || conversation.Target.Creature == null ||
+                        offeredTopic.AssignmentState != expectedState) ||
+                    !npcEntityId.HasValue && radioSession == null)
+                    return Reject($"Rejected mission {missionId} turn-in: source session is unavailable.");
                 if (!TryGetOperationalMission(missionId, out var definition))
                     return Reject($"Rejected mission {missionId} turn-in: definition is not operational.");
+                if (!definition.CompletionChannel.HasFlag(npcEntityId.HasValue ? MissionChannel.Npc : MissionChannel.Radio))
+                    return Reject($"Rejected mission {missionId} turn-in: the completion channel is not authorized.");
                 if (!_catalog.Rewards.TryGetValue(missionId, out var rewardDefinition))
                     return Reject($"Rejected mission {missionId} turn-in: no approved reward definition is loaded.");
                 if (rating.HasValue)
                     return Reject($"Rejected mission {missionId} turn-in: ratings are not supported.");
-                if (!TryGetNpcOnPlayerMap(client.Player, npcEntityId, out var npc))
-                    return Reject($"Rejected mission {missionId} turn-in: NPC entity {npcEntityId} is not in the current map instance.");
-                if (npc.Npc == null || npc.DbId != definition.MissionReciver)
+                if (conversation?.Target.Creature is { } npc &&
+                    (npc.Npc == null || npc.DbId != definition.MissionReciver))
                     return Reject($"Rejected mission {missionId} turn-in: NPC {npc.DbId} is not its authoritative receiver.");
                 client.Player.Missions.TryGetValue(missionId, out var runtimeMission);
                 if (!MissionRuntime.CanTurnIn(runtimeMission, expectedState, requireCompletable).Accepted)
@@ -723,7 +846,10 @@ namespace Rasa.Managers
                     return false;
 
                 MissionRewardGrant grant = null;
+                Action<Client> inventoryPublication = null;
                 var progressPlan = MissionProgressPublicationPlan.Empty;
+                var rejectedConversation = false;
+                DateTime rewardedAt = default;
                 try
                 {
                     try
@@ -731,27 +857,30 @@ namespace Rasa.Managers
                         using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
                         unitOfWork.ExecuteTransaction(() =>
                         {
+                            if (npcEntityId.HasValue
+                                ? !Interactions.ValidateDurable(client, conversation, offeredTopic, unitOfWork)
+                                : !RadioAuthorityIsCurrent())
+                            {
+                                rejectedConversation = true;
+                                throw new GameplayRejectionException("Mission turn-in conversation changed before persistence.");
+                            }
                             var character = unitOfWork.Characters.Get(client.Player.Id);
-                            if (!_requirements.Evaluate(client.Player, definition.TurnInRequirement, unitOfWork))
-                                throw new GameplayRejectionException("Durable turn-in requirement is not satisfied.");
+                            var requirements = _requirements.Capture(client.Player, definition.TurnInRequirement, unitOfWork);
                             var mission = unitOfWork.CharacterMissions.GetByCharacterAndMission(
                                 client.Player.Id, missionId);
-                            if (client.AccountEntry == null ||
+                            if (character == null || client.AccountEntry == null ||
                                 character.AccountId != client.AccountEntry.Id)
                                 throw new GameplayRejectionException("Durable character owner changed.");
                             if (mission == null ||
+                                !runtimeMission.MatchesAssignment(mission.AssignmentId, mission.Generation, mission.ContentRevision) ||
                                 mission.MissionState != (uint)expectedState ||
                                 requireCompletable && !mission.Completeable ||
                                 expectedState == MissionState.Success && mission.Completeable)
                                 throw new GameplayRejectionException("Durable mission is not in the required state.");
-                            if (!TryGetNpcOnPlayerMap(client.Player, npcEntityId, out var currentNpc) ||
-                                !ReferenceEquals(currentNpc, npc) ||
-                                currentNpc.EntityId != npcEntityId ||
-                                currentNpc.DbId != definition.MissionReciver ||
-                                currentNpc.Npc == null)
-                                throw new GameplayRejectionException(
-                                    "Mission receiver changed before reward persistence.");
-
+                            if (unitOfWork.CharacterMissions.Runtime.WasRewarded(mission.AssignmentId))
+                                throw new GameplayRejectionException("This assignment already has a reward receipt.");
+                            inventoryPublication = MissionInventory.PlanTermination(client, unitOfWork, this, mission,
+                                MissionItemTermination.Completion);
                             grant = rewardDefinition.CreateGrant(
                                 selectionIndex,
                                 _beforeRewardItemPublication);
@@ -767,11 +896,15 @@ namespace Rasa.Managers
                             mission.MissionState = (uint)MissionState.Completed;
                             mission.Completeable = false;
                             mission.Version++;
-                            unitOfWork.CharacterMissions.Runtime.Archive(mission, _utcNow());
+                            rewardedAt = _utcNow();
+                            DateTime? rewardWindow = null;
+                            unitOfWork.CharacterMissions.Runtime.Archive(mission, rewardedAt, rewardWindow);
+                            MissionRequirementService.ExpectAssignment(unitOfWork, client.Player.Id, missionId,
+                                MissionState.Completed, archived: true);
                             unitOfWork.CharacterMissions.Runtime.Add(new MissionReceiptEntry
                             {
-                                OwnerId = mission.AssignmentId, Generation = 0,
-                                OperationKey = "mission-reward", Kind = "Grant", CreatedAtUtc = _utcNow()
+                                OwnerId = mission.AssignmentId, Generation = mission.Generation,
+                                OperationKey = "mission-reward", Kind = "Grant", CreatedAtUtc = rewardedAt
                             });
                             _deadlineService.SynchronizeMission(
                                 unitOfWork,
@@ -781,24 +914,78 @@ namespace Rasa.Managers
                                 unitOfWork.CharacterMissionProgress.GetTracked(
                                     client.Player.Id,
                                     missionId));
+                            if (npcEntityId.HasValue
+                                ? !Interactions.ValidateSession(client, conversation, offeredTopic)
+                                : !RadioAuthorityIsCurrent())
+                            {
+                                rejectedConversation = true;
+                                throw new GameplayRejectionException("Mission turn-in conversation changed during persistence.");
+                            }
+                            TransactionValidation.BeforeValidation(unitOfWork, () =>
+                            {
+                                rewardedAt = _utcNow();
+                                if (rewardedAt.Kind != DateTimeKind.Utc)
+                                    throw new GameplayRejectionException("Mission rewards require a UTC clock.");
+                                rewardWindow = definition.RepeatPolicy.Kind == MissionRepeatKind.Daily
+                                    ? (DateTime?)definition.RepeatPolicy.WindowStartUtc(rewardedAt) : null;
+                                if (rewardWindow.HasValue && unitOfWork.CharacterMissions.Runtime.HasRewardWindow(
+                                    client.Player.Id, missionId, rewardWindow.Value, runtimeMission.AssignmentId))
+                                    throw new GameplayRejectionException("The commit's Daily reward window is already claimed.");
+                                unitOfWork.CharacterMissions.Runtime.FinalizeReward(
+                                    runtimeMission.AssignmentId, runtimeMission.Generation, rewardedAt, rewardWindow);
+                            });
+                            TransactionValidation.AtCommitBoundary(unitOfWork, () =>
+                            {
+                                requirements?.Validate();
+                                var current = unitOfWork.CharacterMissions.Runtime.ReadAssignment(client.Player.Id, missionId);
+                                if (current == null || !runtimeMission.MatchesAssignment(
+                                    current.AssignmentId, current.Generation, current.ContentRevision) ||
+                                    (npcEntityId.HasValue
+                                        ? !Interactions.ValidateAfterPlanning(client, conversation, offeredTopic, unitOfWork)
+                                        : !RadioAuthorityIsCurrent()))
+                                {
+                                    rejectedConversation = true;
+                                    throw new GameplayRejectionException("Reward attempt changed before commit.");
+                                }
+                                if (!npcEntityId.HasValue)
+                                {
+                                    var radioAssignment = unitOfWork.CharacterMissions.Runtime.ReadAssignment(radioSession.CharacterId, missionId);
+                                    if (radioAssignment == null || !runtimeMission.MatchesAssignment(
+                                        radioAssignment.AssignmentId, radioAssignment.Generation, radioAssignment.ContentRevision) ||
+                                        !unitOfWork.MissionOffers.IsOwnedBy(radioSession.CharacterId, radioSession.AccountId) ||
+                                        !RadioAuthorityIsCurrent())
+                                    {
+                                        rejectedConversation = true;
+                                        throw new GameplayRejectionException("Radio reward authority changed at the commit boundary.");
+                                    }
+                                }
+                                if (rewardWindow.HasValue && definition.RepeatPolicy.WindowStartUtc(_utcNow()) != rewardWindow.Value)
+                                    throw new GameplayRejectionException("Daily reset crossed during final validation; retry in the new window.");
+                            });
                         });
                     }
                     catch (Exception error) when (GameplayRejectionException.IsExpected(error))
                     {
                         Logger.WriteLog(LogType.Error,
                             $"Unable to complete mission {missionId} for character {client.Player.Id}: {error}");
-                        ReconcileMissionFromDurable(client, missionId);
+                        if (!rejectedConversation)
+                            ReconcileMissionFromDurable(client, missionId);
                         return false;
                     }
 
+                    if (npcEntityId.HasValue)
+                        client.MissionConversation = null;
                     client.Player.Missions[missionId] =
                         new MissionLog(
                             missionId,
                             MissionState.Completed,
                             false,
-                            runtimeMission.Objectives);
+                            runtimeMission.Objectives, runtimeMission.AssignmentId, runtimeMission.Generation, runtimeMission.ContentRevision);
                     client.Player.MissionHistory[missionId] = MissionState.Completed;
+                    client.Player.MissionSuccessHistory.Add(missionId);
+                    client.Player.MissionRewardTimes[missionId] = rewardedAt;
                     grant.ConvergeRuntime(client);
+                    inventoryPublication?.Invoke(client);
                     if (publishCompleted)
                     {
                         PublishMissionPacket(
@@ -827,6 +1014,15 @@ namespace Rasa.Managers
                 {
                     grant?.Dispose();
                 }
+
+                bool RadioAuthorityIsCurrent() =>
+                    radioSession?.IsCurrent(client) == true &&
+                    TryGetOperationalMission(missionId, out var currentDefinition) &&
+                    ReferenceEquals(definition, currentDefinition) &&
+                    client.Player.Missions.TryGetValue(missionId, out var currentLog) &&
+                    runtimeMission.MatchesAssignment(currentLog.AssignmentId, currentLog.Generation, currentLog.ContentRevision) &&
+                    currentLog.State == expectedState &&
+                    (runtimeMission.ContentRevision == definition.ContentRevision || runtimeMission.ContentRevision == "legacy");
             }
         }
 
@@ -841,6 +1037,7 @@ namespace Rasa.Managers
             try
             {
                 using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+                MissionJournalAdapter.ApplyHistory(client.Player, unitOfWork.CharacterMissions.Runtime.History(client.Player.Id));
                 Hydrate(
                     client.Player,
                     unitOfWork.CharacterMissions.Get(client.Player.Id),
@@ -866,6 +1063,8 @@ namespace Rasa.Managers
                 return;
             }
 
+            if (previous == null || !previous.MatchesAssignment(current.AssignmentId, current.Generation, current.ContentRevision))
+                return;
             foreach (var objective in current.Objectives)
                 if (objective.Value.State == MissionObjectiveState.Failed &&
                     (!previousObjectiveStates.TryGetValue(
@@ -878,7 +1077,7 @@ namespace Rasa.Managers
                             new ObjectiveFailedPacket(missionId, objective.Key)),
                         $"mission {missionId} objective {objective.Key} failed reconciliation");
 
-            if (previous?.State == current.State)
+            if (previous.State == current.State)
                 return;
 
             switch (current.State)
@@ -930,157 +1129,97 @@ namespace Rasa.Managers
             ulong npcEntityId,
             uint missionId,
             uint objectiveId,
-            uint playerFlagId)
+            uint playerFlagId) =>
+            TryApplyDialogue(client, npcEntityId,
+                new(MissionConversationTopicKind.ObjectiveCompletion, missionId, objectiveId, playerFlagId));
+
+        internal bool TryPerformNpcChoice(Client client, ulong npcEntityId, uint missionId, uint objectiveId,
+            uint playerFlagId, int choiceIdx) =>
+            choiceIdx is >= 1 and <= 3 && TryApplyDialogue(client, npcEntityId,
+                new(MissionConversationTopicKind.ObjectiveChoice, missionId, objectiveId, playerFlagId), choiceIdx);
+
+        private bool TryApplyDialogue(Client client, ulong entityId, MissionConversationTopicKey key, int? choiceIdx = null)
         {
             if (client == null)
                 return false;
-            if (EntityManager.Instance.TryGetObject(npcEntityId, out var conversationObject) &&
-                conversationObject.MissionConversation != null)
-                return ObjectConversations.Complete(client, npcEntityId, missionId, objectiveId, playerFlagId);
-
             lock (client.SyncRoot)
             {
-                if (!IsActivePlayer(client))
-                    return Reject($"Rejected mission {missionId} objective completion: character is not active in the world.");
-                if (!TryGetOperationalMission(missionId, out var definition) ||
-                    !definition.Objectives.TryGetValue(objectiveId, out var objectiveDefinition))
-                    return Reject($"Rejected mission {missionId} objective {objectiveId}: definition is unavailable.");
-                if (!client.Player.Missions.TryGetValue(missionId, out var runtimeMission) ||
+                if (!Interactions.TryGetTopic(client, entityId, key, out var conversation, out var offeredTopic) ||
+                    !TryGetOperationalMission(key.MissionId, out var definition) ||
+                    !definition.Objectives.TryGetValue(offeredTopic.ProgressionObjectiveId, out var objectiveDefinition))
+                    return Reject($"Rejected mission {key.MissionId} dialogue: the offered topic is unavailable.");
+                var objectiveId = offeredTopic.ProgressionObjectiveId;
+                if (!client.Player.Missions.TryGetValue(key.MissionId, out var runtimeMission) ||
                     runtimeMission.State != MissionState.Active ||
                     !runtimeMission.Objectives.TryGetValue(objectiveId, out var runtimeObjective) ||
                     runtimeObjective.State != MissionObjectiveState.Incomplete)
-                    return Reject($"Rejected mission {missionId} objective {objectiveId}: runtime state is not incomplete.");
+                    return Reject($"Rejected mission {key.MissionId} dialogue: runtime state is not incomplete.");
                 if (!_requirements.Evaluate(client.Player, definition.ObjectiveRequirements.GetValueOrDefault(objectiveId)))
-                    return Reject($"Rejected mission {missionId} objective {objectiveId}: authored objective requirement is not satisfied.");
-                if (!TryGetNpcOnPlayerMap(client.Player, npcEntityId, out var npc))
-                    return Reject($"Rejected mission {missionId} objective {objectiveId}: NPC is not in the current map instance.");
-                if (npc.Npc == null ||
-                    !TryGetMatchingConversationTransition(
-                        objectiveDefinition,
-                        npc.Npc.NpcPackageId,
-                        playerFlagId,
-                        out var transition))
-                    return Reject($"Rejected mission {missionId} objective {objectiveId}: completion binding does not match.");
+                    return Reject($"Rejected mission {key.MissionId} dialogue: objective requirement is not satisfied.");
+                var presentation = conversation.Target.Object is { } obj
+                    ? MissionConversationProjection.ForObject(definition, obj.MissionConversation)
+                    : MissionConversationProjection.ForNpc(definition, conversation.Target.NpcPackageId)
+                        .SingleOrDefault(candidate => candidate.Key == key);
+                if (presentation?.Key != key || presentation.ProgressionObjectiveId != objectiveId ||
+                    presentation.Definition != offeredTopic.Dialogue)
+                    return Reject($"Rejected mission {key.MissionId} dialogue: authored binding changed.");
 
-                var npcPackageId = npc.Npc.NpcPackageId;
-                var actionApplication = TransitionActionApplication.Empty;
-                IReadOnlyDictionary<uint, CharacterMissionObjectiveEntry> durableObjectives = null;
-                var completeable = false;
+                var transitionId = offeredTopic.Dialogue.TransitionId;
+                if (choiceIdx.HasValue)
+                {
+                    if (offeredTopic.Dialogue.Choices?.TryGetValue(choiceIdx.Value, out var branch) != true)
+                        return Reject($"Rejected mission {key.MissionId} dialogue: choice is not authored.");
+                    transitionId = branch;
+                }
+                var transition = transitionId.HasValue
+                    ? objectiveDefinition.GetExecutableTransitionsOrLegacyDefault()
+                        .SingleOrDefault(candidate => candidate.TransitionId == transitionId.Value) : null;
+                if (transitionId.HasValue && transition == null ||
+                    !transitionId.HasValue && (choiceIdx.HasValue || conversation.Target.Object == null))
+                    return Reject($"Rejected mission {key.MissionId} dialogue: transition is unavailable.");
+                var plan = MissionProgressPublicationPlan.Empty;
                 try
                 {
-                    using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
-                    unitOfWork.ExecuteTransaction(() =>
+                    using var unit = _gameUnitOfWorkFactory.CreateChar();
+                    unit.ExecuteTransaction(() =>
                     {
-                        var durableMission = unitOfWork.CharacterMissions.GetByCharacterAndMission(
-                            client.Player.Id, missionId);
-                        durableObjectives = unitOfWork.CharacterMissionProgress.GetTracked(
-                            client.Player.Id, missionId);
-                        durableObjectives.TryGetValue(objectiveId, out var durableObjective);
-                        if (durableMission?.MissionState != (uint)MissionState.Active ||
-                            durableObjective?.ObjectiveState != (byte)MissionObjectiveState.Incomplete)
-                            throw new GameplayRejectionException(
-                                "Durable mission objective is not incomplete.");
-                        if (!TryGetNpcOnPlayerMap(client.Player, npcEntityId, out var currentNpc) ||
-                            !ReferenceEquals(currentNpc, npc) ||
-                            currentNpc.Npc?.NpcPackageId != npcPackageId)
-                            throw new GameplayRejectionException(
-                                "Mission objective NPC changed before persistence.");
-
-                        durableObjective.ObjectiveState = (byte)MissionObjectiveState.Completed;
-                        if (!_requirements.Evaluate(client.Player, definition.ObjectiveRequirements.GetValueOrDefault(objectiveId), unitOfWork))
-                            throw new GameplayRejectionException("Durable objective requirement is not satisfied.");
-                        actionApplication = ApplyTransitionActions(
-                            objectiveId,
-                            transition,
-                            durableObjectives, unitOfWork, client.Player.Id);
-                        QueueStartedScenarios(client, missionId, actionApplication.StartScenarioIds, unitOfWork);
-
-                        completeable = true;
-                        foreach (var candidate in definition.Objectives.Values.Where(
-                            candidate => candidate.IsRequired.Value))
+                        if (!Interactions.ValidateDurable(client, conversation, offeredTopic, unit))
+                            throw new GameplayRejectionException("Mission dialogue changed before persistence.");
+                        plan = transition == null
+                            ? PlanProgress(client, new[] { MissionProgressEvent.Interaction((uint)conversation.Target.ClassId) },
+                                unit, new HashSet<(uint, uint)> { (key.MissionId, objectiveId) })
+                            : PlanTransitionCandidates(client, new[]
+                            {
+                                new ProgressCandidate(definition, runtimeMission, objectiveDefinition, runtimeObjective,
+                                    transition, default)
+                            }, unit, requirementsFrozen: false);
+                        if (!plan.HasChanges)
+                            throw new GameplayRejectionException("Mission dialogue has no eligible transition.");
+                        if (!Interactions.ValidateSession(client, conversation, offeredTopic))
+                            throw new GameplayRejectionException("Mission dialogue changed during persistence.");
+                        TransactionValidation.AtCommitBoundary(unit, () =>
                         {
-                            if (candidate.ObjectiveId == objectiveId)
-                                continue;
-                            if (!durableObjectives.TryGetValue(candidate.ObjectiveId, out var required))
-                                throw new GameplayRejectionException(
-                                    "Required mission objective state is missing.");
-                            if (required.ObjectiveState != (byte)MissionObjectiveState.Completed)
-                                completeable = false;
-                        }
-                        durableMission.Completeable = completeable;
-                        _deadlineService.SynchronizeMission(
-                            unitOfWork,
-                            client.Player.Id,
-                            definition,
-                            durableMission,
-                            durableObjectives);
+                            if (!Interactions.ValidateAfterPlanning(client, conversation, offeredTopic, unit))
+                                throw new GameplayRejectionException("Mission dialogue changed during final persistence.");
+                        });
                     });
                 }
                 catch (Exception error) when (GameplayRejectionException.IsExpected(error))
                 {
                     Logger.WriteLog(LogType.Error,
-                        $"Unable to complete mission {missionId} objective {objectiveId} for character {client.Player.Id}: {error}");
+                        $"Unable to apply mission {key.MissionId} dialogue for character {client.Player.Id}: {error}");
                     return false;
                 }
 
-                foreach (var touchedObjectiveId in actionApplication.FinalObjectiveStates.Keys
-                    .Append(objectiveId)
-                    .Distinct())
-                {
-                    var durableObjective = durableObjectives[touchedObjectiveId];
-                    var runtime = runtimeMission.Objectives[touchedObjectiveId];
-                    runtime.State = (MissionObjectiveState)durableObjective.ObjectiveState;
-                    foreach (var counter in durableObjective.Counters)
-                        runtime.SetCounter(counter.CounterId, counter.CounterValue);
-                    foreach (var counter in durableObjective.ItemCounters)
-                        runtime.SetItemCounter(counter.ItemClassId, counter.CounterValue);
-                }
-                runtimeMission.Completeable = completeable;
-
-                client.CallMethod(client.Player.EntityId,
-                    new ObjectiveCompletedPacket(missionId, objectiveId));
-                foreach (var successorId in actionApplication.RevealedObjectiveIds)
-                    client.CallMethod(client.Player.EntityId,
-                        new ObjectiveRevealedPacket(
-                            missionId,
-                            successorId,
-                            BuildPublishedMissionInfo(
-                                client.Player,
-                                definition,
-                                runtimeMission)));
-                foreach (var successorId in actionApplication.ActivatedObjectiveIds)
-                    client.CallMethod(client.Player.EntityId,
-                        new ObjectiveActivatedPacket(missionId, successorId));
-                if (completeable)
-                {
-                    client.CallMethod(client.Player.EntityId,
-                        new MissionCompleteablePacket(missionId, true));
-                    TryPublish(() => Scenes.MissionChanged(client, missionId, "Completeable"),
-                        $"mission {missionId} experience ready state");
-                }
-                foreach (var scenarioId in actionApplication.StartScenarioIds)
-                    if (ShouldStartScenarioAutomatically(missionId, scenarioId))
-                        _scenarioService.TryExecute(client, missionId, scenarioId);
-                foreach (var flagChange in actionApplication.PlayerFlagChanges)
-                    client.Player.PlayerFlags[flagChange.FlagId] = flagChange.Value;
-                foreach (var spawnGroupId in actionApplication.ActivateSpawnGroupIds)
-                    _scenarioService.TryActivateSpawnGroup(client, missionId, spawnGroupId);
-                if (actionApplication.ShownIndicatorIds.Count > 0)
-                    PublishMissionStatus(client, missionId, $"mission {missionId} status after indicator reveal");
-                RefreshNpcConversationStatuses(client);
-
-                // See the matching comment in MissionProgressPublicationPlan.Publish: this is the
-                // only way an ObjectiveState-gated transition elsewhere in the mission gets a
-                // chance to fire when this NPC conversation is what actually moved the objective.
-                foreach (var touchedObjectiveId in actionApplication.FinalObjectiveStates.Keys
-                    .Append(objectiveId)
-                    .Distinct())
-                    RecordProgress(
-                        client,
-                        MissionProgressEvent.ObjectiveState(
-                            missionId,
-                            touchedObjectiveId,
-                            durableObjectives[touchedObjectiveId].ObjectiveState));
+                client.MissionConversation = null;
+                plan.Publish(client);
+                if (choiceIdx.HasValue)
+                    TryPublish(() => client.CallMethod(entityId,
+                        new ConversePacket(new() { [ConversationType.EndConversation] = true })),
+                        $"mission {key.MissionId} choice closure");
+                if (conversation.Target.Object is { } completedObject)
+                    TryPublish(() => client.CallMethod(entityId, ObjectConversations.Status(client, completedObject)),
+                        $"mission {key.MissionId} object conversation closure");
                 return true;
             }
         }
@@ -1103,7 +1242,7 @@ namespace Rasa.Managers
                     return Reject($"Rejected mission {missionId} reward: definition is not operational.");
             }
 
-            return TryGrantNpcMission(
+            return TryGrantMission(
                 client,
                 npcEntityId,
                 missionId,
@@ -1111,7 +1250,8 @@ namespace Rasa.Managers
                 rating,
                 MissionState.Success,
                 requireCompletable: false,
-                publishCompleted: false);
+                publishCompleted: false,
+                topicKind: MissionConversationTopicKind.LegacyReward);
         }
 
         internal bool TryFailObjective(
@@ -1148,6 +1288,7 @@ namespace Rasa.Managers
                         durableObjectives.TryGetValue(
                             objectiveId, out var durableObjective);
                         if (durableMission?.MissionState != (uint)MissionState.Active ||
+                            !runtimeMission.MatchesAssignment(durableMission.AssignmentId, durableMission.Generation, durableMission.ContentRevision) ||
                             durableObjective?.ObjectiveState !=
                             (byte)MissionObjectiveState.Incomplete)
                             throw new GameplayRejectionException(
@@ -1169,7 +1310,11 @@ namespace Rasa.Managers
                             durableMission.Completeable != completeable;
                         durableMission.Completeable = completeable;
                         if (failMission)
+                        {
                             durableMission.MissionState = (uint)MissionState.Failed;
+                            unitOfWork.CharacterMissions.Runtime.Archive(durableMission, _utcNow());
+                        }
+                        ValidateAttemptAtCommit(unitOfWork, client.Player.Id, runtimeMission);
                         _deadlineService.SynchronizeMission(
                             unitOfWork,
                             client.Player.Id,
@@ -1186,7 +1331,8 @@ namespace Rasa.Managers
                                 objectiveDefinition.GetExecutableTransitionsOrLegacyDefault()
                                     .Any(transition =>
                                         transition.ProgressRule?.Kind == MissionProgressEventKind.DeadlineElapsed),
-                            inventoryPublication: MissionInventory.Plan(client, unitOfWork, this, missionId));
+                            inventoryPublication: MissionInventory.Plan(client, unitOfWork, this, missionId),
+                            assignment: runtimeMission);
                     });
                 }
                 catch (Exception error) when (GameplayRejectionException.IsExpected(error))
@@ -1224,11 +1370,14 @@ namespace Rasa.Managers
                         var durableMission =
                             unitOfWork.CharacterMissions.GetByCharacterAndMission(
                                 client.Player.Id, missionId);
-                        if (durableMission?.MissionState != (uint)MissionState.Active)
+                        if (durableMission?.MissionState != (uint)MissionState.Active ||
+                            !runtimeMission.MatchesAssignment(durableMission.AssignmentId, durableMission.Generation, durableMission.ContentRevision))
                             throw new GameplayRejectionException(
                                 "Durable mission cannot fail from its current state.");
                         durableMission.MissionState = (uint)MissionState.Failed;
                         durableMission.Completeable = false;
+                        unitOfWork.CharacterMissions.Runtime.Archive(durableMission, _utcNow());
+                        ValidateAttemptAtCommit(unitOfWork, client.Player.Id, runtimeMission);
                         _deadlineService.SynchronizeMission(
                             unitOfWork,
                             client.Player.Id,
@@ -1250,6 +1399,7 @@ namespace Rasa.Managers
 
                 runtimeMission.State = MissionState.Failed;
                 runtimeMission.Completeable = false;
+                client.Player.MissionHistory[missionId] = MissionState.Failed;
                 inventoryPublication?.Invoke(client);
                 client.CallMethod(
                     client.Player.EntityId,
@@ -1283,8 +1433,11 @@ namespace Rasa.Managers
                 client.Player.Id,
                 missionId);
             if (durableMission?.MissionState != (uint)MissionState.Active ||
+                !runtimeMission.MatchesAssignment(durableMission.AssignmentId, durableMission.Generation, durableMission.ContentRevision) ||
                 !durableObjectives.TryGetValue(objectiveId, out var durableObjective))
                 return false;
+            ValidateAttemptAtCommit(unitOfWork, client.Player.Id, runtimeMission);
+            scenarioPlan.CaptureMission(unitOfWork, durableMission, durableObjectives);
 
             switch (actionKind)
             {
@@ -1294,8 +1447,6 @@ namespace Rasa.Managers
                             (byte)MissionObjectiveState.NotAssigned;
 
                     durableObjective.ObjectiveState = (byte)MissionObjectiveState.NotAssigned;
-                    scenarioPlan.AddRuntimeConvergence(() =>
-                        runtimeObjective.State = MissionObjectiveState.NotAssigned);
                     scenarioPlan.AddPublication(() =>
                         PublishMissionPacket(
                             client,
@@ -1321,8 +1472,6 @@ namespace Rasa.Managers
                         return false;
 
                     durableObjective.ObjectiveState = (byte)MissionObjectiveState.Incomplete;
-                    scenarioPlan.AddRuntimeConvergence(() =>
-                        runtimeObjective.State = MissionObjectiveState.Incomplete);
                     scenarioPlan.AddPublication(() =>
                         PublishMissionPacket(
                             client,
@@ -1394,24 +1543,6 @@ namespace Rasa.Managers
                         priorDeadlineState != CharacterMissionDeadlineState.Active &&
                         currentDeadline?.State == CharacterMissionDeadlineState.Active;
 
-                    scenarioPlan.AddRuntimeConvergence(() =>
-                    {
-                        foreach (var touchedObjectiveId in revealed
-                                     .Concat(activated)
-                                     .Append(objectiveId)
-                                     .Distinct())
-                        {
-                            var durable = durableObjectives[touchedObjectiveId];
-                            var runtime = runtimeMission.Objectives[touchedObjectiveId];
-                            runtime.State = (MissionObjectiveState)durable.ObjectiveState;
-                            foreach (var counter in durable.Counters)
-                                runtime.SetCounter(counter.CounterId, counter.CounterValue);
-                            foreach (var counter in durable.ItemCounters)
-                                runtime.SetItemCounter(counter.ItemClassId, counter.CounterValue);
-                        }
-
-                        runtimeMission.Completeable = completeable;
-                    });
                     scenarioPlan.AddPublication(() =>
                     {
                         PublishMissionPacket(
@@ -1470,7 +1601,12 @@ namespace Rasa.Managers
                         durableMission.Completeable != nextCompleteable;
                     durableMission.Completeable = nextCompleteable;
                     if (failMission)
+                    {
                         durableMission.MissionState = (uint)MissionState.Failed;
+                        unitOfWork.CharacterMissions.Runtime.Archive(durableMission, _utcNow());
+                        MissionRequirementService.ExpectAssignment(unitOfWork, client.Player.Id, missionId,
+                            MissionState.Failed, archived: true);
+                    }
                     _deadlineService.SynchronizeMission(
                         unitOfWork,
                         client.Player.Id,
@@ -1488,7 +1624,8 @@ namespace Rasa.Managers
                                 objectiveDefinition.GetExecutableTransitionsOrLegacyDefault()
                                     .Any(transition =>
                                         transition.ProgressRule?.Kind == MissionProgressEventKind.DeadlineElapsed),
-                            inventoryPublication: MissionInventory.Plan(client, unitOfWork, this, missionId)));
+                            inventoryPublication: MissionInventory.Plan(client, unitOfWork, this, missionId),
+                            assignment: runtimeMission));
                     return true;
             }
 
@@ -1503,12 +1640,14 @@ namespace Rasa.Managers
             lock (client.SyncRoot)
             {
                 if (!IsActivePlayer(client) ||
-                    !TryGetOperationalMission(missionId, out _) ||
+                    !TryGetOperationalMission(missionId, out var definition) ||
                     !client.Player.Missions.TryGetValue(missionId, out var runtimeMission) ||
                     runtimeMission.State is not
-                        (MissionState.Success or MissionState.Failed or MissionState.Completed))
+                        (MissionState.Failed or MissionState.Completed))
                     return false;
 
+                Action<Client> inventoryPublication = null;
+                IReadOnlyList<string> cancelledScenes = Array.Empty<string>();
                 try
                 {
                     using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
@@ -1519,13 +1658,23 @@ namespace Rasa.Managers
                             unitOfWork.CharacterMissions.GetByCharacterAndMission(
                                 client.Player.Id, missionId);
                         if (durableMission == null ||
+                            !runtimeMission.MatchesAssignment(durableMission.AssignmentId, durableMission.Generation, durableMission.ContentRevision) ||
                             (MissionState)durableMission.MissionState is not
-                                (MissionState.Success or MissionState.Failed or MissionState.Completed))
+                                (MissionState.Failed or MissionState.Completed))
                             return;
+                        if (durableMission.MissionState == (uint)MissionState.Failed ||
+                            definition.RepeatPolicy.Kind != MissionRepeatKind.Once)
+                            cancelledScenes = Scenes.CancelAssignment(unitOfWork, durableMission);
+                        inventoryPublication = MissionInventory.PlanTermination(client, unitOfWork, this, durableMission,
+                            durableMission.MissionState == (uint)MissionState.Failed
+                                ? MissionItemTermination.Failure : MissionItemTermination.Completion,
+                            removingAssignment: true);
+                        unitOfWork.CharacterMissions.Runtime.Archive(durableMission, _utcNow());
                         unitOfWork.CharacterMissionProgress.Remove(
                             client.Player.Id, missionId);
                         unitOfWork.CharacterMissions.Remove(
                             client.Player.Id, missionId);
+                        ValidateRemovalAtCommit(unitOfWork, client.Player.Id, missionId);
                         removed = true;
                     });
                     if (!removed)
@@ -1540,6 +1689,9 @@ namespace Rasa.Managers
                 }
 
                 client.Player.Missions.Remove(missionId);
+                inventoryPublication?.Invoke(client);
+                Scenes.CompleteAssignmentCancellation(cancelledScenes);
+                client.MissionConversation = null;
                 if (runtimeMission.State is MissionState.Success or MissionState.Failed or MissionState.Completed)
                     client.Player.MissionHistory[missionId] = runtimeMission.State;
                 client.CallMethod(
@@ -1577,7 +1729,8 @@ namespace Rasa.Managers
                     {
                         var durableMission = unitOfWork.CharacterMissions.GetByCharacterAndMission(
                             client.Player.Id, missionId);
-                        if (durableMission?.MissionState != (uint)MissionState.Active)
+                        if (durableMission?.MissionState != (uint)MissionState.Active ||
+                            !log.MatchesAssignment(durableMission.AssignmentId, durableMission.Generation, durableMission.ContentRevision))
                             return;
 
                         if (TryPlanAuthoredAbandonment(
@@ -1593,8 +1746,12 @@ namespace Rasa.Managers
                         }
 
                         cancelledScenes = Scenes.CancelAssignment(unitOfWork, durableMission);
+                        inventoryPublication = MissionInventory.PlanTermination(client, unitOfWork, this, durableMission,
+                            MissionItemTermination.Abandonment);
+                        durableMission.MissionState = (uint)MissionState.NotAssigned;
+                        unitOfWork.CharacterMissions.Runtime.Archive(durableMission, _utcNow());
                         unitOfWork.CharacterMissions.Remove(client.Player.Id, missionId);
-                        inventoryPublication = MissionInventory.Plan(client, unitOfWork, this, missionId);
+                        ValidateRemovalAtCommit(unitOfWork, client.Player.Id, missionId);
                         removed = true;
                     });
                     if (authoredFailure)
@@ -1617,6 +1774,8 @@ namespace Rasa.Managers
                 }
 
                 client.Player.Missions.Remove(missionId);
+                client.Player.MissionHistory[missionId] = MissionState.NotAssigned;
+                client.MissionConversation = null;
                 inventoryPublication?.Invoke(client);
                 Scenes.CompleteAssignmentCancellation(cancelledScenes);
                 PublishMissionPacket(client, new MissionDiscardedPacket(missionId), $"mission {missionId} abandoned");
@@ -1678,10 +1837,12 @@ namespace Rasa.Managers
             durableObjective.ObjectiveState = (byte)MissionObjectiveState.Failed;
             durableMission.MissionState = (uint)MissionState.Failed;
             durableMission.Completeable = false;
+            unitOfWork.CharacterMissions.Runtime.Archive(durableMission, _utcNow());
+            ValidateAttemptAtCommit(unitOfWork, client.Player.Id, runtimeMission);
             var failureActions = ApplyTransitionActions(
                 authoredFailure.Objective.ObjectiveId,
                 authoredFailure.Transition,
-                durableObjectives, unitOfWork, client.Player.Id);
+                durableObjectives, unitOfWork, client);
             _deadlineService.SynchronizeMission(
                 unitOfWork,
                 client.Player.Id,
@@ -1702,8 +1863,10 @@ namespace Rasa.Managers
                 false,
                 runtimeMission.Completeable,
                 failureActions.StartScenarioIds,
-                inventoryPublication: MissionInventory.Plan(client, unitOfWork, this, definition.MissionId),
-                flags: failureActions.PlayerFlagChanges.Count > 0 ? unitOfWork.CharacterFlags.Get(client.Player.Id) : null);
+                inventoryPublication: MissionInventory.PlanTermination(client, unitOfWork, this, durableMission,
+                    MissionItemTermination.Abandonment),
+                flags: failureActions.PlayerFlagChanges.Count > 0 ? unitOfWork.CharacterFlags.Get(client.Player.Id) : null,
+                assignment: runtimeMission);
             QueueStartedScenarios(client, definition.MissionId, failureActions.StartScenarioIds, unitOfWork);
             return true;
         }
@@ -1813,13 +1976,19 @@ namespace Rasa.Managers
                     (candidate.Definition.MissionId, candidate.ObjectiveDefinition.ObjectiveId))).ToArray();
             if (candidates.Count == 0)
                 return MissionProgressPublicationPlan.Empty;
+            return PlanTransitionCandidates(client, candidates, unitOfWork, requirementsFrozen);
+        }
 
+        private MissionProgressPublicationPlan PlanTransitionCandidates(Client client,
+            IReadOnlyList<ProgressCandidate> candidates, ICharUnitOfWork unitOfWork, bool requirementsFrozen)
+        {
             var durableCharacter = unitOfWork.Characters.Get(client.Player.Id);
             if (durableCharacter.AccountId != client.AccountEntry.Id)
                 throw new GameplayRejectionException(
                     "Durable character owner changed.");
 
             var publications = new List<ProgressPublication>();
+            var committedMissions = new Dictionary<uint, MissionLog>();
             var failurePlans = new List<MissionFailurePublicationPlan>();
             var completableMissions = new SortedSet<uint>();
             var missionStatusMissionIds = new SortedSet<uint>();
@@ -1837,14 +2006,17 @@ namespace Rasa.Managers
                     client.Player.Id, first.Definition.MissionId);
                 var durableObjectives = unitOfWork.CharacterMissionProgress.GetTracked(
                     client.Player.Id, first.Definition.MissionId);
-                var priorDeadline = unitOfWork.CharacterMissionDeadlines.Get(
+                var hasDeadline = MissionDeadlineService.HasDeadline(first.Definition);
+                var priorDeadline = hasDeadline ? unitOfWork.CharacterMissionDeadlines.Get(
                     client.Player.Id,
-                    first.Definition.MissionId);
+                    first.Definition.MissionId) : null;
                 var priorDeadlineState = priorDeadline?.State;
                 if (durableMission?.MissionState != (uint)MissionState.Active ||
+                    !first.RuntimeMission.MatchesAssignment(durableMission.AssignmentId, durableMission.Generation, durableMission.ContentRevision) ||
                     durableMission.Completeable != first.RuntimeMission.Completeable)
                     throw new GameplayRejectionException(
                         "Durable mission state is stale.");
+                ValidateAttemptAtCommit(unitOfWork, client.Player.Id, first.RuntimeMission);
 
                 foreach (var candidate in missionGroup)
                 {
@@ -1863,7 +2035,7 @@ namespace Rasa.Managers
                         throw new GameplayRejectionException("Durable objective requirement is not satisfied.");
                     var rule = candidate.ExecutableTransition.ProgressRule;
                     IReadOnlySet<uint> durableSubjects = null;
-                    if (rule.RuleType == MissionProgressRuleType.CompleteDistinctSet)
+                    if (rule?.RuleType == MissionProgressRuleType.CompleteDistinctSet)
                     {
                         durableSubjects = rule.Kind == MissionProgressEventKind.WaypointAcquired
                             ? durableWaypointIds ??= unitOfWork.CharacterTeleporters.Get(client.Player.Id)
@@ -1889,7 +2061,7 @@ namespace Rasa.Managers
                             durableObjective.ObjectiveState = (byte)MissionObjectiveState.Completed;
                         var actions = completed
                             ? ApplyTransitionActions(candidate.ObjectiveDefinition.ObjectiveId,
-                                candidate.ExecutableTransition, durableObjectives, unitOfWork, client.Player.Id)
+                                candidate.ExecutableTransition, durableObjectives, unitOfWork, client)
                             : TransitionActionApplication.Empty;
                         publications.Add(decision.IsItemCounter
                             ? ProgressPublication.ItemCounter(candidate, decision.CounterId.Value,
@@ -1918,11 +2090,24 @@ namespace Rasa.Managers
                             durableMission.Completeable != nextCompleteable;
                         durableMission.Completeable = nextCompleteable;
                         if (failMission)
+                        {
                             durableMission.MissionState = (uint)MissionState.Failed;
+                            unitOfWork.CharacterMissions.Runtime.Archive(durableMission, _utcNow());
+                            MissionRequirementService.ExpectAssignment(unitOfWork, client.Player.Id,
+                                first.Definition.MissionId, MissionState.Failed, archived: true);
+                        }
                         var failureActions = ApplyTransitionActions(
                             candidate.ObjectiveDefinition.ObjectiveId,
                             candidate.ExecutableTransition,
-                            durableObjectives, unitOfWork, client.Player.Id);
+                            durableObjectives, unitOfWork, client);
+                        // The failure plan owns failure packets and scenario dispatch; the normal
+                        // publication carries the remaining committed branch effects.
+                        publications.Add(ProgressPublication.ForTransition(candidate, MissionObjectiveState.Failed,
+                            new TransitionActionApplication(failureActions.FinalObjectiveStates,
+                                failureActions.RevealedObjectiveIds, failureActions.ActivatedObjectiveIds,
+                                Array.Empty<uint>(), failureActions.AmbientConversationRequests,
+                                failureActions.ShownIndicatorIds, failureActions.PlayerFlagChanges,
+                                failureActions.ActivateSpawnGroupIds)));
                         _deadlineService.SynchronizeMission(
                             unitOfWork,
                             client.Player.Id,
@@ -1940,7 +2125,8 @@ namespace Rasa.Managers
                                 publishMissionStatus:
                                     candidate.ExecutableTransition.ProgressRule?.Kind ==
                                     MissionProgressEventKind.DeadlineElapsed,
-                                changesFlags: failureActions.PlayerFlagChanges.Count > 0));
+                                changesFlags: failureActions.PlayerFlagChanges.Count > 0,
+                                assignment: candidate.RuntimeMission));
                         continue;
                     }
 
@@ -1954,7 +2140,7 @@ namespace Rasa.Managers
                                 ApplyTransitionActions(
                                     candidate.ObjectiveDefinition.ObjectiveId,
                                     candidate.ExecutableTransition,
-                                    durableObjectives, unitOfWork, client.Player.Id)));
+                                    durableObjectives, unitOfWork, client)));
                         continue;
                     }
 
@@ -1965,7 +2151,7 @@ namespace Rasa.Managers
                         ApplyTransitionActions(
                             candidate.ObjectiveDefinition.ObjectiveId,
                             candidate.ExecutableTransition,
-                            durableObjectives, unitOfWork, client.Player.Id)));
+                            durableObjectives, unitOfWork, client)));
                 }
 
                 var completeable = first.Definition.Objectives.Values
@@ -1984,16 +2170,24 @@ namespace Rasa.Managers
                     first.Definition,
                     durableMission,
                     durableObjectives);
-                var currentDeadline = unitOfWork.CharacterMissionDeadlines.Get(
+                var currentDeadline = hasDeadline ? unitOfWork.CharacterMissionDeadlines.Get(
                     client.Player.Id,
-                    first.Definition.MissionId);
+                    first.Definition.MissionId) : null;
                 if (priorDeadlineState != CharacterMissionDeadlineState.Active &&
                     currentDeadline?.State == CharacterMissionDeadlineState.Active)
                     missionStatusMissionIds.Add(first.Definition.MissionId);
+                // Freeze the transaction's final aggregate, not an intermediate child intent's state.
+                TransactionValidation.BeforeValidation(unitOfWork, () =>
+                    committedMissions[first.Definition.MissionId] =
+                        MissionStatePublication.Capture(durableMission, durableObjectives));
             }
 
             foreach (var publication in publications)
+            {
                 QueueStartedScenarios(client, publication.MissionId, publication.StartScenarioIds, unitOfWork);
+                foreach (var spawnGroupId in publication.ActivateSpawnGroupIds)
+                    Scenes.QueueNamedSequence(unitOfWork, client, publication.MissionId, $"spawn-group-{spawnGroupId}");
+            }
             foreach (var failure in failurePlans)
                 QueueStartedScenarios(client, failure.MissionId, failure.StartScenarioIds, unitOfWork);
             return new MissionProgressPublicationPlan(
@@ -2014,10 +2208,11 @@ namespace Rasa.Managers
                         progressClient,
                         progressedMissionId,
                         spawnGroupId),
-                MissionInventory.Plan(client, unitOfWork, this),
+                MissionInventory.Plan(client, unitOfWork, this, candidates.Select(candidate => candidate.Definition.MissionId)),
                 flags: publications.Any(publication => publication.PlayerFlagChanges.Count > 0) ||
                     failurePlans.Any(failure => failure.ChangesFlags)
-                    ? unitOfWork.CharacterFlags.Get(client.Player.Id) : null);
+                    ? unitOfWork.CharacterFlags.Get(client.Player.Id) : null,
+                committedMissions: committedMissions);
         }
 
         private void QueueStartedScenarios(Client client, uint missionId, IEnumerable<uint> scenarioIds,
@@ -2027,28 +2222,26 @@ namespace Rasa.Managers
                 Scenes.QueueSequence(unit, client, missionId, scenarioId);
         }
 
-        private static bool TryGetMatchingConversationTransition(
-            MissionObjectiveDefinition objectiveDefinition,
-            uint npcPackageId,
-            uint playerFlagId,
-            out MissionObjectiveExecutableTransition transition)
-        {
-            transition = objectiveDefinition.GetExecutableTransitionsOrLegacyDefault()
-                .Where(candidate => candidate.Conversations.Any(conversation =>
-                    conversation.Type == MissionObjectiveConversationType.Completion &&
-                    conversation.NpcPackageId == npcPackageId &&
-                    conversation.PlayerFlagId == playerFlagId))
-                .OrderBy(candidate => candidate.Sequence)
-                .ThenBy(candidate => candidate.TransitionId)
-                .FirstOrDefault();
-            return transition != null;
-        }
+        private static void ValidateAttemptAtCommit(ICharUnitOfWork unit, uint characterId, MissionLog expected) =>
+            TransactionValidation.Add(unit, () =>
+            {
+                var current = unit.CharacterMissions.Runtime.ReadAssignment(characterId, expected.MissionId);
+                if (current == null || !expected.MatchesAssignment(current.AssignmentId, current.Generation, current.ContentRevision))
+                    throw new GameplayRejectionException("Mission attempt changed before commit.");
+            });
 
-        private static TransitionActionApplication ApplyTransitionActions(
+        private static void ValidateRemovalAtCommit(ICharUnitOfWork unit, uint characterId, uint missionId) =>
+            TransactionValidation.Add(unit, () =>
+            {
+                if (unit.CharacterMissions.Runtime.ReadAssignment(characterId, missionId) != null)
+                    throw new GameplayRejectionException("A different assignment appeared before journal removal committed.");
+            });
+
+        private TransitionActionApplication ApplyTransitionActions(
             uint currentObjectiveId,
             MissionObjectiveExecutableTransition transition,
             IReadOnlyDictionary<uint, CharacterMissionObjectiveEntry> durableObjectives,
-            ICharUnitOfWork unitOfWork, uint characterId)
+            ICharUnitOfWork unitOfWork, Client client)
         {
             if (transition == null)
                 return TransitionActionApplication.Empty;
@@ -2097,7 +2290,9 @@ namespace Rasa.Managers
                                 $"Transition {transition.TransitionId} set player flag action is missing its flag id or value.");
                         if (!CharacterFlagIds.IsMissionFlag(action.PlayerFlagId.Value))
                             throw new GameplayRejectionException("Mission flag actions cannot write zero or reserved server flag IDs.");
-                        unitOfWork.CharacterFlags.Set(characterId, action.PlayerFlagId.Value, action.PlayerFlagValue.Value);
+                        unitOfWork.CharacterFlags.Set(client.Player.Id, action.PlayerFlagId.Value, action.PlayerFlagValue.Value);
+                        MissionRequirementService.ExpectFlag(unitOfWork, client.Player.Id,
+                            action.PlayerFlagId.Value, action.PlayerFlagValue.Value);
                         playerFlagChanges.Add(new PlayerFlagChange(
                             action.PlayerFlagId.Value,
                             action.PlayerFlagValue.Value));
@@ -2108,6 +2303,18 @@ namespace Rasa.Managers
                             throw new GameplayRejectionException(
                                 $"Transition {transition.TransitionId} activate spawn group action is missing its spawn group id.");
                         activatedSpawnGroups.Add(action.SpawnGroupId.Value);
+                        break;
+
+                    case MissionActionKind.IssueMissionItem:
+                    case MissionActionKind.ConsumeMissionItem:
+                    case MissionActionKind.RemoveMissionItems:
+                        if (!Rasa.Missions.Definitions.MissionItemValidation.ActionMatches(action) ||
+                            action.MissionId != durableObjectives[currentObjectiveId].MissionId)
+                            throw new GameplayRejectionException("Mission item action kind does not match its typed intent.");
+                        var assignment = unitOfWork.CharacterMissions.GetByCharacterAndMission(client.Player.Id, action.MissionId)
+                            ?? throw new GameplayRejectionException("Mission item action has no assignment.");
+                        new MissionItemPlanner(client, unitOfWork, this).Apply(action.ItemIntent,
+                            assignment.AssignmentId, assignment.Generation);
                         break;
                 }
             }
@@ -2141,6 +2348,33 @@ namespace Rasa.Managers
             return false;
         }
 
+        private MissionRequirement AdmissionRequirement(Mission definition, MissionRequirement sourceRequirement = null)
+        {
+            var requirements = new List<MissionRequirement>();
+            if (definition.Requirement != null)
+                requirements.Add(definition.Requirement);
+            if (sourceRequirement != null)
+                requirements.Add(sourceRequirement);
+            if (_catalog.Prerequisites.TryGetValue(definition.MissionId, out var prerequisites))
+                foreach (var prerequisite in prerequisites)
+                    requirements.Add(prerequisite.Kind switch
+                    {
+                        MissionPrerequisiteKind.MissionCompleted or MissionPrerequisiteKind.MissionAccepted
+                            when prerequisite.RequiredMissionId.HasValue =>
+                            new MissionStateRequirement(prerequisite.RequiredMissionId.Value,
+                                prerequisite.RequiredMissionStateValue.HasValue
+                                    ? (MissionState?)prerequisite.RequiredMissionStateValue.Value : null,
+                                prerequisite.Kind == MissionPrerequisiteKind.MissionAccepted),
+                        MissionPrerequisiteKind.PlayerLevelAtLeast when prerequisite.RequiredLevel.HasValue =>
+                            new LevelRequirement(prerequisite.RequiredLevel.Value),
+                        MissionPrerequisiteKind.PlayerFlagValue
+                            when prerequisite.PlayerFlagId.HasValue && prerequisite.PlayerFlagValue.HasValue =>
+                            new FlagRequirement(prerequisite.PlayerFlagId.Value, prerequisite.PlayerFlagValue.Value),
+                        _ => throw new MissionRuleException("Unsupported mission prerequisite.")
+                    });
+            return requirements.Count == 0 ? null : new AllRequirements(requirements);
+        }
+
         private bool ArePrerequisitesSatisfied(
             Manifestation player,
             uint missionId,
@@ -2169,7 +2403,7 @@ namespace Rasa.Managers
             return true;
         }
 
-        private bool ArePrerequisitesSatisfied(
+        internal bool ArePrerequisitesSatisfied(
             Manifestation player,
             uint missionId,
             ICharUnitOfWork unitOfWork,
@@ -2203,19 +2437,13 @@ namespace Rasa.Managers
             return true;
         }
 
-        private static bool IsPrerequisiteSatisfied(
+        private bool IsPrerequisiteSatisfied(
             Manifestation player,
             MissionPrerequisiteDefinition prerequisite) =>
             prerequisite.Kind switch
             {
-                MissionPrerequisiteKind.MissionCompleted =>
-                    (TryGetMissionLogState(player.Missions, prerequisite.RequiredMissionId, out var completedState) ||
-                     prerequisite.RequiredMissionId.HasValue &&
-                     player.MissionHistory.TryGetValue(prerequisite.RequiredMissionId.Value, out completedState)) &&
-                    IsMissionStateSatisfied(completedState, prerequisite.RequiredMissionStateValue),
-                MissionPrerequisiteKind.MissionAccepted =>
-                    TryGetMissionLogState(player.Missions, prerequisite.RequiredMissionId, out var acceptedState) &&
-                    IsMissionStateSatisfied(acceptedState, prerequisite.RequiredMissionStateValue, requirePresenceOnly: true),
+                MissionPrerequisiteKind.MissionCompleted or MissionPrerequisiteKind.MissionAccepted =>
+                    IsMissionPrerequisiteSatisfied(player, prerequisite),
                 MissionPrerequisiteKind.PlayerLevelAtLeast =>
                     prerequisite.RequiredLevel.HasValue &&
                     player.Level >= prerequisite.RequiredLevel.Value,
@@ -2227,19 +2455,15 @@ namespace Rasa.Managers
                 _ => false
             };
 
-        private static bool IsPrerequisiteSatisfied(
+        private bool IsPrerequisiteSatisfied(
             Manifestation player,
             MissionPrerequisiteDefinition prerequisite,
             CharacterEntry durableCharacter,
             ICharUnitOfWork unitOfWork) =>
             prerequisite.Kind switch
             {
-                MissionPrerequisiteKind.MissionCompleted =>
-                    TryGetDurableMissionState(unitOfWork, player.Id, prerequisite.RequiredMissionId, out var completedState) &&
-                    IsMissionStateSatisfied(completedState, prerequisite.RequiredMissionStateValue),
-                MissionPrerequisiteKind.MissionAccepted =>
-                    TryGetDurableMissionState(unitOfWork, player.Id, prerequisite.RequiredMissionId, out var acceptedState) &&
-                    IsMissionStateSatisfied(acceptedState, prerequisite.RequiredMissionStateValue, requirePresenceOnly: true),
+                MissionPrerequisiteKind.MissionCompleted or MissionPrerequisiteKind.MissionAccepted =>
+                    IsMissionPrerequisiteSatisfied(player, prerequisite, unitOfWork),
                 MissionPrerequisiteKind.PlayerLevelAtLeast =>
                     prerequisite.RequiredLevel.HasValue &&
                     durableCharacter != null &&
@@ -2250,67 +2474,16 @@ namespace Rasa.Managers
                 _ => false
             };
 
-        private static bool TryGetMissionLogState(
-            IReadOnlyDictionary<uint, MissionLog> missions,
-            uint? missionId,
-            out MissionState state)
+        private bool IsMissionPrerequisiteSatisfied(Manifestation player, MissionPrerequisiteDefinition prerequisite,
+            ICharUnitOfWork unit = null)
         {
-            if (missionId.HasValue &&
-                missions.TryGetValue(missionId.Value, out var log))
-            {
-                state = log.State;
-                return true;
-            }
-
-            state = default;
-            return false;
-        }
-
-        private static bool TryGetDurableMissionState(
-            ICharUnitOfWork unitOfWork,
-            uint characterId,
-            uint? missionId,
-            out MissionState state)
-        {
-            if (missionId.HasValue)
-            {
-                var mission = unitOfWork.CharacterMissions.GetByCharacterAndMission(
-                    characterId,
-                    missionId.Value);
-                if (mission != null &&
-                    Enum.IsDefined(typeof(MissionState), (int)mission.MissionState))
-                {
-                    state = (MissionState)mission.MissionState;
-                    return true;
-                }
-                var history = unitOfWork.CharacterMissions.Runtime.History(characterId)
-                    .SingleOrDefault(entry => entry.MissionId == missionId.Value);
-                if (history != null)
-                {
-                    state = (MissionState)history.Outcome;
-                    return true;
-                }
-            }
-
-            state = default;
-            return false;
-        }
-
-        private static bool IsMissionStateSatisfied(
-            MissionState state,
-            byte? requiredStateValue,
-            bool requirePresenceOnly = false)
-        {
-            if (requiredStateValue.HasValue)
-            {
-                if (!Enum.IsDefined(typeof(MissionState), (int)requiredStateValue.Value))
-                    return false;
-                return state == (MissionState)requiredStateValue.Value;
-            }
-
-            if (requirePresenceOnly)
-                return true;
-            return state is MissionState.Success or MissionState.Completed;
+            if (!prerequisite.RequiredMissionId.HasValue ||
+                prerequisite.RequiredMissionStateValue.HasValue &&
+                !Enum.IsDefined(typeof(MissionState), (int)prerequisite.RequiredMissionStateValue.Value))
+                return false;
+            return _requirements.Evaluate(player, new MissionStateRequirement(prerequisite.RequiredMissionId.Value,
+                prerequisite.RequiredMissionStateValue.HasValue ? (MissionState?)prerequisite.RequiredMissionStateValue.Value : null,
+                prerequisite.Kind == MissionPrerequisiteKind.MissionAccepted), unit);
         }
 
         private static string DescribePrerequisiteFailure(
@@ -2328,12 +2501,87 @@ namespace Rasa.Managers
                 _ => $"unsupported prerequisite kind {(int)prerequisite.Kind}."
             };
 
+        internal bool TryOpenNpcConversation(Client client, ulong entityId,
+            out Creature creature, out MissionConversationState state)
+        {
+            creature = null;
+            state = null;
+            client.MissionConversation = null;
+            if (!Interactions.TryResolveOpeningTarget(client, entityId, out var target) ||
+                target.Creature == null)
+                return false;
+            try
+            {
+                using var unit = _gameUnitOfWorkFactory.CreateChar();
+                if (!Interactions.CanOpen(client, target, unit))
+                    return false;
+                RefreshConversationAssignments(client, unit,
+                    _runtime.ForNpc(target.Creature.DbId, target.NpcPackageId).Select(mission => mission.MissionId));
+                var classified = ClassifyNpcConversation(client.Player, target.Creature);
+                var topics = new List<MissionConversationTopic>();
+                foreach (var key in classified.OfferedTopics())
+                {
+                    var dialogue = classified.Dialogue.FirstOrDefault(candidate => candidate.Key == key);
+                    if (Interactions.TryCaptureTopic(client, key, unit, out var topic, dialogue?.ProgressionObjectiveId))
+                        topics.Add(topic with { Dialogue = dialogue?.Definition });
+                }
+                if (!Interactions.CanOpen(client, target, unit))
+                    return false;
+                client.MissionConversation = new MissionConversationSession(client, target, topics);
+                state = classified.RetainTopics(topics.Select(topic => topic.Key).ToArray());
+                creature = target.Creature;
+                return true;
+            }
+            catch (Exception error) when (GameplayRejectionException.IsExpected(error))
+            {
+                Logger.WriteLog(LogType.Error, $"Unable to open mission NPC conversation {entityId}: {error}");
+                return false;
+            }
+        }
+
+        internal void RefreshConversationAssignments(Client client, ICharUnitOfWork unit, IEnumerable<uint> missionIds)
+        {
+            var ids = missionIds.ToHashSet();
+            var refreshed = new Dictionary<uint, MissionLog>();
+            var removed = new List<uint>();
+            IReadOnlyList<CharacterMissionHistoryEntry> history = null;
+            unit.ExecuteTransaction(() =>
+            {
+                var rows = unit.CharacterMissions.Get(client.Player.Id).Where(row => ids.Contains(row.MissionId))
+                    .ToDictionary(row => row.MissionId);
+                var changed = rows.Values.Where(row =>
+                    !client.Player.Missions.TryGetValue(row.MissionId, out var log) ||
+                    !log.MatchesAssignment(row.AssignmentId, row.Generation, row.ContentRevision)).ToArray();
+                removed.AddRange(ids.Where(id => !rows.ContainsKey(id) &&
+                    client.Player.Missions.TryGetValue(id, out var log) && log.AssignmentId != null));
+                if (changed.Length == 0 && removed.Count == 0)
+                    return;
+                var progress = unit.CharacterMissionProgress.Get(client.Player.Id);
+                history = unit.CharacterMissions.Runtime.History(client.Player.Id);
+                foreach (var row in changed)
+                    if (_journal.TryHydrateMission(client.Player.Id, row, progress, out var log))
+                        refreshed[row.MissionId] = log;
+                    else
+                        removed.Add(row.MissionId);
+            });
+            foreach (var id in removed)
+                client.Player.Missions.Remove(id);
+            foreach (var entry in refreshed)
+                client.Player.Missions[entry.Key] = entry.Value;
+            if (history != null)
+            {
+                MissionJournalAdapter.ApplyHistory(client.Player, history);
+                foreach (var log in client.Player.Missions.Values.Where(log => log.State is MissionState.Success or MissionState.Completed))
+                    client.Player.MissionSuccessHistory.Add(log.MissionId);
+            }
+        }
+
         internal MissionConversationState ClassifyNpcConversation(
             Manifestation player,
             Creature creature)
         {
             var dispensable = new Dictionary<uint, MissionInfo>();
-            var objectives = new List<CompleteableObjectives>();
+            var dialogue = new List<MissionDialoguePresentation>();
             var completeable = new Dictionary<uint, RewardInfo>();
             var rewardable = new List<RewardableMissions>();
 
@@ -2341,12 +2589,19 @@ namespace Rasa.Managers
             {
                 if (!mission.IsOperational)
                     continue;
-                if (!player.Missions.TryGetValue(mission.MissionId, out var log))
+                player.Missions.TryGetValue(mission.MissionId, out var log);
+                if (log == null || log.State is MissionState.Failed or MissionState.Completed)
                 {
-                    if (player.MissionHistory.TryGetValue(mission.MissionId, out var outcome) &&
-                        outcome is MissionState.Success or MissionState.Completed)
+                    if (log?.State == MissionState.Failed && mission.RepeatPolicy.Kind == MissionRepeatKind.Once)
                         continue;
-                    if (mission.MissionGiver == creature.DbId &&
+                    var everSucceeded = log?.State == MissionState.Completed ||
+                        player.MissionSuccessHistory.Contains(mission.MissionId) ||
+                        player.MissionHistory.TryGetValue(mission.MissionId, out var outcome) &&
+                        outcome is MissionState.Success or MissionState.Completed;
+                    if (!mission.RepeatPolicy.Allows(_utcNow(), everSucceeded,
+                        player.MissionRewardTimes.TryGetValue(mission.MissionId, out var rewardTime) ? rewardTime : null))
+                        continue;
+                    if (mission.AcceptanceChannel.HasFlag(MissionChannel.Npc) && mission.MissionGiver == creature.DbId &&
                         ArePrerequisitesSatisfied(player, mission.MissionId, out _))
                         dispensable.Add(
                             mission.MissionId,
@@ -2357,6 +2612,7 @@ namespace Rasa.Managers
                 if (log.State == MissionState.Active)
                 {
                     if (log.Completeable &&
+                        mission.CompletionChannel.HasFlag(MissionChannel.Npc) &&
                         mission.MissionReciver == creature.DbId &&
                         _requirements.Evaluate(player, mission.TurnInRequirement))
                     {
@@ -2368,22 +2624,17 @@ namespace Rasa.Managers
                         continue;
                     }
 
-                    foreach (var objective in mission.Objectives.Values)
+                    foreach (var topic in MissionConversationProjection.ForNpc(mission, creature.Npc.NpcPackageId))
                     {
-                        if (!log.Objectives.TryGetValue(objective.ObjectiveId, out var objectiveLog) ||
+                        if (!log.Objectives.TryGetValue(topic.ProgressionObjectiveId, out var objectiveLog) ||
                             objectiveLog.State != MissionObjectiveState.Incomplete ||
-                            !_requirements.Evaluate(player, mission.ObjectiveRequirements.GetValueOrDefault(objective.ObjectiveId)))
+                            !_requirements.Evaluate(player, mission.ObjectiveRequirements.GetValueOrDefault(topic.ProgressionObjectiveId)))
                             continue;
-                        foreach (var conversation in objective.Conversations.Where(conversation =>
-                            conversation.Type == MissionObjectiveConversationType.Completion &&
-                            conversation.NpcPackageId == creature.Npc.NpcPackageId))
-                            objectives.Add(new CompleteableObjectives(
-                                (int)mission.MissionId,
-                                (int)objective.ObjectiveId,
-                                (int)conversation.PlayerFlagId));
+                        dialogue.Add(topic);
                     }
                 }
                 else if (log.State == MissionState.Success &&
+                    mission.CompletionChannel.HasFlag(MissionChannel.Npc) &&
                     mission.MissionReciver == creature.DbId &&
                     _requirements.Evaluate(player, mission.TurnInRequirement) &&
                     TryGetRewardInfo(mission.MissionId, out var reward))
@@ -2394,7 +2645,7 @@ namespace Rasa.Managers
 
             return new MissionConversationState(
                 dispensable,
-                objectives,
+                dialogue,
                 completeable,
                 rewardable);
         }
@@ -2419,14 +2670,6 @@ namespace Rasa.Managers
                 !player.Disconected &&
                 !player.RemoveFromMap &&
                 CellManager.Instance.IsInWorld(client);
-        }
-
-        private static bool TryGetNpcOnPlayerMap(
-            Manifestation player,
-            ulong npcEntityId,
-            out Creature npc)
-        {
-            return MapInstanceScope.TryGetCreature(player?.MapChannel, npcEntityId, out npc);
         }
 
         private static bool Reject(string message)

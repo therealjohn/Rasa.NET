@@ -259,8 +259,8 @@ namespace Rasa.Test.Missions
                 harness.BootcampMap, BootcampRuntimeTestHarness.CorporalDeSimoneCreatureId);
             harness.MovePlayerTo(deSimone);
             CellManager.Instance.UpdateVisibility(harness.Client);
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(harness.Client, deSimone.EntityId, 1994));
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(harness.Client, deSimone.EntityId, 1994, 4, 1));
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(harness.Client, deSimone.EntityId, 1994));
+            Assert.IsTrue(harness.Manager.CompleteOfferedObjective(harness.Client, deSimone.EntityId, 1994, 4, 1));
             Assert.IsTrue(harness.Manager.TryGetAreaDefinition(1994, 439, out var exit));
             var previous = harness.Client.Player.Position;
             harness.MovePlayerTo(exit.Position);

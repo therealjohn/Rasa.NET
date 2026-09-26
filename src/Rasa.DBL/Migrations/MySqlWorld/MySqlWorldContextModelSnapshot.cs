@@ -1196,6 +1196,10 @@ namespace Rasa.Migrations.MySqlWorld
                         .HasColumnType("int(11) unsigned")
                         .HasColumnName("indicator_id");
 
+                    b.Property<string>("ItemIntentJson")
+                        .HasColumnType("longtext")
+                        .HasColumnName("item_intent");
+
                     b.Property<byte>("Kind")
                         .HasColumnType("tinyint(3) unsigned")
                         .HasColumnName("kind");
@@ -1254,7 +1258,7 @@ namespace Rasa.Migrations.MySqlWorld
 
                     b.ToTable("mission_action", t =>
                         {
-                            t.HasCheckConstraint("CK_mission_action_kind_parameter_set", "(kind IN (1, 2, 3, 4, 5, 6, 7, 8, 9)) AND (kind <> 1 OR (target_objective_id IS NOT NULL AND objective_state IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL AND npc_package_id IS NULL)) AND (kind <> 2 OR (target_objective_id IS NOT NULL AND objective_state IS NOT NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL AND npc_package_id IS NULL)) AND (kind <> 3 OR (target_objective_id IS NOT NULL AND objective_state IS NOT NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL AND npc_package_id IS NULL)) AND (kind <> 4 OR (reward_id IS NOT NULL AND target_objective_id IS NULL AND objective_state IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL AND npc_package_id IS NULL)) AND (kind <> 5 OR (scenario_id IS NOT NULL AND target_objective_id IS NULL AND objective_state IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL AND npc_package_id IS NULL)) AND (kind <> 6 OR (spawn_group_id IS NOT NULL AND target_objective_id IS NULL AND objective_state IS NULL AND reward_id IS NULL AND scenario_id IS NULL AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL AND npc_package_id IS NULL)) AND (kind <> 7 OR (indicator_id IS NOT NULL AND target_objective_id IS NULL AND objective_state IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL AND npc_package_id IS NULL)) AND (kind <> 8 OR (player_flag_id IS NOT NULL AND player_flag_value IS NOT NULL AND target_objective_id IS NULL AND objective_state IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL AND indicator_id IS NULL AND npc_package_id IS NULL)) AND (kind <> 9 OR (npc_package_id IS NOT NULL AND player_flag_id IS NOT NULL AND target_objective_id IS NULL AND objective_state IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL AND indicator_id IS NULL AND player_flag_value IS NULL))");
+                            t.HasCheckConstraint("CK_mission_action_kind_parameter_set", "(kind IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)) AND (kind >= 10 OR item_intent IS NULL) AND (kind < 10 OR (item_intent IS NOT NULL AND target_objective_id IS NULL AND objective_state IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL AND npc_package_id IS NULL)) AND (kind <> 1 OR (target_objective_id IS NOT NULL AND objective_state IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL AND npc_package_id IS NULL)) AND (kind <> 2 OR (target_objective_id IS NOT NULL AND objective_state IS NOT NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL AND npc_package_id IS NULL)) AND (kind <> 3 OR (target_objective_id IS NOT NULL AND objective_state IS NOT NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL AND npc_package_id IS NULL)) AND (kind <> 4 OR (reward_id IS NOT NULL AND target_objective_id IS NULL AND objective_state IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL AND npc_package_id IS NULL)) AND (kind <> 5 OR (scenario_id IS NOT NULL AND target_objective_id IS NULL AND objective_state IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL AND npc_package_id IS NULL)) AND (kind <> 6 OR (spawn_group_id IS NOT NULL AND target_objective_id IS NULL AND objective_state IS NULL AND reward_id IS NULL AND scenario_id IS NULL AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL AND npc_package_id IS NULL)) AND (kind <> 7 OR (indicator_id IS NOT NULL AND target_objective_id IS NULL AND objective_state IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL AND npc_package_id IS NULL)) AND (kind <> 8 OR (player_flag_id IS NOT NULL AND player_flag_value IS NOT NULL AND target_objective_id IS NULL AND objective_state IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL AND indicator_id IS NULL AND npc_package_id IS NULL)) AND (kind <> 9 OR (npc_package_id IS NOT NULL AND player_flag_id IS NOT NULL AND target_objective_id IS NULL AND objective_state IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL AND indicator_id IS NULL AND player_flag_value IS NULL))");
                         });
                 });
 
@@ -1322,6 +1326,37 @@ namespace Rasa.Migrations.MySqlWorld
                     b.ToTable("mission_area");
                 });
 
+            modelBuilder.Entity("Rasa.Structures.World.MissionChannelPolicyEntry", b =>
+                {
+                    b.Property<uint>("MissionId")
+                        .HasColumnType("int(11) unsigned")
+                        .HasColumnName("mission_id");
+
+                    b.Property<string>("ContentRevision")
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("content_revision");
+
+                    b.Property<int>("AcceptanceChannel")
+                        .HasColumnType("int")
+                        .HasColumnName("acceptance_channel");
+
+                    b.Property<int>("CompletionChannel")
+                        .HasColumnType("int")
+                        .HasColumnName("completion_channel");
+
+                    b.Property<string>("RadioSources")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("radio_sources");
+
+                    b.HasKey("MissionId", "ContentRevision");
+
+                    b.ToTable("mission_channel_policy", t =>
+                        {
+                            t.HasCheckConstraint("CK_mission_channel_policy_channels", "acceptance_channel IN (1, 2, 3) AND completion_channel IN (1, 2, 3)");
+                        });
+                });
+
             modelBuilder.Entity("Rasa.Structures.World.MissionContentDefinitionEntry", b =>
                 {
                     b.Property<uint>("MissionId")
@@ -1356,7 +1391,7 @@ namespace Rasa.Migrations.MySqlWorld
                         .HasDefaultValue(false)
                         .HasColumnName("enabled");
 
-                    b.Property<uint>("GiverId")
+                    b.Property<uint?>("GiverId")
                         .HasColumnType("int(11) unsigned")
                         .HasColumnName("giver_id");
 
@@ -1372,7 +1407,7 @@ namespace Rasa.Migrations.MySqlWorld
                         .HasColumnType("tinyint(1)")
                         .HasColumnName("radio_completeable");
 
-                    b.Property<uint>("ReceiverId")
+                    b.Property<uint?>("ReceiverId")
                         .HasColumnType("int(11) unsigned")
                         .HasColumnName("receiver_id");
 
@@ -1672,6 +1707,36 @@ namespace Rasa.Migrations.MySqlWorld
                     b.HasKey("MissionId", "ContentRevision", "PrerequisiteId");
 
                     b.ToTable("mission_prerequisite");
+                });
+
+            modelBuilder.Entity("Rasa.Structures.World.MissionRepeatPolicyEntry", b =>
+                {
+                    b.Property<uint>("MissionId")
+                        .HasColumnType("int(11) unsigned")
+                        .HasColumnName("mission_id");
+
+                    b.Property<string>("ContentRevision")
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("content_revision");
+
+                    b.Property<uint?>("CooldownSeconds")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("cooldown_seconds");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("int")
+                        .HasColumnName("repeat_kind");
+
+                    b.Property<uint?>("ResetSecondUtc")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("reset_second_utc");
+
+                    b.HasKey("MissionId", "ContentRevision");
+
+                    b.ToTable("mission_repeat_policy", t =>
+                        {
+                            t.HasCheckConstraint("CK_mission_repeat_policy_parameters", "(repeat_kind IN (0, 1) AND cooldown_seconds IS NULL AND reset_second_utc IS NULL) OR (repeat_kind = 2 AND cooldown_seconds IS NOT NULL AND cooldown_seconds > 0 AND reset_second_utc IS NULL) OR (repeat_kind = 3 AND cooldown_seconds IS NULL AND reset_second_utc IS NOT NULL AND reset_second_utc BETWEEN 0 AND 86399)");
+                        });
                 });
 
             modelBuilder.Entity("Rasa.Structures.World.MissionRewardDefinitionEntry", b =>
@@ -2729,6 +2794,15 @@ namespace Rasa.Migrations.MySqlWorld
                     b.Navigation("Content");
                 });
 
+            modelBuilder.Entity("Rasa.Structures.World.MissionChannelPolicyEntry", b =>
+                {
+                    b.HasOne("Rasa.Structures.World.MissionContentDefinitionEntry", null)
+                        .WithMany()
+                        .HasForeignKey("MissionId", "ContentRevision")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Rasa.Structures.World.MissionEvidenceEntry", b =>
                 {
                     b.HasOne("Rasa.Structures.World.MissionContentDefinitionEntry", "Content")
@@ -2782,6 +2856,15 @@ namespace Rasa.Migrations.MySqlWorld
                         .IsRequired();
 
                     b.Navigation("Content");
+                });
+
+            modelBuilder.Entity("Rasa.Structures.World.MissionRepeatPolicyEntry", b =>
+                {
+                    b.HasOne("Rasa.Structures.World.MissionContentDefinitionEntry", null)
+                        .WithMany()
+                        .HasForeignKey("MissionId", "ContentRevision")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Rasa.Structures.World.MissionRewardDefinitionEntry", b =>

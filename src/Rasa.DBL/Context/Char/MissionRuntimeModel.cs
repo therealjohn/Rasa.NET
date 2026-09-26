@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
+using Rasa.Missions.Definitions;
 using Rasa.Structures.Char;
 
 namespace Rasa.Context.Char
@@ -8,7 +10,18 @@ namespace Rasa.Context.Char
         internal static void Configure(ModelBuilder model)
         {
             model.Entity<CharacterMissionEntry>().HasIndex(entry => entry.AssignmentId).IsUnique();
-            model.Entity<CharacterMissionHistoryEntry>().HasKey(entry => new { entry.CharacterId, entry.MissionId });
+            model.Entity<CharacterMissionOfferEntry>().HasKey(entry => new { entry.CharacterId, entry.MissionId });
+            model.Entity<CharacterMissionOfferEntry>().HasIndex(entry => entry.OfferId).IsUnique();
+            model.Entity<CharacterMissionOfferEntry>().Property(entry => entry.PartySource).HasConversion(
+                value => JsonSerializer.Serialize(value, (JsonSerializerOptions)null),
+                value => JsonSerializer.Deserialize<MissionPartyOfferSource>(value, (JsonSerializerOptions)null));
+            model.Entity<CharacterMissionOfferEntry>().HasOne<CharacterEntry>().WithMany()
+                .HasForeignKey(entry => entry.CharacterId).OnDelete(DeleteBehavior.Cascade);
+            model.Entity<CharacterMissionHistoryEntry>().HasKey(entry => entry.AssignmentId);
+            model.Entity<CharacterMissionHistoryEntry>().HasIndex(entry => new
+                { entry.CharacterId, entry.MissionId, entry.AssignmentGeneration });
+            model.Entity<CharacterMissionHistoryEntry>().HasIndex(entry => new
+                { entry.CharacterId, entry.MissionId, entry.RewardWindowStartUtc }).IsUnique();
             model.Entity<CharacterMissionHistoryEntry>().HasOne<CharacterEntry>().WithMany()
                 .HasForeignKey(entry => entry.CharacterId).OnDelete(DeleteBehavior.Cascade);
             model.Entity<MissionSceneEntry>().HasIndex(entry => new { entry.MapKey, entry.Status });
@@ -27,6 +40,7 @@ namespace Rasa.Context.Char
                 .HasForeignKey(entry => entry.RunId).OnDelete(DeleteBehavior.Cascade);
             model.Entity<MissionReceiptEntry>().HasKey(entry => new { entry.OwnerId, entry.Generation, entry.OperationKey });
             model.Entity<MissionWorldEffectEntry>().HasKey(entry => new { entry.RunId, entry.Generation, entry.OperationKey });
+            model.Entity<MissionWorldEffectEntry>().HasIndex(entry => entry.SourceRunId);
             model.Entity<MissionWorldEffectEntry>().HasOne<MissionSceneEntry>().WithMany()
                 .HasForeignKey(entry => entry.RunId).OnDelete(DeleteBehavior.Cascade);
             model.Entity<MissionCreditDeliveryEntry>().HasKey(entry => new { entry.EventId, entry.AssignmentId });

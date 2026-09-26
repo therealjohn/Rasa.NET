@@ -452,7 +452,7 @@ namespace Rasa.Test.Missions
                     throw new DbUpdateException("Injected post-reward progress failure.");
             };
 
-            Assert.IsFalse(context.Manager.TryCompleteNpcMission(
+            Assert.IsFalse(context.Manager.CompleteOfferedMission(
                 context.Client, receiver.EntityId, 429, null, null));
             Assert.AreEqual(before, context.ReadRewardTotals());
             Assert.AreEqual(MissionState.Active,
@@ -463,7 +463,7 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(0, context.Drain().Count);
 
             context.BeforeSave = null;
-            Assert.IsTrue(context.Manager.TryCompleteNpcMission(
+            Assert.IsTrue(context.Manager.CompleteOfferedMission(
                 context.Client, receiver.EntityId, 429, null, null));
 
             var after = context.ReadRewardTotals();
@@ -483,7 +483,7 @@ namespace Rasa.Test.Missions
             using var context = CreateCompletionAdapterContext();
             var receiver = context.AddNpc(88);
 
-            Assert.IsTrue(context.Manager.TryCompleteNpcMission(
+            Assert.IsTrue(context.Manager.CompleteOfferedMission(
                 context.Client, receiver.EntityId, 429, null, null));
 
             var packets = context.Drain();

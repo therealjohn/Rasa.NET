@@ -38,7 +38,7 @@ namespace Rasa.Test.Missions
                 }
             };
             var protocol = new MissionProtocolAdapter(context, catalog, new MissionJournalAdapter(catalog),
-                () => DateTime.UtcNow, null);
+                () => DateTime.UtcNow, null, context.Manager.Sharing.CanShare);
             var offer = protocol.BuildOfferInfo(catalog.Missions[321]);
             Assert.AreEqual(2774, offer.AudioSetId);
             protocol.PublishAudio(context.Client, 321, MissionAudioEvent.Accepted);
@@ -81,7 +81,7 @@ namespace Rasa.Test.Missions
         {
             using var harness = BootcampRuntimeTestHarness.Create();
             var giver = harness.AddNpc(BootcampRuntimeTestHarness.MajorMcAllisterCreatureId);
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(harness.Client, giver.EntityId, 1990));
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(harness.Client, giver.EntityId, 1990));
             harness.Drain();
 
             Assert.IsTrue(harness.Manager.RecordProgress(harness.Client, MissionProgressEvent.Area(1990, 430)));
@@ -95,11 +95,11 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(2789U, harness.Drain().OfType<PlayTutorialAudioPacket>().Single().AudioSetId);
             var priorCredits = harness.Client.Player.Credits[CurencyType.Credits];
             var priorExperience = harness.Client.Player.Experience;
-            Assert.IsTrue(harness.Manager.TryCompleteNpcMission(harness.Client, giver.EntityId, 1990, null, null));
+            Assert.IsTrue(harness.Manager.CompleteOfferedMission(harness.Client, giver.EntityId, 1990, null, null));
             Assert.AreEqual(priorCredits + 100, harness.Client.Player.Credits[CurencyType.Credits]);
             Assert.AreEqual(priorExperience + 100U, harness.Client.Player.Experience);
             Assert.AreEqual(2777U, harness.Drain().OfType<PlayTutorialAudioPacket>().Single().AudioSetId);
-            Assert.IsFalse(harness.Manager.TryCompleteNpcMission(harness.Client, giver.EntityId, 1990, null, null));
+            Assert.IsFalse(harness.Manager.CompleteOfferedMission(harness.Client, giver.EntityId, 1990, null, null));
             Assert.IsFalse(harness.Drain().OfType<PlayTutorialAudioPacket>().Any());
         }
 
@@ -114,14 +114,14 @@ namespace Rasa.Test.Missions
             var giver = harness.AddNpc(BootcampRuntimeTestHarness.MajorMcAllisterCreatureId);
             harness.Drain();
             harness.Context.BeforeSave = _ => throw new DbUpdateException("Injected acceptance failure.");
-            Assert.IsFalse(harness.Manager.TryAcceptNpcMission(harness.Client, giver.EntityId, 1990));
+            Assert.IsFalse(harness.Manager.AcceptOfferedMission(harness.Client, giver.EntityId, 1990));
             Assert.IsFalse(harness.Drain().OfType<PlayTutorialAudioPacket>().Any());
             harness.Context.BeforeSave = null;
 
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(harness.Client, giver.EntityId, 1990));
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(harness.Client, giver.EntityId, 1990));
 
             Assert.AreEqual(2773U, harness.Drain().OfType<PlayTutorialAudioPacket>().Single().AudioSetId);
-            Assert.IsFalse(harness.Manager.TryAcceptNpcMission(harness.Client, giver.EntityId, 1990));
+            Assert.IsFalse(harness.Manager.AcceptOfferedMission(harness.Client, giver.EntityId, 1990));
             Assert.IsFalse(harness.Drain().OfType<PlayTutorialAudioPacket>().Any());
             harness.ReconnectFresh(drainPackets: false);
             Assert.IsFalse(harness.Drain().OfType<PlayTutorialAudioPacket>().Any());

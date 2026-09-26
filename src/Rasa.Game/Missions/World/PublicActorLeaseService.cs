@@ -8,6 +8,7 @@ namespace Rasa.Game.Missions.World
 {
     using Data;
     using Managers;
+    using global::Rasa.Missions.Definitions;
     using global::Rasa.Missions.Scenes;
     using Repositories.Char;
     using Repositories.UnitOfWork;
@@ -21,6 +22,7 @@ namespace Rasa.Game.Missions.World
         private readonly Action<string> _runReset;
         private readonly object _gate = new();
         private readonly Dictionary<uint, PublicEncounterBinding> _bindings = new();
+        private readonly Dictionary<uint, ActorGameplayPolicy> _policies = new();
         private readonly Dictionary<(MapChannel Map, uint Spawn), Reservation> _reservations = new();
         private readonly Dictionary<(MapChannel Map, uint Spawn), Recovery> _recovery = new();
         private readonly HashSet<MapChannel> _recoveredMaps = new();
@@ -33,13 +35,64 @@ namespace Rasa.Game.Missions.World
             _runReset = runReset;
         }
 
-        public void Bind(PublicEncounterBinding binding)
+        public void Bind(PublicEncounterBinding binding, ActorGameplayPolicy policy = null)
         {
-            if (binding.MissionId == 0 || binding.SpawnId == 0 ||
+            if (binding == null || binding.MissionId == 0 || binding.SpawnId == 0 ||
                 string.IsNullOrWhiteSpace(binding.Role) || string.IsNullOrWhiteSpace(binding.ScriptKey) ||
                 binding.OwnerLossPolicy is not ("Reset" or "Wait" or "Continue"))
                 throw new ArgumentException("Public encounter binding is incomplete.", nameof(binding));
+            var snapshot = policy?.Snapshot();
             _bindings.Add(binding.MissionId, binding);
+            _policies.Add(binding.MissionId, snapshot);
+        }
+
+        internal bool HasBinding(uint missionId) => _bindings.ContainsKey(missionId);
+
+        internal bool SupportsPartyJoining(uint missionId) =>
+            _bindings.TryGetValue(missionId, out var binding) && binding.AllowPartyJoin &&
+            _missions().Scenes.UsesScript(missionId, binding.ScriptKey);
+
+        internal bool TryGetJoinRun(MapChannel map, CharacterMissionEntry assignment, ICharUnitOfWork unit,
+            out ActorHandle handle)
+        {
+            handle = null;
+            if (map == null || assignment == null || !SupportsPartyJoining(assignment.MissionId))
+                return false;
+            var binding = _bindings[assignment.MissionId];
+            var current = JoinHandle(map, binding);
+            if (current == null)
+                return false;
+            var store = unit.CharacterMissions.Runtime;
+            var scene = store.ReadScene(current.RunId);
+            var lease = store.ReadLease(MapKey(map), SpawnKey(binding.SpawnId));
+            var participant = store.ReadParticipant(current.RunId, assignment.CharacterId);
+            if (scene == null || scene.MissionId != assignment.MissionId ||
+                scene.Generation != current.Generation || scene.Status is not ("Running" or "Waiting") ||
+                scene.ScriptKey != binding.ScriptKey || scene.Release != assignment.ContentRevision ||
+                scene.MapKey != MapKey(map) || lease?.RunId != scene.RunId ||
+                lease.Generation != scene.Generation || lease.ActorRole != binding.Role || lease.State != "Reserved" ||
+                participant?.Active != true || participant.AssignmentId != assignment.AssignmentId ||
+                participant.AssignmentGeneration != assignment.Generation)
+                return false;
+            var owner = store.ReadAssignment(scene.OwnerCharacterId, scene.MissionId);
+            var ownerParticipant = store.ReadParticipant(scene.RunId, scene.OwnerCharacterId);
+            if (owner?.AssignmentId != scene.AssignmentId || owner.MissionState != (uint)MissionState.Active ||
+                owner.ContentRevision != scene.Release || ownerParticipant?.Active != true ||
+                ownerParticipant.AssignmentId != owner.AssignmentId || ownerParticipant.AssignmentGeneration != owner.Generation ||
+                JoinHandle(map, binding) != current)
+                return false;
+            handle = current;
+            return true;
+        }
+
+        private ActorHandle JoinHandle(MapChannel map, PublicEncounterBinding binding)
+        {
+            lock (_gate)
+                return !map.IsPrivateInstance &&
+                    _reservations.TryGetValue((map, binding.SpawnId), out var reservation) &&
+                    reservation.Committed && !reservation.Resetting && reservation.ResetRequested == null &&
+                    reservation.IsCurrent() && reservation.Actor.State is not (CharacterState.Dead or CharacterState.Dying)
+                        ? reservation.Handle : null;
         }
 
         internal bool TryPrepare(Client client, uint missionId, string revision,
@@ -96,6 +149,19 @@ namespace Rasa.Game.Missions.World
             }
         }
 
+        internal bool AttachPolicy(MapChannel map, ActorHandle handle, ActorGameplayPolicy policy)
+        {
+            lock (_gate)
+            {
+                var current = _reservations.Values.SingleOrDefault(entry =>
+                    entry.Map == map && entry.Committed && !entry.Resetting && entry.Handle == handle);
+                if (current == null || !current.IsCurrent())
+                    return false;
+                current.ApplyPolicy(policy);
+                return true;
+            }
+        }
+
         internal bool BeginReset(string runId, string reason)
         {
             MapChannel map;
@@ -146,6 +212,7 @@ namespace Rasa.Game.Missions.World
                 foreach (var message in store.Messages(runId).Where(message => message.Status == "Pending"))
                 { message.Status = "Cancelled"; message.Version++; }
             });
+            CreatureGameplayRules.ClearRole(reservation.Actor, reservation.Handle);
             reservation.Handle = reservation.Handle with { Generation = generation };
             reservation.Resetting = true;
             reservation.ResetRequested = null;
@@ -163,6 +230,14 @@ namespace Rasa.Game.Missions.World
             {
                 try
                 {
+                    if (!run.Resetting && _missions().LoadedMissions.TryGetValue(run.Binding.MissionId, out var mission) &&
+                        mission.RepeatPolicy.Kind != global::Rasa.Missions.Runtime.MissionRepeatKind.Once)
+                    {
+                        using var unit = _factory.CreateChar();
+                        var assignment = unit.CharacterMissions.GetByCharacterAndMission(run.OwnerCharacterId, run.Binding.MissionId);
+                        if (assignment == null || assignment.MissionState is 2 or 4)
+                            BeginReset(map, run.Handle.RunId, "RepeatTerminal");
+                    }
                     if (!run.Resetting && run.ResetRequested != null)
                         BeginReset(map, run.Handle.RunId, run.ResetRequested);
                     if (!run.Resetting && run.Binding.OwnerLossPolicy == "Reset" &&
@@ -179,6 +254,7 @@ namespace Rasa.Game.Missions.World
                             .SingleOrDefault(actor => actor.State != CharacterState.Dead);
                         if (replacement == null)
                             continue;
+                        CreatureGameplayRules.ClearRole(run.Actor);
                         run.Actor = replacement;
                         run.Actor.IsInteractable = false;
                         run.AwaitingRespawn = false;
@@ -313,6 +389,7 @@ namespace Rasa.Game.Missions.World
                 scene.Status = "Ended";
                 scene.Version++;
             });
+            CreatureGameplayRules.ClearRole(run.Actor, run.Handle);
             run.Actor.Controller.ScriptedMove = null;
             BehaviorManager.Instance.SetActionAnchor(run.Actor, run.Home);
             if (run.Actor.SpawnPool != null)
@@ -351,6 +428,7 @@ namespace Rasa.Game.Missions.World
             internal MapChannel Map { get; }
             internal Creature Actor { get; set; }
             internal PublicEncounterBinding Binding { get; }
+            internal ActorGameplayPolicy Policy { get; }
             internal ActorHandle Handle { get; set; }
             internal uint OwnerCharacterId { get; }
             internal string Revision { get; }
@@ -365,6 +443,7 @@ namespace Rasa.Game.Missions.World
                 PublicEncounterBinding binding, uint owner, string revision)
             {
                 _service = service; Map = map; Actor = actor; Binding = binding;
+                Policy = service._policies.GetValueOrDefault(binding.MissionId);
                 OwnerCharacterId = owner; Revision = revision;
                 Home = actor.SpawnPool.Position; Orientation = actor.SpawnPool.Rotation;
                 Handle = new ActorHandle(Guid.NewGuid().ToString("N"), binding.Role, 1, map.MissionEpoch);
@@ -421,7 +500,19 @@ namespace Rasa.Game.Missions.World
             internal void Commit()
             {
                 Committed = true;
+                ApplyPolicy(Policy);
                 _service.PublishInteraction(this, false);
+            }
+
+            internal void ApplyPolicy(ActorGameplayPolicy policy)
+            {
+                var handle = Handle;
+                var actor = Actor;
+                var pool = actor.SpawnPool;
+                CreatureGameplayRules.BindRole(actor, Map, handle, policy,
+                    () => !Resetting && pool.DbId == Binding.SpawnId && pool.ScenarioKey == null &&
+                        _service.TryResolve(Map, handle, out var current) &&
+                        ReferenceEquals(current, actor));
             }
 
             public void Dispose()

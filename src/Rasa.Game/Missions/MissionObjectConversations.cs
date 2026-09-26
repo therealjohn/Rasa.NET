@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Numerics;
 
 namespace Rasa.Game.Missions
 {
     using Data;
+    using Protocol;
     using Managers;
     using Packets.MapChannel.Server;
     using Repositories.Char;
@@ -29,11 +29,28 @@ namespace Rasa.Game.Missions
             client?.Player?.Missions.TryGetValue(binding.MissionId, out var mission) == true &&
             mission.State == MissionState.Active &&
             mission.Objectives.TryGetValue(binding.ObjectiveId, out var objective) &&
-            objective.State == MissionObjectiveState.Incomplete;
+            objective.State == MissionObjectiveState.Incomplete &&
+            Presentation(obj) != null;
 
-        internal NPCConversationStatusPacket Status(Client client, DynamicObject obj) =>
-            new(IsAvailable(client, obj) ? ConversationStatus.ObjectivComplete : ConversationStatus.None,
-                IsAvailable(client, obj) ? new List<uint> { obj.MissionConversation.MissionId } : new List<uint>());
+        internal NPCConversationStatusPacket Status(Client client, DynamicObject obj)
+        {
+            if (!IsAvailable(client, obj))
+                return new(ConversationStatus.None, new List<uint>());
+            var kind = Presentation(obj).Key.Kind;
+            var status = kind switch
+            {
+                MissionConversationTopicKind.ObjectiveCompletion => ConversationStatus.ObjectivComplete,
+                MissionConversationTopicKind.ObjectiveChoice => ConversationStatus.ObjectivChoice,
+                MissionConversationTopicKind.ObjectiveAmbient => ConversationStatus.ObjectivAMB,
+                MissionConversationTopicKind.MissionReminder => ConversationStatus.MissionReminder,
+                _ => throw new InvalidOperationException($"Unsupported object dialogue topic {kind}.")
+            };
+            return new(status, new List<uint> { obj.MissionConversation.MissionId });
+        }
+
+        private MissionDialoguePresentation Presentation(DynamicObject obj) =>
+            _missions.TryGetOperationalMission(obj.MissionConversation.MissionId, out var definition)
+                ? MissionConversationProjection.ForObject(definition, obj.MissionConversation) : null;
 
         internal bool Open(Client client, ulong entityId)
         {
@@ -41,24 +58,29 @@ namespace Rasa.Game.Missions
                 return false;
             lock (client.SyncRoot)
             {
-                client.PendingObjectConversation = null;
-                if (!TryResolve(client, entityId, out var obj))
+                client.MissionConversation = null;
+                if (!_missions.Interactions.TryResolveOpeningTarget(client, entityId, out var target) ||
+                    target.Object is not { } obj)
                     return Reject("Conversation object is unavailable, out of range or belongs to another character.");
                 var binding = obj.MissionConversation;
                 try
                 {
                     using var unit = _factory.CreateChar();
-                    var assignment = unit.CharacterMissions.GetByCharacterAndMission(client.Player.Id, binding.MissionId);
-                    if (!DurableAvailable(client, obj, unit) || assignment == null)
+                    if (!_missions.Interactions.CanOpen(client, target, unit))
+                        return Reject("The conversation source is not available.");
+                    _missions.RefreshConversationAssignments(client, unit, new[] { binding.MissionId });
+                    if (!IsAvailable(client, obj))
                         return Reject("The conversation objective is not available.");
-                    client.PendingObjectConversation = (obj, assignment.AssignmentId);
-                    client.CallMethod(obj.EntityId, new ConversePacket(new Dictionary<ConversationType, object>
-                    {
-                        [ConversationType.ObjectiveComplete] = new List<CompleteableObjectives>
-                        {
-                            new((int)binding.MissionId, (int)binding.DialogObjectiveId, (int)binding.PlayerFlagId)
-                        }
-                    }));
+                    var presentation = Presentation(obj);
+                    if (!_missions.Interactions.CanOpen(client, target, unit) || !DurableAvailable(client, obj, unit) ||
+                        !_missions.Interactions.TryCaptureTopic(client, presentation.Key, unit, out var topic, binding.ObjectiveId) ||
+                        !_missions.Interactions.CanOpen(client, target, unit))
+                        return Reject("The conversation objective is not available.");
+                    topic = topic with { Dialogue = presentation.Definition };
+                    client.MissionConversation = new MissionConversationSession(client, target, new[] { topic });
+                    var data = new Dictionary<ConversationType, object>();
+                    MissionConversationProjection.AddPayloads(data, new[] { presentation });
+                    client.CallMethod(obj.EntityId, new ConversePacket(data));
                     return true;
                 }
                 catch (Exception error) when (GameplayRejectionException.IsExpected(error))
@@ -69,46 +91,8 @@ namespace Rasa.Game.Missions
             }
         }
 
-        internal bool Complete(Client client, ulong entityId, uint missionId, uint dialogObjectiveId, uint playerFlagId)
-        {
-            lock (client.SyncRoot)
-            {
-                if (!TryResolve(client, entityId, out var obj) ||
-                    client.PendingObjectConversation is not { } pending || !ReferenceEquals(pending.Object, obj))
-                    return Reject("The object conversation was not opened or is no longer available.");
-                var binding = obj.MissionConversation;
-                if (binding.MissionId != missionId || binding.DialogObjectiveId != dialogObjectiveId ||
-                    binding.PlayerFlagId != playerFlagId)
-                    return Reject("The object conversation completion does not match its authored binding.");
-                var plan = MissionProgressPublicationPlan.Empty;
-                try
-                {
-                    using var unit = _factory.CreateChar();
-                    unit.ExecuteTransaction(() =>
-                    {
-                        if (!TryResolve(client, entityId, out var current) || !ReferenceEquals(current, obj) ||
-                            unit.CharacterMissions.GetByCharacterAndMission(client.Player.Id, missionId)?.AssignmentId != pending.AssignmentId ||
-                            !DurableAvailable(client, obj, unit))
-                            throw new GameplayRejectionException("The object conversation changed before completion.");
-                        plan = _missions.PlanProgress(client,
-                            new[] { MissionProgressEvent.Interaction((uint)obj.EntityClassId) }, unit,
-                            new HashSet<(uint MissionId, uint ObjectiveId)> { (missionId, binding.ObjectiveId) });
-                        if (!plan.HasChanges)
-                            throw new GameplayRejectionException("The object conversation has no eligible progress transition.");
-                    });
-                }
-                catch (Exception error) when (GameplayRejectionException.IsExpected(error))
-                {
-                    Logger.WriteLog(LogType.Error, $"Unable to complete mission object conversation {entityId}: {error}");
-                    return false;
-                }
-                client.PendingObjectConversation = null;
-                plan.Publish(client);
-                MissionApplication.TryPublish(() => client.CallMethod(obj.EntityId, Status(client, obj)),
-                    $"mission {missionId} object conversation closure");
-                return true;
-            }
-        }
+        internal bool Complete(Client client, ulong entityId, uint missionId, uint dialogObjectiveId, uint playerFlagId) =>
+            _missions.TryCompleteNpcObjective(client, entityId, missionId, dialogObjectiveId, playerFlagId);
 
         private bool DurableAvailable(Client client, DynamicObject obj, ICharUnitOfWork unit)
         {
@@ -119,17 +103,6 @@ namespace Rasa.Game.Missions
                     .TryGetValue(binding.ObjectiveId, out var objective) &&
                 objective.ObjectiveState == (byte)MissionObjectiveState.Incomplete &&
                 _missions.IsObjectiveEligibleAtEvent(client, binding.MissionId, binding.ObjectiveId, unit);
-        }
-
-        private bool TryResolve(Client client, ulong entityId, out DynamicObject obj)
-        {
-            EntityManager.Instance.TryGetObject(entityId, out obj);
-            var player = client?.Player;
-            return client?.State == ClientState.Ingame && client.PendingTransfer == null &&
-                player?.MapChannel != null && player.Id != 0 && !player.Disconected && !player.RemoveFromMap &&
-                player.State != CharacterState.Dead && CellManager.Instance.IsInWorld(client) &&
-                obj?.IsInWorld == true && MapInstanceScope.Contains(player.MapChannel, obj) &&
-                IsAvailable(client, obj) && Vector3.Distance(player.Position, obj.Position) <= DynamicObjectManager.MaxUseDistance;
         }
 
         private static bool Reject(string reason)

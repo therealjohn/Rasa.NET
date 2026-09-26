@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
+using Rasa.Missions.Definitions;
 
 namespace Rasa.Managers
 {
@@ -21,6 +23,10 @@ namespace Rasa.Managers
                     new Dictionary<uint, IReadOnlyList<string>>());
 
             var definitions = repository.GetDefinitions() ?? new List<MissionContentDefinitionEntry>();
+            var repeatPolicies = (repository.GetRepeatPolicies() ?? new List<MissionRepeatPolicyEntry>())
+                .ToDictionary(entry => (entry.MissionId, entry.ContentRevision));
+            var channelPolicies = (repository.GetChannelPolicies() ?? new List<MissionChannelPolicyEntry>())
+                .ToDictionary(entry => (entry.MissionId, entry.ContentRevision));
             if (selectedRevisions != null)
             {
                 definitions = definitions.Where(entry => selectedRevisions.TryGetValue(entry.MissionId, out var revision) &&
@@ -116,6 +122,7 @@ namespace Rasa.Managers
                     transitionDefinitions,
                     objectiveDiagnostics);
 
+                channelPolicies.TryGetValue((definition.MissionId, selectedRevision), out var channels);
                 var mission = new Mission(
                     definition.MissionId,
                     definition.Comment,
@@ -132,7 +139,14 @@ namespace Rasa.Managers
                     operationalDiagnostic: objectiveDiagnostics.Count == 0
                         ? null
                         : string.Join("; ", objectiveDiagnostics),
-                    contentRevision: selectedRevision);
+                    contentRevision: selectedRevision,
+                    repeatPolicy: repeatPolicies.TryGetValue((definition.MissionId, selectedRevision), out var repeat)
+                        ? new Rasa.Missions.Runtime.MissionRepeatPolicy(repeat.Kind, repeat.CooldownSeconds, repeat.ResetSecondUtc)
+                        : null,
+                    acceptanceChannel: channels?.AcceptanceChannel ?? MissionChannel.Npc,
+                    completionChannel: channels?.CompletionChannel ?? MissionChannel.Npc,
+                    radioSources: channels == null ? null :
+                        JsonSerializer.Deserialize<MissionOfferSourceDefinition[]>(channels.RadioSources));
 
                 selectedDefinitions.Add(
                     definition.MissionId,
@@ -228,6 +242,9 @@ namespace Rasa.Managers
                             PlayerFlagId = entry.PlayerFlagId,
                             PlayerFlagValue = entry.PlayerFlagValue,
                             NpcPackageId = entry.NpcPackageId,
+                            ItemIntent = entry.ItemIntentJson == null ? null :
+                                System.Text.Json.JsonSerializer.Deserialize<Rasa.Missions.Scenes.CharacterIntent>(
+                                    entry.ItemIntentJson, Rasa.Missions.Content.MissionContentCodec.Options),
                             Comment = entry.Comment
                         }).ToArray()));
         }

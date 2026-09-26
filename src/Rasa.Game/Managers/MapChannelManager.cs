@@ -897,6 +897,7 @@ namespace Rasa.Managers
             }
 
             // A repeated request restarts the countdown, matching the fresh one the client shows.
+            client.MissionConversation = null;
             client.Player.LogoutActive = true;
             client.Player.LogoutRequestedTick = Environment.TickCount64;
 

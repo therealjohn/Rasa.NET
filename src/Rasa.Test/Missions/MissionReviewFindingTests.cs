@@ -104,7 +104,7 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(0, manager.LoadedMissions[321].Objectives.Count);
 
             var giver = context.AddNpc(101);
-            Assert.IsFalse(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            Assert.IsFalse(manager.AcceptOfferedMission(context.Client, giver.EntityId, 321));
             Assert.IsFalse(context.Client.Player.Missions.ContainsKey(321));
         }
 
@@ -144,7 +144,7 @@ namespace Rasa.Test.Missions
             Assert.IsFalse(classification.TryGetStatus(out var status, out var missionIds));
             Assert.AreEqual(ConversationStatus.None, status);
             CollectionAssert.AreEqual(Array.Empty<uint>(), missionIds);
-            Assert.IsFalse(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            Assert.IsFalse(manager.AcceptOfferedMission(context.Client, giver.EntityId, 321));
         }
 
         [TestMethod]
@@ -185,7 +185,8 @@ namespace Rasa.Test.Missions
             manager.LoadMissions();
 
             Assert.IsFalse(manager.LoadedMissions[321].IsOperational);
-            StringAssert.Contains(manager.LoadedMissions[321].OperationalDiagnostic, "reward");
+            StringAssert.Contains(manager.LoadedMissions[321].OperationalDiagnostic,
+                "legacy npc_mission rows stay inactive until an enabled, complete definition is installed by migrations");
             Assert.IsFalse(manager.TryGetRewardInfo(321, out _));
         }
 
@@ -236,7 +237,7 @@ namespace Rasa.Test.Missions
                 context.Client.Player.Missions.Keys.ToArray());
 
             var giver = context.AddNpc(77);
-            Assert.IsTrue(context.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(context.Manager.AcceptOfferedMission(
                 context.Client,
                 giver.EntityId,
                 321));
@@ -244,7 +245,7 @@ namespace Rasa.Test.Missions
             Assert.IsTrue(context.Client.Player.Missions[321].Objectives.ContainsKey(1));
 
             Assert.IsTrue(context.Manager.TryAbandon(context.Client, 321));
-            Assert.IsTrue(context.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(context.Manager.AcceptOfferedMission(
                 context.Client,
                 giver.EntityId,
                 321));
@@ -271,7 +272,7 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(1, context.MissionCount(1));
 
             var giver = context.AddNpc(77);
-            Assert.IsTrue(context.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(context.Manager.AcceptOfferedMission(
                 context.Client,
                 giver.EntityId,
                 429));
@@ -324,7 +325,7 @@ namespace Rasa.Test.Missions
         {
             using var context = MissionTestContext.WithObjectiveMission();
             var giver = context.AddNpc(77);
-            Assert.IsTrue(context.Manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            Assert.IsTrue(context.Manager.AcceptOfferedMission(context.Client, giver.EntityId, 321));
             context.Drain();
 
             Assert.IsTrue(context.Manager.TryFailObjective(context.Client, 321, 5));
@@ -367,7 +368,7 @@ namespace Rasa.Test.Missions
                 });
             using var scope = context;
             var giver = context.AddNpc(77);
-            Assert.IsTrue(context.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(context.Manager.AcceptOfferedMission(
                 context.Client, giver.EntityId, 321));
             context.Drain();
 
@@ -413,7 +414,7 @@ namespace Rasa.Test.Missions
         {
             using var context = MissionTestContext.WithObjectiveMission();
             var giver = context.AddNpc(77);
-            Assert.IsTrue(context.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(context.Manager.AcceptOfferedMission(
                 context.Client, giver.EntityId, 321));
             context.Drain();
             var npcManager = new NpcManager(context, context.Manager);
@@ -441,7 +442,7 @@ namespace Rasa.Test.Missions
         {
             using var context = MissionTestContext.WithObjectiveMission();
             var giver = context.AddNpc(77);
-            Assert.IsTrue(context.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(context.Manager.AcceptOfferedMission(
                 context.Client, giver.EntityId, 321));
             context.Drain();
             var commands = new ChatCommandsManager(
@@ -471,7 +472,7 @@ namespace Rasa.Test.Missions
         {
             using var context = MissionTestContext.WithObjectiveMission();
             var giver = context.AddNpc(77);
-            Assert.IsTrue(context.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(context.Manager.AcceptOfferedMission(
                 context.Client, giver.EntityId, 321));
             context.Drain();
             context.Client.AccountEntry.Level = (byte)GmLevel.Admin;
@@ -632,7 +633,7 @@ namespace Rasa.Test.Missions
                 });
             var before = context.ReadRewardTotals();
 
-            Assert.IsTrue(context.Manager.TryCompleteNpcMission(
+            Assert.IsTrue(context.Manager.CompleteOfferedMission(
                 context.Client, context.Receiver.EntityId, 429, 0, null));
 
             Assert.AreEqual(MissionState.Completed, context.Client.Player.Missions[429].State);
@@ -646,7 +647,7 @@ namespace Rasa.Test.Missions
                 context.Client.Player.Credits[CurencyType.Prestige]);
             Assert.AreEqual(after.ItemCount, RuntimeItemCount(context.Client));
 
-            Assert.IsFalse(context.Manager.TryCompleteNpcMission(
+            Assert.IsFalse(context.Manager.CompleteOfferedMission(
                 context.Client, context.Receiver.EntityId, 429, 0, null));
             Assert.AreEqual(after, context.ReadRewardTotals());
         }
@@ -996,7 +997,7 @@ namespace Rasa.Test.Missions
                     throw new DbUpdateException("Injected transient dependency failure.");
             };
 
-            Assert.IsFalse(context.Manager.TryCompleteNpcMission(
+            Assert.IsFalse(context.Manager.CompleteOfferedMission(
                 context.Client, receiver.EntityId, 429, null, null));
             Assert.AreEqual((uint)MissionState.Active,
                 context.ReadMission(429).MissionState);
@@ -1004,13 +1005,13 @@ namespace Rasa.Test.Missions
                 context.Client.Player.Missions[430].Objectives[1].State);
 
             context.BeforeSave = null;
-            Assert.IsTrue(context.Manager.TryCompleteNpcMission(
+            Assert.IsTrue(context.Manager.CompleteOfferedMission(
                 context.Client, receiver.EntityId, 429, null, null));
             Assert.AreEqual((uint)MissionState.Completed,
                 context.ReadMission(429).MissionState);
             Assert.AreEqual(MissionObjectiveState.Completed,
                 context.Client.Player.Missions[430].Objectives[1].State);
-            Assert.IsFalse(context.Manager.TryCompleteNpcMission(
+            Assert.IsFalse(context.Manager.CompleteOfferedMission(
                 context.Client, receiver.EntityId, 429, null, null));
             Assert.AreEqual(1,
                 context.Drain().OfType<ObjectiveCompletedPacket>().Count());
@@ -1073,7 +1074,7 @@ namespace Rasa.Test.Missions
                     throw new DbUpdateException("Injected transient reward progress failure.");
             };
 
-            Assert.IsFalse(context.Manager.TryRewardNpcMission(
+            Assert.IsFalse(context.Manager.RewardOfferedMission(
                 context.Client, receiver.EntityId, 429, null, null));
             Assert.AreEqual(before, context.ReadRewardTotals());
             Assert.AreEqual((uint)MissionState.Success,
@@ -1083,14 +1084,14 @@ namespace Rasa.Test.Missions
                     .Missions[430].Objectives[1].ItemCounters[itemClassId]);
 
             context.BeforeSave = null;
-            Assert.IsTrue(context.Manager.TryRewardNpcMission(
+            Assert.IsTrue(context.Manager.RewardOfferedMission(
                 context.Client, receiver.EntityId, 429, null, null));
             var after = context.ReadRewardTotals();
             Assert.AreEqual(before.ItemCount + 3, after.ItemCount);
             Assert.AreEqual(3U,
                 context.ReadProgress(430)
                     .Missions[430].Objectives[1].ItemCounters[itemClassId]);
-            Assert.IsFalse(context.Manager.TryRewardNpcMission(
+            Assert.IsFalse(context.Manager.RewardOfferedMission(
                 context.Client, receiver.EntityId, 429, null, null));
             Assert.AreEqual(after, context.ReadRewardTotals());
         }
@@ -1101,6 +1102,7 @@ namespace Rasa.Test.Missions
         public void UnrelatedProviderExceptionsRetainIdentityAndEscape(string kind)
         {
             using var context = MissionTestContext.WithCompletableMission(429);
+            var before = context.ReadRewardTotals();
             var expected = kind == "overflow"
                 ? (Exception)new OverflowException("Injected provider overflow.")
                 : new NotSupportedException("Injected provider capability failure.");
@@ -1108,7 +1110,7 @@ namespace Rasa.Test.Missions
             Exception actual = null;
             try
             {
-                context.Manager.TryCompleteNpcMission(
+                context.Manager.CompleteOfferedMission(
                     context.Client, context.Receiver.EntityId, 429, 0, null);
             }
             catch (Exception error)
@@ -1117,6 +1119,39 @@ namespace Rasa.Test.Missions
             }
 
             Assert.AreSame(expected, actual);
+            context.AfterSave = null;
+            Assert.AreEqual(before, context.ReadRewardTotals());
+            Assert.AreEqual(MissionState.Active, context.Client.Player.Missions[429].State);
+            Assert.IsTrue(context.Client.Player.Missions[429].Completeable);
+        }
+
+        [TestMethod]
+        [DataRow("experience")]
+        [DataRow("clone-credits")]
+        public void KnownRewardProgressionOverflowIsRejectedBeforeAnyProviderWrite(string kind)
+        {
+            using var context = MissionTestContext.WithCompletableMission(429);
+            var player = context.Client.Player;
+            player.Level = 4;
+            player.Experience = kind == "experience" ? uint.MaxValue : 42900U;
+            player.CloneCredits = kind == "clone-credits" ? uint.MaxValue : 0U;
+            using (var unit = context.CreateChar())
+            {
+                unit.Characters.UpdateCharacterProgression(player.Id, player.Experience, player.Level);
+                unit.Characters.UpdateCharacterCloneCredits(player.Id, player.CloneCredits);
+            }
+            var before = context.ReadRewardTotals();
+            var saveAttempts = context.SaveAttempts;
+
+            Assert.IsFalse(context.Manager.CompleteOfferedMission(
+                context.Client, context.Receiver.EntityId, 429, 0, null));
+
+            Assert.AreEqual(saveAttempts, context.SaveAttempts);
+            Assert.AreEqual(before, context.ReadRewardTotals());
+            Assert.AreEqual((byte)4, player.Level);
+            Assert.AreEqual(kind == "clone-credits" ? uint.MaxValue : 0U, player.CloneCredits);
+            Assert.AreEqual(MissionState.Active, player.Missions[429].State);
+            Assert.IsTrue(player.Missions[429].Completeable);
         }
 
         [TestMethod]
@@ -1131,7 +1166,7 @@ namespace Rasa.Test.Missions
             context.Client.Player.Credits[CurencyType.Credits] = int.MaxValue;
             var before = context.ReadRewardTotals();
 
-            Assert.IsFalse(context.Manager.TryCompleteNpcMission(
+            Assert.IsFalse(context.Manager.CompleteOfferedMission(
                 context.Client, context.Receiver.EntityId, 429, 0, null));
 
             Assert.AreEqual(before, context.ReadRewardTotals());

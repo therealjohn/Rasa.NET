@@ -744,6 +744,7 @@ namespace Rasa.Managers
                     unitOfWork.ExecuteTransaction(() =>
                     {
                         unitOfWork.CharacterAppearances.DeleteForChar(charactersBySlot.Id);
+                        unitOfWork.CharacterMissionItems.RemoveAll(charactersBySlot.Id);
                         unitOfWork.CharacterMissions.RemoveAll(charactersBySlot.Id);
                         unitOfWork.CharacterInventories.DeleteForCharacter(
                             client.AccountEntry.Id, charactersBySlot.Id);
@@ -763,6 +764,18 @@ namespace Rasa.Managers
                         $"Character {charactersBySlot.Id} was deleted with {listings} auction(s) running; the listings were taken down with it.");
 
                 ReleaseOwnedPrivateStartingExperienceRuntime(charactersBySlot.Id);
+                foreach (var item in EntityManager.Instance.Items.Values.Where(item =>
+                    item.MissionOwnership?.CharacterId == charactersBySlot.Id).ToArray())
+                {
+                    if (client.Player?.Id == charactersBySlot.Id)
+                    {
+                        var slot = client.Player.Inventory.PersonalInventory.IndexOf(item.EntityId);
+                        if (slot >= 0)
+                            client.Player.Inventory.PersonalInventory[slot] = 0;
+                    }
+                    item.MissionOwnership = null;
+                    EntityManager.Instance.ReleaseEntity(item.EntityId, EntityType.Item);
+                }
 
                 // Client.Player still points at the character that was just deleted - it is left
                 // loaded when the player returns to character selection. Client.SaveCharacter

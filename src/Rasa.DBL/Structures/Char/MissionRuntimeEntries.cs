@@ -9,10 +9,13 @@ namespace Rasa.Structures.Char
     {
         [Column("character_id")] public uint CharacterId { get; set; }
         [Column("mission_id")] public uint MissionId { get; set; }
-        [Column("assignment_id", TypeName = "varchar(32)")] public string AssignmentId { get; set; } = "";
+        [Required, Column("assignment_id", TypeName = "varchar(32)")] public string AssignmentId { get; set; } = "";
+        [Column("assignment_generation")] public uint AssignmentGeneration { get; set; } = 1;
         [Column("content_revision", TypeName = "varchar(32)")] public string ContentRevision { get; set; } = "";
         [Column("completed_at_utc")] public DateTime CompletedAtUtc { get; set; }
         [Column("rewarded")] public bool Rewarded { get; set; }
+        [Column("rewarded_at_utc")] public DateTime? RewardedAtUtc { get; set; }
+        [Column("reward_window_start_utc")] public DateTime? RewardWindowStartUtc { get; set; }
         [Column("outcome")] public uint Outcome { get; set; } = 4;
     }
 
@@ -88,6 +91,10 @@ namespace Rasa.Structures.Char
         [Column("run_id", TypeName = "varchar(32)")] public string RunId { get; set; } = "";
         [Column("generation")] public uint Generation { get; set; }
         [Column("operation_key", TypeName = "varchar(96)")] public string OperationKey { get; set; } = "";
+        [Column("source_run_id", TypeName = "varchar(32)")] public string SourceRunId { get; set; }
+        [Column("source_generation")] public uint? SourceGeneration { get; set; }
+        [Column("source_assignment_id", TypeName = "varchar(32)")] public string SourceAssignmentId { get; set; }
+        [Column("source_assignment_generation")] public uint? SourceAssignmentGeneration { get; set; }
         [Column("payload", TypeName = "text")] public string Payload { get; set; } = "";
         [Column("status", TypeName = "varchar(16)")] public string Status { get; set; } = "Pending";
         [Column("failure", TypeName = "text")] public string Failure { get; set; }

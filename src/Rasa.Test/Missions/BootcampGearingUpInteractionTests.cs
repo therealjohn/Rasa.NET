@@ -359,9 +359,10 @@ namespace Rasa.Test.Missions
             Assert.IsTrue(harness.Manager.ClassifyNpcConversation(harness.Client.Player, deSimone)
                 .TryGetStatus(out var status, out _));
             Assert.AreEqual(ConversationStatus.MissionComplete, status);
-            Assert.IsTrue(harness.Manager.TryCompleteNpcMission(
+            Assert.IsTrue(harness.Manager.CompleteOfferedMission(
                 harness.Client, deSimone.EntityId, 1992, null, null));
             Assert.AreEqual(MissionState.Completed, harness.Client.Player.Missions[1992].State);
+            Assert.IsTrue(harness.Manager.OpenNpcConversation(harness.Client, deSimone.EntityId));
             new NpcManager(harness.Context, harness.Manager).AssignNPCMission(harness.Client,
                 new AssignNPCMissionPacket { NpcEntityId = deSimone.EntityId, MissionId = 1994 });
             Assert.AreEqual(MissionState.Active, harness.Client.Player.Missions[1994].State);
@@ -488,6 +489,7 @@ namespace Rasa.Test.Missions
         {
             harness.MovePlayerTo(npc);
             CellManager.Instance.UpdateVisibility(harness.Client);
+            Assert.IsTrue(harness.Manager.OpenNpcConversation(harness.Client, npc.EntityId));
             new NpcManager(harness.Context, harness.Manager).AssignNPCMission(harness.Client,
                 new AssignNPCMissionPacket { NpcEntityId = npc.EntityId, MissionId = 1992 });
             Assert.AreEqual(MissionState.Active, harness.Client.Player.Missions[1992].State);
@@ -498,6 +500,7 @@ namespace Rasa.Test.Missions
         {
             harness.MovePlayerTo(npc);
             CellManager.Instance.UpdateVisibility(harness.Client);
+            Assert.IsTrue(harness.Manager.OpenNpcConversation(harness.Client, npc.EntityId));
             new NpcManager(harness.Context, harness.Manager).CompleteNPCObjective(harness.Client,
                 new CompleteNPCObjectivePacket
                 {

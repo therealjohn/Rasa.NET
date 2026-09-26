@@ -18,6 +18,8 @@ namespace Rasa.Repositories.Char.Auction
 
         public bool CreateAuction(AuctionEntry auction)
         {
+            if (_charContext.CharacterMissionItemEntries.Any(entry => entry.ItemId == auction.ItemId))
+                return false;
             // item_id is the key, so a second listing of the same item would throw on save and
             // lose the seller's deposit with it. Checked here instead.
             if (GetAuctionByItemId(auction.ItemId) != null)

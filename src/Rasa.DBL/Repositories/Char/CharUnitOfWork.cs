@@ -76,6 +76,8 @@ namespace Rasa.Repositories.Char
             CharacterLockboxes = characterLockboxes;
             CharacterLogoses = characterLogoses;
             CharacterMissions = characterMissions;
+            MissionOffers = new MissionOffer.MissionOfferRepository(dbContext);
+            CharacterMissionItems = new CharacterMissionItem.CharacterMissionItemRepository(dbContext);
             CharacterMissionDeadlines = characterMissionDeadlines;
             CharacterMissionProgress = characterMissionProgress;
             CharacterMissionScenario = characterMissionScenario;
@@ -105,6 +107,8 @@ namespace Rasa.Repositories.Char
         public ICharacterLockboxRepository CharacterLockboxes { get; }
         public ICharacterLogosRepository CharacterLogoses { get; }
         public ICharacterMissionRepository CharacterMissions { get; }
+        public MissionOffer.MissionOfferRepository MissionOffers { get; }
+        public CharacterMissionItem.ICharacterMissionItemRepository CharacterMissionItems { get; }
         public ICharacterMissionDeadlineRepository CharacterMissionDeadlines { get; }
         public ICharacterMissionProgressRepository CharacterMissionProgress { get; }
         public ICharacterMissionScenarioRepository CharacterMissionScenario { get; }

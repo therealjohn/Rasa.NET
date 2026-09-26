@@ -48,9 +48,9 @@ namespace Rasa.Test.Missions.Encounters
             context.Manager.Scenes.Bind(321, "example.escort", bindings);
             context.Manager.PublicActors.Bind(new PublicEncounterBinding(321, 77, "guide", "example.escort"));
 
-            Assert.IsTrue(context.Manager.TryAcceptNpcMission(context.Client, actor.EntityId, 321));
+            Assert.IsTrue(context.Manager.AcceptOfferedMission(context.Client, actor.EntityId, 321));
             Assert.IsNotNull(actor.Controller.ScriptedMove, "The real acceptance path must start movement, not just reserve a type.");
-            Assert.IsFalse(context.Manager.TryAcceptNpcMission(second, actor.EntityId, 321));
+            Assert.IsFalse(context.Manager.AcceptOfferedMission(second, actor.EntityId, 321));
             Assert.AreEqual(MissionObjectiveState.Incomplete, context.Client.Player.Missions[321].Objectives[1].State);
             if (ownerLost)
             {
@@ -60,7 +60,7 @@ namespace Rasa.Test.Missions.Encounters
                 Assert.IsTrue(actor.IsInteractable);
                 Assert.AreEqual(MissionObjectiveState.Incomplete, context.Client.Player.Missions[321].Objectives[1].State);
                 Assert.AreEqual(6.5f, actor.RunSpeed);
-                Assert.IsTrue(context.Manager.TryAcceptNpcMission(second, actor.EntityId, 321));
+                Assert.IsTrue(context.Manager.AcceptOfferedMission(second, actor.EntityId, 321));
                 return;
             }
             for (var tick = 0; tick < 60 && !actor.IsInteractable; tick++)
@@ -74,7 +74,7 @@ namespace Rasa.Test.Missions.Encounters
             Assert.AreEqual(actor.SpawnPool.Position, actor.Position);
             Assert.AreEqual(1, context.Map.MapCellInfo.Cells.Values.SelectMany(cell => cell.CreatureList)
                 .Distinct().Count(creature => creature.DbId == 77));
-            Assert.IsTrue(context.Manager.TryAcceptNpcMission(second, actor.EntityId, 321));
+            Assert.IsTrue(context.Manager.AcceptOfferedMission(second, actor.EntityId, 321));
             Assert.AreEqual(MissionObjectiveState.Incomplete, second.Player.Missions[321].Objectives[1].State,
                 "Waiting for the previous run must not copy its progress.");
         }

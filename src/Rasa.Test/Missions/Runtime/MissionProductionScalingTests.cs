@@ -28,7 +28,7 @@ namespace Rasa.Test.Missions.Runtime
             });
             using var context = MissionTestContext.WithCustomDefinitions(definitions);
             var giver = context.AddNpc(43);
-            Assert.IsTrue(context.Manager.TryAcceptNpcMission(context.Client, giver.EntityId, 43));
+            Assert.IsTrue(context.Manager.AcceptOfferedMission(context.Client, giver.EntityId, 43));
             var before = context.Manager.TotalRuleEvaluations;
             Assert.IsTrue(context.Manager.RecordProgress(context.Client, MissionProgressEvent.Creature(43)));
             Assert.AreEqual(2L, context.Manager.TotalRuleEvaluations - before,
@@ -45,7 +45,7 @@ namespace Rasa.Test.Missions.Runtime
         {
             using var context = MissionTestContext.WithDefinitions(321);
             var giver = context.AddNpc(77);
-            Assert.IsTrue(context.Manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            Assert.IsTrue(context.Manager.AcceptOfferedMission(context.Client, giver.EntityId, 321));
             context.RemoveNpcFromWorld(giver);
             BootcampRuntimeTestHarness.PrepareDirectDamageClient(context.Client);
             var maps = new MapChannelManager(context, scenarioService: context.Manager.ScenarioService);

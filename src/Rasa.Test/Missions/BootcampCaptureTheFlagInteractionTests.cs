@@ -241,8 +241,8 @@ namespace Rasa.Test.Missions
                 "Youngblood must become speakable in the client without a reconnect.");
             harness.MovePlayerTo(youngblood);
             CellManager.Instance.UpdateVisibility(harness.Client);
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(harness.Client, youngblood.EntityId, 1994, 3, 1));
-            Assert.IsTrue(harness.Manager.TryCompleteNpcMission(harness.Client, youngblood.EntityId, 1994, null, null));
+            Assert.IsTrue(harness.Manager.CompleteOfferedObjective(harness.Client, youngblood.EntityId, 1994, 3, 1));
+            Assert.IsTrue(harness.Manager.CompleteOfferedMission(harness.Client, youngblood.EntityId, 1994, null, null));
             harness.Manager.TickScenarios(harness.Client);
             Assert.IsTrue(Actors(harness).Where(actor => ForeanNames.Contains(actor.NameId))
                 .All(actor => actor.SpawnPool.FollowOwnerCharacterId == 0));
@@ -253,7 +253,7 @@ namespace Rasa.Test.Missions
             AssertGrounded(harness, youngblood);
             harness.MovePlayerTo(youngblood);
             CellManager.Instance.UpdateVisibility(harness.Client);
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(harness.Client, youngblood.EntityId, 1995));
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(harness.Client, youngblood.EntityId, 1995));
             Assert.IsFalse(Actors(harness).Any(actor => actor.DbId == BootcampRuntimeTestHarness.TizzikGiCreatureId));
         }
 
@@ -293,7 +293,7 @@ namespace Rasa.Test.Missions
             harness.MovePlayerTo(deSimone);
             CellManager.Instance.UpdateVisibility(harness.Client);
             harness.Drain();
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(harness.Client, deSimone.EntityId, 1994));
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(harness.Client, deSimone.EntityId, 1994));
         }
 
         private static void ReachTizzik(BootcampRuntimeTestHarness.Harness harness)
@@ -301,7 +301,7 @@ namespace Rasa.Test.Missions
             SpawnPoolManager.Instance.SpawnPoolWorker(harness.BootcampMap, 0);
             AcceptCapture(harness);
             var deSimone = Actors(harness).Single(actor => actor.DbId == BootcampRuntimeTestHarness.CorporalDeSimoneCreatureId);
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(harness.Client, deSimone.EntityId, 1994, 4, 1));
+            Assert.IsTrue(harness.Manager.CompleteOfferedObjective(harness.Client, deSimone.EntityId, 1994, 4, 1));
             Assert.IsTrue(harness.Manager.TryGetAreaDefinition(1994, 439, out var exit));
             var previousPosition = harness.Client.Player.Position;
             harness.MovePlayerTo(exit.Position);

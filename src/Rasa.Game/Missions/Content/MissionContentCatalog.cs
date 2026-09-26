@@ -99,6 +99,8 @@ namespace Rasa.Managers
                     var publicSpawnIds = (unit.Spawnpools
                         ?? throw new InvalidOperationException("Migrated mission validation requires the World spawn repository."))
                         .Get().Select(entry => entry.Id).ToHashSet();
+                    var npcPackageIds = (unit.NpcPackages?.Get() ?? new List<NpcPackageEntry>())
+                        .Select(entry => entry.PackageId).ToHashSet();
                     foreach (var binding in content.GetSceneBindings().Where(binding =>
                         selected.TryGetValue(binding.MissionId, out var revision) && revision == binding.ContentRevision))
                     {
@@ -120,7 +122,32 @@ namespace Rasa.Managers
                         SceneBindings.Add(binding.MissionId, document);
                         Missions[binding.MissionId] = Missions[binding.MissionId].WithPolicies(document.Credit, document.Requirement,
                             document.TurnInRequirement, document.ObjectiveRequirements);
+                        Missions[binding.MissionId] = Missions[binding.MissionId].WithItems(document.Items, document.AcceptanceItems);
+                        var itemErrors = Rasa.Missions.Definitions.MissionItemValidation.Errors(Missions[binding.MissionId],
+                            document.Sequences.Values.SelectMany(sequence => sequence.Character)).ToArray();
+                        if (itemErrors.Length > 0)
+                            throw new MissionRuleException($"Mission {binding.MissionId}: {string.Join("; ", itemErrors)}");
+                        if (document.Items?.Count > 0)
+                        {
+                            var templates = unit.Equipment.GetItemTemplateClasses().Select(entry => entry.ItemTemplateId).ToHashSet();
+                            if (document.Items.Any(item => !templates.Contains(item.ItemTemplateId)))
+                                throw new MissionRuleException($"Mission {binding.MissionId}: mission item template is missing.");
+                        }
+                        if (document.Dialogue != null)
+                        {
+                            if (document.Dialogue.Any(topic => !npcPackageIds.Contains(topic.NpcPackageId)))
+                                throw new MissionRuleException($"Mission {binding.MissionId}: dialogue references a missing NPC package.");
+                            var mission = Missions[binding.MissionId].WithDialogue(document.Dialogue);
+                            var errors = Rasa.Missions.Definitions.MissionDialogueValidation.Errors(mission).ToArray();
+                            if (errors.Length > 0)
+                                throw new MissionRuleException($"Mission {binding.MissionId}: {string.Join("; ", errors)}");
+                            MissionSceneValidation.ValidateDialogueActions(mission, document);
+                            Missions[binding.MissionId] = mission;
+                        }
+                        MissionSceneValidation.ValidateSharing(Missions[binding.MissionId], document);
                     }
+                    foreach (var document in SceneBindings.Values)
+                        ValidateObjectDialogue(document);
                     foreach (var mission in snapshot.Definitions.Values.Where(definition => definition.Scenarios.Count > 0))
                         if (!SceneBindings.TryGetValue(mission.MissionId, out var scene) || string.IsNullOrWhiteSpace(scene.Script))
                             throw new MissionRuleException($"Mission {mission.MissionId} requires a migrated scene script binding.");
@@ -145,15 +172,75 @@ namespace Rasa.Managers
                             if (!Missions.TryGetValue(actor.Conversation.MissionId, out var mission) ||
                                 !mission.Objectives.ContainsKey(actor.Conversation.ObjectiveId))
                                 throw new MissionRuleException($"Experience {experience.Key}: object conversation has an unknown mission objective.");
+                        ValidateObjectDialogue(experience.Scene);
                         Experiences.Add(experience);
                     }
+                    var scenes = SceneBindings.Values.Concat(Experiences.Select(experience => experience.Scene)).ToArray();
+                    foreach (var scene in scenes)
+                        foreach (var offer in scene.Sequences.Values.SelectMany(sequence => sequence.Character)
+                            .OfType<Rasa.Missions.Scenes.OfferRadioMissionIntent>())
+                            if (scene.Script == null || !TryGetOperational(offer.MissionId, out var target) ||
+                                !target.RadioSources.Any(source => source.Kind == Rasa.Missions.Definitions.MissionOfferSourceKind.Scene &&
+                                    source.Key == scene.Script))
+                                throw new MissionRuleException($"Scene {scene.Script}: radio offer {offer.MissionId} has no authorized target source.");
+                    MissionSceneValidation.ValidateSharedActors(scenes);
+                    ValidateActorPolicies(unit);
                 }
             }
             Runtime = new MissionRuntime(Missions.Values);
             var requirements = new Game.Missions.Integration.MissionRequirementService();
             foreach (var mission in Missions.Values.Where(mission => mission.IsOperational))
+            {
                 requirements.Validate(mission);
+                var errors = Rasa.Missions.Definitions.MissionItemValidation.Errors(mission).ToArray();
+                if (errors.Length > 0)
+                    throw new MissionRuleException($"Mission {mission.MissionId}: {string.Join("; ", errors)}");
+            }
             return Report;
+        }
+
+        private void ValidateObjectDialogue(MissionSceneDefinition scene)
+        {
+            foreach (var actor in scene.Actors.Values.Where(actor => actor.Conversation != null))
+                if (!Missions.TryGetValue(actor.Conversation.MissionId, out var mission) ||
+                    !mission.Objectives.ContainsKey(actor.Conversation.ObjectiveId) ||
+                    Game.Missions.Protocol.MissionConversationProjection.ForObject(mission, actor.Conversation) == null)
+                    throw new MissionRuleException($"Object {actor.Role}: conversation has no matching authored dialogue topic.");
+        }
+
+        private void ValidateActorPolicies(IWorldUnitOfWork unit)
+        {
+            var policies = SceneBindings.SelectMany(scene => scene.Value.Actors.Values
+                    .Where(actor => actor.GameplayPolicy != null)
+                    .Select(actor => (Source: $"Mission {scene.Key}, actor {actor.Role}", Policy: actor.GameplayPolicy)))
+                .Concat(Experiences.SelectMany(experience => experience.Scene.Actors.Values
+                    .Where(actor => actor.GameplayPolicy != null)
+                    .Select(actor => (Source: $"Experience {experience.Key}, actor {actor.Role}", Policy: actor.GameplayPolicy))))
+                .Concat(Experiences.SelectMany(experience => experience.ActorPolicies
+                    .Select(entry => (Source: $"Experience {experience.Key}, creature {entry.Key}", Policy: entry.Value))))
+                .ToArray();
+            foreach (var entry in policies)
+            {
+                var error = entry.Policy == null ? "missing policy" : entry.Policy.ValidationError();
+                if (error != null)
+                    throw new MissionRuleException($"{entry.Source}: invalid gameplay policy ({error}).");
+            }
+            var loot = policies.Where(entry => entry.Policy.Loot != null).ToArray();
+            if (loot.Length == 0)
+                return;
+            var equipment = unit.Equipment
+                ?? throw new MissionRuleException("Actor loot validation requires the World equipment repository.");
+            var templates = equipment.GetItemTemplates().Select(entry => entry.Id).ToHashSet();
+            var links = equipment.GetItemTemplateClasses().ToDictionary(entry => entry.ItemTemplateId, entry => entry.ItemClass);
+            var classes = equipment.GetItemClasses().ToDictionary(entry => entry.Id, entry => entry.StackSize);
+            var entityClasses = (unit.EntityClasses
+                ?? throw new MissionRuleException("Actor loot validation requires the World entity-class repository."))
+                .Get().Select(entry => entry.Id).ToHashSet();
+            foreach (var entry in loot)
+                foreach (var drop in entry.Policy.Loot.Drops)
+                    if (!templates.Contains(drop.TemplateId) || !links.TryGetValue(drop.TemplateId, out var itemClass) ||
+                        !entityClasses.Contains(itemClass) || !classes.TryGetValue(itemClass, out var stackSize) || drop.Maximum > stackSize)
+                        throw new MissionRuleException($"{entry.Source}: loot template {drop.TemplateId} is missing an item class or exceeds its stack size.");
         }
     }
 }

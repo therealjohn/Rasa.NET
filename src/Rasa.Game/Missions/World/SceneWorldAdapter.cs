@@ -27,6 +27,7 @@ namespace Rasa.Game.Missions.World
         void Tick(MapChannel map, DateTime utcNow);
         void Detach(string runId);
         void Pause(string runId);
+        void CancelOperation(string runId, uint generation, string operationKey);
         void Terminate(SceneRun run, MapChannel map);
     }
 
@@ -53,6 +54,10 @@ namespace Rasa.Game.Missions.World
                 existing.Run = run;
                 return;
             }
+            if (existing != null && run.Generation < existing.Run.Generation)
+                throw new GameplayRejectionException($"Run {run.Id} cannot attach an older actor generation.");
+            if (existing != null)
+                Terminate(existing.Run, existing.Map);
             _runs[run.Id] = new WorldRun(run, bindings, owner, map);
         }
 
@@ -137,6 +142,8 @@ namespace Rasa.Game.Missions.World
                 {
                     if (!world.Map.IsPrivateInstance)
                         _leases.BeginReset(world.Map, run.Id, "SceneRelease");
+                    else
+                        CreatureGameplayRules.ClearRole(actor.Creature, actor.Handle);
                 }
                 else if (actor.Creature != null)
                 {
@@ -149,6 +156,8 @@ namespace Rasa.Game.Missions.World
                     world.Map.DynamicObjects.Remove(actor.Object);
                 }
                 world.Actors.Remove(intent.Role);
+                world.Follows.Remove(intent.Role);
+                world.Attacks.Remove(intent.Role);
                 return WorldEffectResult.Applied();
             }
             if (intent is SetInteractionIntent interaction)
@@ -204,6 +213,7 @@ namespace Rasa.Game.Missions.World
                     actor.Creature.Faction == (target is Creature enemy ? enemy.Faction : Factions.AFS))
                     return WorldEffectResult.Failed("Combat requires living hostile actors in the same runtime map.");
                 BehaviorManager.Instance.SetActionFighting(actor.Creature, target.EntityId);
+                world.Attacks[intent.Role] = (intent.OperationKey, target.EntityId);
                 return WorldEffectResult.Applied();
             }
             if (intent is FollowActorIntent follow)
@@ -216,9 +226,15 @@ namespace Rasa.Game.Missions.World
                 pool.ScenarioOwnerCharacterId = targetCharacter;
                 pool.ScenarioMissionId = definition.MissionId == 0 ? run.MissionId : definition.MissionId;
                 if (follow.Enabled)
+                {
                     BehaviorManager.Instance.SetActionFollow(actor.Creature, world.Owner?.Player.EntityId ?? 0);
+                    world.Follows[intent.Role] = (intent.OperationKey, targetCharacter, world.Owner?.Player.EntityId ?? 0);
+                }
                 else
+                {
                     BehaviorManager.Instance.SetActionAnchor(actor.Creature, actor.Creature.Position);
+                    world.Follows.Remove(intent.Role);
+                }
                 CreatureManager.PublishEscortStatus(world.Map, actor.Creature, follow.Enabled);
                 return WorldEffectResult.Applied();
             }
@@ -252,13 +268,16 @@ namespace Rasa.Game.Missions.World
                 {
                     handle = _leases.Handle(world.Map, definition.TemplateId);
                     if (handle?.RunId != world.Run.Id || handle.Role != definition.Role ||
-                        !_leases.TryResolve(world.Map, handle, out creature))
+                        handle.Generation != world.Run.Generation ||
+                        !_leases.TryResolve(world.Map, handle, out creature) ||
+                        !_leases.AttachPolicy(world.Map, handle, definition.GameplayPolicy))
                         return WorldEffectResult.Failed($"Actor {definition.Role} is not leased to this run.");
                 }
                 if (creature == null)
                     return IsAwaitingPrivateSpawn(world, definition) ? WorldEffectResult.Deferred() :
                         WorldEffectResult.Failed($"Public actor spawn {definition.TemplateId} is unavailable.");
                 world.Actors[definition.Role] = new BoundActor(handle, creature, null);
+                BindCreaturePolicy(world, definition, world.Actors[definition.Role]);
                 return WorldEffectResult.Applied();
             }
             if (definition.Position == null)
@@ -275,7 +294,8 @@ namespace Rasa.Game.Missions.World
             {
                 var creature = world.Map.MapCellInfo.Cells.Values.SelectMany(cell => cell.CreatureList)
                     .Distinct().SingleOrDefault(candidate => candidate.SpawnPool?.ScenarioKey == runtimeKey);
-                if (creature == null)
+                var created = creature == null;
+                if (created)
                 {
                     var pool = new SpawnPool
                     {
@@ -292,10 +312,14 @@ namespace Rasa.Game.Missions.World
                     creature = CreatureManager.Instance.CreateScenarioCreature(pool, definition.TemplateId, pool.Position, pool.Rotation);
                     if (creature == null)
                         return WorldEffectResult.Failed($"Creature template {definition.TemplateId} could not spawn.");
-                    world.Map.SpawnPools.Add(pool);
-                    CellManager.Instance.AddToWorld(world.Map, creature);
                 }
                 world.Actors[definition.Role] = new BoundActor(handle, creature, null);
+                BindCreaturePolicy(world, definition, world.Actors[definition.Role]);
+                if (created)
+                {
+                    world.Map.SpawnPools.Add(creature.SpawnPool);
+                    CellManager.Instance.AddToWorld(world.Map, creature);
+                }
             }
             else
             {
@@ -394,7 +418,20 @@ namespace Rasa.Game.Missions.World
             if (actor == null)
                 return false;
             world.Actors[definition.Role] = actor;
+            BindCreaturePolicy(world, definition, actor);
             return true;
+        }
+
+        private void BindCreaturePolicy(WorldRun world, SceneActorDefinition definition, BoundActor actor)
+        {
+            if (actor.Creature == null || definition.Kind == SceneActorKind.PublicSpawn && !world.Map.IsPrivateInstance)
+                return;
+            var pool = actor.Creature.SpawnPool;
+            var ownership = (pool.SceneRunId, pool.SceneActorRole, pool.SceneGeneration, pool.SceneSharedKey, pool.ScenarioKey);
+            CreatureGameplayRules.BindRole(actor.Creature, world.Map, actor.Handle, definition.GameplayPolicy,
+                () => _runs.GetValueOrDefault(world.Run.Id) == world &&
+                    world.Actors.GetValueOrDefault(definition.Role) == actor && IsCurrent(world, actor) &&
+                    (pool.SceneRunId, pool.SceneActorRole, pool.SceneGeneration, pool.SceneSharedKey, pool.ScenarioKey) == ownership);
         }
 
         private static bool ObjectShapeMatches(DynamicObject obj, SceneActorDefinition definition) =>
@@ -411,8 +448,76 @@ namespace Rasa.Game.Missions.World
                    _leases.TryResolve(world.Map, actor.Handle, out _))
                 : MapInstanceScope.Contains(world.Map, actor.Object));
         public void Tick(MapChannel map, DateTime utcNow) => _routes.Tick(map, utcNow);
-        public void Detach(string runId) { _routes.Cancel(runId); _runs.Remove(runId); }
+        public void Detach(string runId)
+        {
+            _routes.Cancel(runId);
+            if (_runs.Remove(runId, out var world))
+                foreach (var actor in world.Actors.Values.Where(actor => actor.Creature != null &&
+                    (world.Map.IsPrivateInstance || world.Bindings.Actors[actor.Handle.Role].Kind != SceneActorKind.PublicSpawn)))
+                {
+                    CreatureGameplayRules.ClearRole(actor.Creature, actor.Handle);
+                    if (world.Bindings.Actors[actor.Handle.Role].SharedKey == null || actor.Creature.GameplayBinding != null)
+                        continue;
+                    foreach (var remaining in _runs.Values.Where(run => run.Map == world.Map))
+                    {
+                        var reference = remaining.Actors.Values.FirstOrDefault(candidate =>
+                            candidate.Creature == actor.Creature && IsCurrent(remaining, candidate));
+                        if (reference == null)
+                            continue;
+                        BindCreaturePolicy(remaining, remaining.Bindings.Actors[reference.Handle.Role], reference);
+                        break;
+                    }
+                }
+        }
         public void Pause(string runId) => _routes.Cancel(runId);
+        public void CancelOperation(string runId, uint generation, string operationKey)
+        {
+            _routes.Cancel(runId, operationKey: operationKey, generation: generation);
+            if (!_runs.TryGetValue(runId, out var world) || world.Run.Generation != generation)
+                return;
+            foreach (var control in world.Follows.Where(entry => entry.Value.OperationKey == operationKey).ToArray())
+            {
+                world.Follows.Remove(control.Key);
+                if (!world.Actors.TryGetValue(control.Key, out var actor) || !IsCurrent(world, actor) ||
+                    actor.Creature?.SpawnPool is not { } pool || pool.FollowOwnerCharacterId != control.Value.CharacterId)
+                    continue;
+                var creature = actor.Creature;
+                var follow = creature.Controller.ActionFollow;
+                var assisting = creature.Controller.CurrentAction == BehaviorManager.BehaviorActionFighting &&
+                    follow.OwnerAttackTarget?.EntityId == creature.Controller.ActionFighting.TargetEntityId &&
+                    (!world.Attacks.TryGetValue(control.Key, out var attack) ||
+                        attack.TargetId != creature.Controller.ActionFighting.TargetEntityId);
+                pool.FollowOwnerCharacterId = 0;
+                pool.FollowTargetEntityId = 0;
+                follow.FollowTargetId = 0;
+                follow.OwnerAttackTarget = null;
+                follow.CatchUpRunning = false;
+                follow.HasAnchor = true;
+                follow.Anchor = creature.Position;
+                if (creature.Controller.CurrentAction == BehaviorManager.BehaviorActionFollow || assisting)
+                {
+                    creature.Controller.ActionFighting.TargetEntityId = 0;
+                    creature.Target = 0;
+                    BehaviorManager.Instance.SetActionAnchor(creature, creature.Position);
+                }
+                CreatureManager.PublishEscortStatus(world.Map, creature, false);
+            }
+            foreach (var control in world.Attacks.Where(entry => entry.Value.OperationKey == operationKey).ToArray())
+            {
+                world.Attacks.Remove(control.Key);
+                if (!world.Actors.TryGetValue(control.Key, out var actor) || !IsCurrent(world, actor) ||
+                    actor.Creature is not { } creature ||
+                    creature.Controller.CurrentAction != BehaviorManager.BehaviorActionFighting ||
+                    creature.Controller.ActionFighting.TargetEntityId != control.Value.TargetId)
+                    continue;
+                creature.Controller.ActionFighting.TargetEntityId = 0;
+                creature.Target = 0;
+                if (world.Follows.TryGetValue(control.Key, out var follow))
+                    BehaviorManager.Instance.SetActionFollow(creature, follow.TargetId);
+                else
+                    BehaviorManager.Instance.SetActionAnchor(creature, creature.Position);
+            }
+        }
 
         public void Terminate(SceneRun run, MapChannel map)
         {
@@ -422,7 +527,11 @@ namespace Rasa.Game.Missions.World
             foreach (var creature in map.MapCellInfo.Cells.Values.SelectMany(cell => cell.CreatureList).Distinct()
                 .Where(creature => creature.SpawnPool?.SceneRunId == run.Id &&
                     creature.SpawnPool.SceneGeneration == run.Generation).ToArray())
-                CellManager.Instance.RemoveCreatureFromWorld(map, creature);
+            {
+                CreatureGameplayRules.ClearRole(creature);
+                if (map.IsPrivateInstance || creature.State != CharacterState.Dead || creature.CorpseLootEntityId == 0)
+                    CellManager.Instance.RemoveCreatureFromWorld(map, creature);
+            }
             map.SpawnPools.RemoveAll(pool => pool.SceneRunId == run.Id && pool.SceneGeneration == run.Generation);
             foreach (var obj in map.DynamicObjects.Where(obj => obj.SceneRunId == run.Id &&
                 obj.SceneGeneration == run.Generation).ToArray())
@@ -441,6 +550,8 @@ namespace Rasa.Game.Missions.World
             internal Client Owner { get; set; }
             internal MapChannel Map { get; }
             internal Dictionary<string, BoundActor> Actors { get; } = new(StringComparer.Ordinal);
+            internal Dictionary<string, (string OperationKey, uint CharacterId, ulong TargetId)> Follows { get; } = new(StringComparer.Ordinal);
+            internal Dictionary<string, (string OperationKey, ulong TargetId)> Attacks { get; } = new(StringComparer.Ordinal);
             internal WorldRun(SceneRun run, SceneBindings bindings, Client owner, MapChannel map)
             { Run = run; Bindings = bindings; Owner = owner; Map = map; }
         }

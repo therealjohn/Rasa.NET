@@ -26,7 +26,7 @@ namespace Rasa.Test.Missions
                 Assert.IsFalse(outcomes[0].Rewarded);
             }
             var giver = context.AddNpc(77);
-            Assert.IsTrue(context.Manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321),
+            Assert.IsTrue(context.Manager.AcceptOfferedMission(context.Client, giver.EntityId, 321),
                 "A failed outcome is not a nonrepeatable reward claim.");
         }
 
@@ -34,14 +34,14 @@ namespace Rasa.Test.Missions
         public void ClearingRewardedMissionCannotReacceptOrRegrantIt()
         {
             using var context = MissionTestContext.WithCompletableMission(321);
-            Assert.IsTrue(context.Manager.TryCompleteNpcMission(
+            Assert.IsTrue(context.Manager.CompleteOfferedMission(
                 context.Client, context.Receiver.EntityId, 321, 0, null));
             var paid = context.ReadRewardTotals();
             Assert.IsTrue(context.Manager.TryClear(context.Client, 321));
             var giver = context.AddNpc(77);
             context.Drain();
 
-            Assert.IsFalse(context.Manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321),
+            Assert.IsFalse(context.Manager.AcceptOfferedMission(context.Client, giver.EntityId, 321),
                 "Removing a journal projection must not remove a nonrepeatable reward claim.");
             Assert.AreEqual(paid, context.ReadRewardTotals());
             Assert.AreEqual(0, context.Drain().OfType<MissionGainedPacket>().Count());
@@ -64,7 +64,7 @@ namespace Rasa.Test.Missions
             context.Drain();
 
             Assert.IsTrue(
-                context.Manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321),
+                context.Manager.AcceptOfferedMission(context.Client, giver.EntityId, 321),
                 "Two hundred rewarded missions must not consume the remaining active journal slot.");
             Assert.AreEqual(
                 30,
@@ -72,7 +72,7 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(1, context.Drain().OfType<MissionGainedPacket>().Count());
 
             Assert.IsFalse(
-                context.Manager.TryAcceptNpcMission(context.Client, giver.EntityId, 429),
+                context.Manager.AcceptOfferedMission(context.Client, giver.EntityId, 429),
                 "Separating completion history must still enforce the thirty active mission limit.");
             Assert.IsFalse(context.Client.Player.Missions.ContainsKey(429));
             Assert.AreEqual(0, context.Drain().OfType<MissionGainedPacket>().Count());

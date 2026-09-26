@@ -287,7 +287,9 @@ namespace Rasa.Test.Gameplay
             var removedItemsBeforeRollback = false;
             context.AfterSave = database =>
             {
-                reachedSave = !database.CharacterEntries.Any(entry => entry.Id == characterId);
+                if (database.CharacterEntries.Any(entry => entry.Id == characterId))
+                    return;
+                reachedSave = true;
                 removedInventoryBeforeRollback = !database.CharacterInventoryEntries.Any(entry =>
                     entry.CharacterId == characterId);
                 removedItemsBeforeRollback = !database.ItemEntries.Any(entry => itemIds.Contains(entry.ItemId));

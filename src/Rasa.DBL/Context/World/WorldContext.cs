@@ -105,6 +105,19 @@ namespace Rasa.Context.World
                 .HasKey(entry => entry.ExperienceKey);
             modelBuilder.Entity<MissionSceneBindingEntry>().HasOne<MissionContentDefinitionEntry>().WithMany()
                 .HasForeignKey(entry => new { entry.MissionId, entry.ContentRevision }).OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionRepeatPolicyEntry>().HasKey(entry => new { entry.MissionId, entry.ContentRevision });
+            modelBuilder.Entity<MissionChannelPolicyEntry>().HasKey(entry => new { entry.MissionId, entry.ContentRevision });
+            modelBuilder.Entity<MissionChannelPolicyEntry>().HasOne<MissionContentDefinitionEntry>().WithMany()
+                .HasForeignKey(entry => new { entry.MissionId, entry.ContentRevision }).OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionChannelPolicyEntry>().ToTable(table => table.HasCheckConstraint(
+                "CK_mission_channel_policy_channels", "acceptance_channel IN (1, 2, 3) AND completion_channel IN (1, 2, 3)"));
+            modelBuilder.Entity<MissionRepeatPolicyEntry>().HasOne<MissionContentDefinitionEntry>().WithMany()
+                .HasForeignKey(entry => new { entry.MissionId, entry.ContentRevision }).OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<MissionRepeatPolicyEntry>().ToTable(table => table.HasCheckConstraint(
+                "CK_mission_repeat_policy_parameters",
+                "(repeat_kind IN (0, 1) AND cooldown_seconds IS NULL AND reset_second_utc IS NULL) OR " +
+                "(repeat_kind = 2 AND cooldown_seconds IS NOT NULL AND cooldown_seconds > 0 AND reset_second_utc IS NULL) OR " +
+                "(repeat_kind = 3 AND cooldown_seconds IS NULL AND reset_second_utc IS NOT NULL AND reset_second_utc BETWEEN 0 AND 86399)"));
         }
 
         /// <summary>
@@ -211,7 +224,12 @@ namespace Rasa.Context.World
                 "AND area_id IS NULL AND npc_package_id IS NULL " +
                 "AND player_flag_id IS NULL AND source_spawn_resolved IS NULL))";
             const string actionParameterSetConstraint =
-                "(kind IN (1, 2, 3, 4, 5, 6, 7, 8, 9)) " +
+                "(kind IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)) " +
+                "AND (kind >= 10 OR item_intent IS NULL) " +
+                "AND (kind < 10 OR (item_intent IS NOT NULL AND target_objective_id IS NULL " +
+                "AND objective_state IS NULL AND reward_id IS NULL AND spawn_group_id IS NULL " +
+                "AND scenario_id IS NULL AND indicator_id IS NULL AND player_flag_id IS NULL " +
+                "AND player_flag_value IS NULL AND npc_package_id IS NULL)) " +
                 "AND (kind <> 1 OR (target_objective_id IS NOT NULL AND objective_state IS NULL " +
                 "AND reward_id IS NULL AND spawn_group_id IS NULL AND scenario_id IS NULL " +
                 "AND indicator_id IS NULL AND player_flag_id IS NULL AND player_flag_value IS NULL " +
@@ -588,6 +606,8 @@ namespace Rasa.Context.World
                 .Property(entry => entry.PlayerFlagId)
                 .AsUnsignedInt(_dbContextPropertyModifier, 11);
 
+            modelBuilder.Entity<MissionActionEntry>()
+                .Property(entry => entry.ItemIntentJson).HasColumnName("item_intent");
             modelBuilder.Entity<MissionActionEntry>()
                 .ToTable(table => table.HasCheckConstraint(
                     "CK_mission_action_kind_parameter_set",

@@ -15,6 +15,8 @@ namespace Rasa.Game
     using Data;
     using Handlers;
     using Managers;
+    using Missions.Integration;
+    using Missions.Protocol;
     using Memory;
     using Models;
     using Networking;
@@ -49,18 +51,55 @@ namespace Rasa.Game
         /// </summary>
         internal bool AwaitingMapLoaded { get; set; }
 
-        public ClientState State { get; set; }
-        public Manifestation Player = new();
+        private ClientState _state;
+        public ClientState State
+        {
+            get => _state;
+            set
+            {
+                if (value != ClientState.Ingame)
+                    InvalidateMissionSession();
+                _state = value;
+            }
+        }
+        private Manifestation _player = new();
+        public Manifestation Player
+        {
+            get => _player;
+            set
+            {
+                if (!ReferenceEquals(_player, value))
+                    InvalidateMissionSession();
+                _player = value;
+            }
+        }
         public Movement Movement { get; set; }
         public uint[] SendSequence { get; } = new uint[256];
         public uint[] ReceiveSequence { get; } = new uint[256];
         public List<UserOptions> UserOptions = new();
         internal MissionAreaService MissionAreaService { get; set; } = MissionAreaService.Instance;
+        internal CharacterFlagProjection FlagProjection { get; } = new();
 
         private readonly object _clientLock = new();
         internal object SyncRoot => _clientLock;
-        internal PlayerTransfer PendingTransfer { get; set; }
-        internal (DynamicObject Object, string AssignmentId)? PendingObjectConversation { get; set; }
+        private PlayerTransfer _pendingTransfer;
+        internal PlayerTransfer PendingTransfer
+        {
+            get => _pendingTransfer;
+            set
+            {
+                if (value != null)
+                    InvalidateMissionSession();
+                _pendingTransfer = value;
+            }
+        }
+        internal MissionConversationSession MissionConversation { get; set; }
+        internal Guid MissionSessionId { get; private set; } = Guid.NewGuid();
+        internal void InvalidateMissionSession()
+        {
+            MissionConversation = null;
+            MissionSessionId = Guid.NewGuid();
+        }
 
         private readonly ClientPacketHandler _handler;
         private readonly PacketQueue _packetQueue = new();
@@ -454,6 +493,7 @@ namespace Rasa.Game
 
                 var previousPosition = Player.Position;
                 Player.Position = movement.Position;
+                MissionInteractionPolicy.InvalidateIfUnavailable(this);
                 Player.Rotation = movement.ViewDirection.X;
                 Movement = movement;
                 MissionAreaService?.RecordAcceptedMovement(
@@ -470,6 +510,7 @@ namespace Rasa.Game
         internal void SetWorldPosition(Vector3 position, double rotation)
         {
             Player.Position = position;
+            MissionInteractionPolicy.InvalidateIfUnavailable(this);
             Player.Rotation = rotation;
             Movement = new Movement(position, new Vector2((float)rotation, 0));
         }

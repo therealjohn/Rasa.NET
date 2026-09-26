@@ -142,7 +142,7 @@ namespace Rasa.Test.Gameplay
             var youngblood = harness.AddNpc(510207, 2561);
 
             harness.SeedMission(1, 1994, (uint)MissionState.Completed, true);
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(
                 harness.Context.Client,
                 youngblood.EntityId,
                 1995));
@@ -166,7 +166,7 @@ namespace Rasa.Test.Gameplay
                 BootcampRuntimeTestHarness.CorporalVanValkenbergPackageId);
             Assert.IsNotNull(van);
             BootcampExtractionAssaultTests.DefeatAll(harness);
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+            Assert.IsTrue(harness.Manager.CompleteOfferedObjective(
                 harness.Context.Client,
                 van.EntityId,
                 1995,

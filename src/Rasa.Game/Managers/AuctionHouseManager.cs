@@ -558,7 +558,8 @@ namespace Rasa.Managers
                 return;
             }
 
-            if (!CanBeAuctioned(item))
+            using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+            if (!CanBeAuctioned(item) || Game.Missions.Persistence.MissionItemProtection.IsProtected(item, unitOfWork))
             {
                 Fail(client, packet.ItemEntityId, PlayerMessage.PmAuctionItemCannotBeAuctioned);
                 return;
@@ -592,7 +593,6 @@ namespace Rasa.Managers
                 return;
             }
 
-            using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
             var auction = new AuctionEntry(item.Id, client.Player.Id, client.Player.Name, packet.Price,
                 deposit, DurationHours[packet.Duration]);
 
@@ -792,7 +792,7 @@ namespace Rasa.Managers
         /// </summary>
         public static bool CanBeAuctioned(Item item)
         {
-            if (item?.ItemTemplate == null)
+            if (item?.ItemTemplate == null || item.MissionOwnership != null)
                 return false;
 
             if (item.ItemTemplate.BoundToCharacter)

@@ -8,6 +8,7 @@ using Rasa.Missions.Runtime;
 using ProgressCandidate = Rasa.Missions.Runtime.MissionProgressCandidate;
 using System.Text.Json;
 using Rasa.Game.Missions.Content;
+using Rasa.Game.Missions.Integration;
 using Rasa.Repositories.World;
 using Rasa.Game.Missions.Persistence;
 
@@ -150,6 +151,8 @@ namespace Rasa.Managers
         private int _credits;
         private int _prestige;
 
+        internal byte? PlannedLevel => _progression is { HasChanges: true } ? _progression.FinalLevel : null;
+
         internal MissionRewardGrant(
             uint experience,
             IReadOnlyDictionary<CurencyType, int> currencies,
@@ -207,21 +210,11 @@ namespace Rasa.Managers
             if (_items.Count > 0)
                 _inventory.PlanAndSave(client, _items, unitOfWork);
             if (_experience > 0)
-            {
-                try
-                {
-                    _progression = manifestationManager.PlanExperience(
-                        client, _experience, durableCharacter, unitOfWork);
-                }
-                catch (OverflowException error)
-                {
-                    throw new GameplayRejectionException(
-                        "Mission reward experience exceeds the supported range.",
-                        error);
-                }
-            }
+                _progression = manifestationManager.PlanExperience(
+                    client, _experience, durableCharacter, unitOfWork);
             if (_credits != durableCharacter.Credit || _prestige != durableCharacter.Prestige)
                 unitOfWork.Characters.UpdateCharacterCurrencies(player.Id, _credits, _prestige);
+            MissionRequirementService.ExpectLevel(unitOfWork, player.Id, PlannedLevel ?? durableCharacter.Level);
         }
 
         internal void ConvergeRuntime(Client client)

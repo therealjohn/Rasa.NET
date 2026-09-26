@@ -64,9 +64,7 @@ namespace Rasa.Managers
         {
             if (unitOfWork == null || definition == null || durableMission == null)
                 return;
-            if (!definition.Objectives.Values.Any(objective =>
-                    objective.GetExecutableTransitionsOrLegacyDefault().Any(transition =>
-                        transition.ProgressRule?.Kind == MissionProgressEventKind.DeadlineElapsed)))
+            if (!HasDeadline(definition))
                 return;
 
             var activeDeadline = GetActiveDeadlineObjective(
@@ -110,6 +108,11 @@ namespace Rasa.Managers
                     : CharacterMissionDeadlineState.Cancelled);
             _missionManager().Scenes.SynchronizeDeadline(unitOfWork, durableMission, existing, null);
         }
+
+        internal static bool HasDeadline(Mission definition) =>
+            definition.Objectives.Values.Any(objective =>
+                objective.GetExecutableTransitionsOrLegacyDefault().Any(transition =>
+                    transition.ProgressRule?.Kind == MissionProgressEventKind.DeadlineElapsed));
 
         private static (uint ObjectiveId, MissionProgressRule Rule)? GetActiveDeadlineObjective(
             Mission definition,

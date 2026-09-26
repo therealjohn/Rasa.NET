@@ -25,7 +25,8 @@ namespace Rasa.Missions.Runtime
     public sealed record CustomRequirement(string Key) : MissionRequirement;
     public sealed record MissionRequirementFacts(uint Level,
         IReadOnlyDictionary<uint, MissionState> Journal, IReadOnlyDictionary<uint, MissionState> History,
-        IReadOnlyDictionary<uint, uint> Flags, IReadOnlyDictionary<string, bool> Custom = null);
+        IReadOnlyDictionary<uint, uint> Flags, IReadOnlyDictionary<string, bool> Custom = null,
+        IReadOnlySet<uint> EverSucceeded = null, IReadOnlySet<uint> EverRewarded = null);
 
     public interface IMissionRequirementHandler
     {
@@ -94,11 +95,20 @@ namespace Rasa.Missions.Runtime
         }
         private static bool HasState(MissionStateRequirement requirement, MissionRequirementFacts facts)
         {
-            if (!facts.Journal.TryGetValue(requirement.MissionId, out var state) &&
-                (requirement.Accepted || !facts.History.TryGetValue(requirement.MissionId, out state)))
-                return false;
-            return requirement.State.HasValue ? state == requirement.State :
+            bool Matches(MissionState state) => requirement.State.HasValue ? state == requirement.State :
                 requirement.Accepted || state is MissionState.Success or MissionState.Completed;
+            if (facts.Journal.TryGetValue(requirement.MissionId, out var state))
+            {
+                if (Matches(state))
+                    return true;
+                if (requirement.State is not (null or MissionState.Success or MissionState.Completed))
+                    return false;
+            }
+            if (requirement.Accepted)
+                return false;
+            return facts.History.TryGetValue(requirement.MissionId, out state) && Matches(state) ||
+                requirement.State is null or MissionState.Success && facts.EverSucceeded?.Contains(requirement.MissionId) == true ||
+                requirement.State == MissionState.Completed && facts.EverRewarded?.Contains(requirement.MissionId) == true;
         }
         private bool EvaluateCustom(CustomRequirement requirement, MissionRequirementFacts facts)
         {
@@ -128,6 +138,13 @@ namespace Rasa.Missions.Runtime
         {
             public IReadOnlyCollection<string> RequiredFacts { get; } = new[] { "character.starting-experience-completed" };
             public bool Evaluate(IReadOnlyDictionary<string, bool> facts) => facts["character.starting-experience-completed"];
+        }
+
+        [MissionRequirementHandler("character.starting-experience-active")]
+        public sealed class StartingExperienceActiveRequirement : IMissionRequirementHandler
+        {
+            public IReadOnlyCollection<string> RequiredFacts { get; } = new[] { "character.starting-experience-active" };
+            public bool Evaluate(IReadOnlyDictionary<string, bool> facts) => facts["character.starting-experience-active"];
         }
     }
 }

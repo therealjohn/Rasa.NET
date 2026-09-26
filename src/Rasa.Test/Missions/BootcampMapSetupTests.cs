@@ -36,7 +36,7 @@ namespace Rasa.Test.Missions
             harness.SeedMission(harness.Client.Player.Id, 1990, (uint)MissionState.Completed, true);
             harness.MovePlayerTo(original);
             CellManager.Instance.UpdateVisibility(harness.Client);
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(harness.Client, original.EntityId, 1992));
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(harness.Client, original.EntityId, 1992));
             for (var tick = 0; tick < (finishRun ? 600 : 4); tick++)
                 BehaviorManager.Instance.MapChannelThink(harness.BootcampMap, 250);
 
@@ -202,7 +202,7 @@ namespace Rasa.Test.Missions
             harness.MovePlayerTo(alister);
             CellManager.Instance.UpdateVisibility(harness.Client);
 
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(harness.Client, alister.EntityId, 1992));
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(harness.Client, alister.EntityId, 1992));
 
             Assert.IsFalse(crate.IsEnabled, "Acceptance must not skip Delessio's gear briefing.");
             harness.MovePlayerTo(crate);
@@ -211,7 +211,7 @@ namespace Rasa.Test.Missions
                 harness.BootcampMap, BootcampRuntimeTestHarness.CaptainDelessioPackageId);
             harness.Drain();
 
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+            Assert.IsTrue(harness.Manager.CompleteOfferedObjective(
                 harness.Client, delessio.EntityId, 1992, 4, 1));
 
             Assert.AreSame(crate, harness.BootcampMap.DynamicObjects
@@ -290,9 +290,9 @@ namespace Rasa.Test.Missions
                 .TryGetStatus(out var status, out _));
             Assert.AreEqual(ConversationStatus.MissionComplete, status);
 
-            Assert.IsTrue(harness.Manager.TryCompleteNpcMission(
+            Assert.IsTrue(harness.Manager.CompleteOfferedMission(
                 harness.Client, deSimone.EntityId, 1992, null, null));
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(harness.Client, deSimone.EntityId, 1994));
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(harness.Client, deSimone.EntityId, 1994));
 
             Assert.AreEqual(MissionState.Completed, harness.Client.Player.Missions[1992].State);
             Assert.AreEqual(MissionState.Active, harness.Client.Player.Missions[1994].State);
@@ -312,7 +312,7 @@ namespace Rasa.Test.Missions
             CellManager.Instance.UpdateVisibility(harness.Client);
             var start = alister.Position;
 
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(harness.Client, alister.EntityId, 1992));
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(harness.Client, alister.EntityId, 1992));
             Assert.IsTrue(harness.Drain().OfType<IsRunningPacket>().Any(packet => packet.IsRunning));
             for (var tick = 0; tick < 4; tick++)
                 BehaviorManager.Instance.MapChannelThink(harness.BootcampMap, 250);
@@ -355,7 +355,7 @@ namespace Rasa.Test.Missions
             var alister = BootcampRuntimeTestHarness.FindCreature(
                 harness.BootcampMap, BootcampRuntimeTestHarness.MajorMcAllisterCreatureId);
             var start = alister.Position;
-            Assert.IsFalse(harness.Manager.TryAcceptNpcMission(harness.Client, alister.EntityId, 1992));
+            Assert.IsFalse(harness.Manager.AcceptOfferedMission(harness.Client, alister.EntityId, 1992));
             harness.Manager.ScenarioService.Tick(harness.Client);
             for (var tick = 0; tick < 160; tick++)
                 BehaviorManager.Instance.MapChannelThink(harness.BootcampMap, 250);
@@ -367,7 +367,7 @@ namespace Rasa.Test.Missions
             harness.Context.BeforeSave = _ => throw new DbUpdateException("Injected acceptance failure.");
             harness.Drain();
 
-            Assert.IsFalse(harness.Manager.TryAcceptNpcMission(harness.Client, alister.EntityId, 1992));
+            Assert.IsFalse(harness.Manager.AcceptOfferedMission(harness.Client, alister.EntityId, 1992));
 
             harness.Context.BeforeSave = null;
             harness.Manager.ScenarioService.Tick(harness.Client);
@@ -376,7 +376,7 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(start, alister.Position);
             Assert.IsFalse(harness.Drain().OfType<IsRunningPacket>().Any(packet => packet.IsRunning));
             Assert.IsFalse(harness.Client.Player.Missions.ContainsKey(1992));
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(harness.Client, alister.EntityId, 1992));
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(harness.Client, alister.EntityId, 1992));
             BehaviorManager.Instance.MapChannelThink(harness.BootcampMap, 250);
             Assert.AreNotEqual(start, alister.Position);
         }
@@ -393,7 +393,7 @@ namespace Rasa.Test.Missions
             harness.SeedMission(harness.Client.Player.Id, 1990, (uint)MissionState.Completed, true);
             harness.MovePlayerTo(alister);
             CellManager.Instance.UpdateVisibility(harness.Client);
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(harness.Client, alister.EntityId, 1992));
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(harness.Client, alister.EntityId, 1992));
             for (var tick = 0; tick < (finishRun ? 600 : 4); tick++)
                 BehaviorManager.Instance.MapChannelThink(harness.BootcampMap, 250);
 
@@ -409,7 +409,7 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(AlisterDestination, restored.Position);
             Assert.AreEqual(2.175, restored.Rotation, 0.001);
             Assert.IsFalse(restored.IsRunning);
-            Assert.IsFalse(harness.Manager.TryAcceptNpcMission(harness.Client, restored.EntityId, 1992));
+            Assert.IsFalse(harness.Manager.AcceptOfferedMission(harness.Client, restored.EntityId, 1992));
             harness.Manager.RebuildScenarioRuntime(harness.Client.Player.Id, harness.BootcampMap);
             for (var tick = 0; tick < 160; tick++)
                 BehaviorManager.Instance.MapChannelThink(harness.BootcampMap, 250);
@@ -440,12 +440,12 @@ namespace Rasa.Test.Missions
                 harness.MovePlayerTo(alister);
                 CellManager.Instance.UpdateVisibility(harness.Client);
 
-                Assert.IsTrue(harness.Manager.TryAcceptNpcMission(harness.Client, alister.EntityId, 1992));
+                Assert.IsTrue(harness.Manager.AcceptOfferedMission(harness.Client, alister.EntityId, 1992));
                 var delessio = BootcampRuntimeTestHarness.FindNpcByPackage(
                     harness.BootcampMap, BootcampRuntimeTestHarness.CaptainDelessioPackageId);
                 harness.MovePlayerTo(delessio);
                 CellManager.Instance.UpdateVisibility(harness.Client);
-                Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+                Assert.IsTrue(harness.Manager.CompleteOfferedObjective(
                     harness.Client, delessio.EntityId, 1992, 4, 1));
                 for (var tick = 0; tick < 160; tick++)
                 {

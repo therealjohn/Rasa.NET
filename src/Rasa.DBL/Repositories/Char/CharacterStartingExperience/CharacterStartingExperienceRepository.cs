@@ -19,6 +19,11 @@ namespace Rasa.Repositories.Char.CharacterStartingExperience
             _charContext.CharacterStartingExperienceEntries.SingleOrDefault(entry =>
                 entry.CharacterId == characterId);
 
+        public CharacterStartingExperienceState? ReadState(uint characterId) =>
+            _charContext.CreateNoTrackingQuery(_charContext.CharacterStartingExperienceEntries)
+                .Where(entry => entry.CharacterId == characterId)
+                .Select(entry => (CharacterStartingExperienceState?)entry.State).SingleOrDefault();
+
         public void Add(CharacterStartingExperienceEntry entry)
         {
             _charContext.CharacterStartingExperienceEntries.Add(entry);

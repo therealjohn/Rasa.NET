@@ -18,6 +18,7 @@ namespace Rasa.Repositories.Char.CharacterInventory
 
         public void AddInvItem(uint accountId, uint characterId, uint inventoryType, uint slotId, uint itemId)
         {
+            CharacterMissionItem.MissionItemMutationGuard.RequireUnbound(_charContext, itemId);
             var entry = new CharacterInventoryEntry(accountId, characterId, inventoryType, slotId, itemId);
 
             try
@@ -41,6 +42,7 @@ namespace Rasa.Repositories.Char.CharacterInventory
             if (entry == null)
                 return;
 
+            CharacterMissionItem.MissionItemMutationGuard.RequireUnbound(_charContext, entry.ItemId);
             _charContext.Remove(entry);
             _charContext.SaveChanges();
         }
@@ -52,6 +54,7 @@ namespace Rasa.Repositories.Char.CharacterInventory
         /// </summary>
         public void DeleteInvItemByItemId(uint itemId)
         {
+            CharacterMissionItem.MissionItemMutationGuard.RequireUnbound(_charContext, itemId);
             var query = _charContext.CreateNoTrackingQuery(_charContext.CharacterInventoryEntries);
             var entry = query.FirstOrDefault(e => e.ItemId == itemId);
 
@@ -97,6 +100,7 @@ namespace Rasa.Repositories.Char.CharacterInventory
 
         public void MoveInvItem(uint accountId, uint characterId, uint inventoryType, uint slotId, uint itemId)
         {
+            CharacterMissionItem.MissionItemMutationGuard.RequireUnbound(_charContext, itemId);
             var invItem = _charContext.CreateTrackingQuery(_charContext.CharacterInventoryEntries).FirstOrDefault(e => e.ItemId == itemId);
 
             if (invItem == null)

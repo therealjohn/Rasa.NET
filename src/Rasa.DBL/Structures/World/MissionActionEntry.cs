@@ -77,5 +77,8 @@ namespace Rasa.Structures.World
         public string Comment { get; set; } = string.Empty;
 
         public MissionObjectiveTransitionEntry Transition { get; set; }
+
+        // Fluent-mapped: historical preloader row widths are frozen by ColumnAttribute reflection.
+        public string ItemIntentJson { get; set; }
     }
 }

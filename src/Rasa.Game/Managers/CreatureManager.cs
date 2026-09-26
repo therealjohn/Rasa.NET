@@ -137,14 +137,16 @@ namespace Rasa.Managers
             if (creature.State == CharacterState.Dead || Game.Missions.World.CreatureGameplayRules.IsInvulnerable(creature))
                 return; // creature already dead
 
-            var isScenarioActor = creature?.SpawnPool?.ScenarioKey != null;
+            var policy = Game.Missions.World.CreatureGameplayRules.Policy(creature);
+            var participant = creature.CombatParticipant;
             var canReward = creature.Faction != Factions.AFS &&
-                (!isScenarioActor || Game.Missions.World.CreatureGameplayRules.Policy(creature).RewardScenarioKills);
+                Game.Missions.World.CreatureGameplayRules.RewardsKills(creature);
 
             // kill creature
             var stateIds = new List<CharacterState> { CharacterState.Dead };
 
             creature.State = CharacterState.Dead;
+            Game.Missions.World.CreatureGameplayRules.ClearRole(creature);
             CellManager.Instance.CellCallMethod(mapChannel, creature, new StateChangePacket(stateIds));
             if (creature.SpawnPool?.FollowOwnerCharacterId > 0)
                 PublishEscortStatus(mapChannel, creature, false);
@@ -176,9 +178,9 @@ namespace Rasa.Managers
             if (client == null && killedBy is Creature killer && killer.Faction != creature.Faction)
                 client = FindEscortOwner(mapChannel, killer);
             if (client == null && killedBy is Creature defender &&
-                Game.Missions.World.CreatureGameplayRules.IsDefender(defender) && Game.Missions.World.CreatureGameplayRules.TracksParticipation(creature) &&
+                Game.Missions.World.CreatureGameplayRules.IsDefender(defender) && policy.TrackParticipation &&
                 defender.Faction != creature.Faction && IsLivingOnMap(mapChannel, defender))
-                client = FindCombatPlayer(mapChannel, creature.CombatParticipant);
+                client = FindCombatPlayer(mapChannel, participant);
             creature.CombatParticipant = null;
             canReward &= client != null &&
                 (!mapChannel.IsPrivateInstance || mapChannel.OwnerCharacterId == client.Player.Id);
@@ -216,7 +218,7 @@ namespace Rasa.Managers
             {
                 try
                 {
-                    LootDispenserManager.Instance.Loot(client, creature);
+                    LootDispenserManager.Instance.Loot(client, creature, policy);
                 }
                 catch (Exception error) when (GameplayRejectionException.IsExpected(error))
                 {

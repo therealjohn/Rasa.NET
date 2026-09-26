@@ -51,7 +51,7 @@ namespace Rasa.Test.Missions
             context.AddRewardTemplate(29, 3147);
             var giver = context.AddNpc(101);
 
-            Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            Assert.IsTrue(manager.AcceptOfferedMission(context.Client, giver.EntityId, 321));
             context.Drain();
 
             var before = context.ReadRewardTotals();
@@ -110,7 +110,7 @@ namespace Rasa.Test.Missions
             context.AddRewardTemplate(29, 3147);
             var giver = context.AddNpc(101);
 
-            Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            Assert.IsTrue(manager.AcceptOfferedMission(context.Client, giver.EntityId, 321));
             context.Drain();
 
             var before = context.ReadRewardTotals();
@@ -174,7 +174,7 @@ namespace Rasa.Test.Missions
             var giver = context.AddNpc(101, owned);
             EnsureTestCreatureAttributes(giver);
 
-            Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            Assert.IsTrue(manager.AcceptOfferedMission(context.Client, giver.EntityId, 321));
             context.Drain();
             Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 60));
 
@@ -233,7 +233,7 @@ namespace Rasa.Test.Missions
             MoveClientToMap(context.Client, context.Map, owned);
             var giver = context.AddNpc(101, owned);
 
-            Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            Assert.IsTrue(manager.AcceptOfferedMission(context.Client, giver.EntityId, 321));
             context.Drain();
             Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 60));
 
@@ -295,7 +295,7 @@ namespace Rasa.Test.Missions
             MoveClientToMap(context.Client, context.Map, owned);
             var giver = context.AddNpc(101, owned);
 
-            Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            Assert.IsTrue(manager.AcceptOfferedMission(context.Client, giver.EntityId, 321));
             context.Drain();
             Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 60));
 
@@ -368,7 +368,7 @@ namespace Rasa.Test.Missions
             MoveClientToMap(context.Client, context.Map, owned);
             var giver = context.AddNpc(101, owned);
 
-            Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            Assert.IsTrue(manager.AcceptOfferedMission(context.Client, giver.EntityId, 321));
             context.Drain();
             Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 60));
 
@@ -426,7 +426,7 @@ namespace Rasa.Test.Missions
             var manager = LoadManager(context, fixture, () => now, maps);
             var giver = context.AddNpc(101);
 
-            Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            Assert.IsTrue(manager.AcceptOfferedMission(context.Client, giver.EntityId, 321));
             context.Drain();
 
             Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 60));
@@ -484,7 +484,7 @@ namespace Rasa.Test.Missions
             var owned = maps.GetOrCreatePrivateInstance(1985, context.Client.Player.Id);
             var giver = context.AddNpc(101);
 
-            Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            Assert.IsTrue(manager.AcceptOfferedMission(context.Client, giver.EntityId, 321));
             context.Drain();
             Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 60));
 
@@ -523,7 +523,7 @@ namespace Rasa.Test.Missions
             var manager = LoadManager(context, fixture, () => now, maps);
             var giver = context.AddNpc(101);
 
-            Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            Assert.IsTrue(manager.AcceptOfferedMission(context.Client, giver.EntityId, 321));
             context.Drain();
             Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 60));
 
@@ -565,8 +565,8 @@ namespace Rasa.Test.Missions
             using var singletons = new ManagerInstances(maps, objects, creatures, manager);
             var giver = context.AddNpc(101);
 
-            Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
-            Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 322));
+            Assert.IsTrue(manager.AcceptOfferedMission(context.Client, giver.EntityId, 321));
+            Assert.IsTrue(manager.AcceptOfferedMission(context.Client, giver.EntityId, 322));
             context.Drain();
 
             Assert.IsTrue(manager.TryExecuteScenario(context.Client, 321, 60));
@@ -623,8 +623,8 @@ namespace Rasa.Test.Missions
             var secondClient = context.CreateAdditionalClient(2, manager: manager);
             var giver = context.AddNpc(101);
 
-            Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
-            Assert.IsTrue(manager.TryAcceptNpcMission(secondClient, giver.EntityId, 321));
+            Assert.IsTrue(manager.AcceptOfferedMission(context.Client, giver.EntityId, 321));
+            Assert.IsTrue(manager.AcceptOfferedMission(secondClient, giver.EntityId, 321));
             context.Drain();
             MissionTestContext.Drain(secondClient);
 

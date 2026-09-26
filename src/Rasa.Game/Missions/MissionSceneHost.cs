@@ -44,9 +44,22 @@ namespace Rasa.Managers
             if (_missions().Scenes.Owns(missionId))
                 _missions().Scenes.Execute(client, missionId, 0, started: true);
         }
-        public bool Tick(Client client) => client?.Player?.MapChannel != null &&
-            _missions().Scenes.Tick(client.Player.MapChannel, Game.Missions.SceneTickScope.Scripts);
-        public void TickMap(MapChannel map) => _missions().Scenes.Tick(map);
+        public bool Tick(Client client)
+        {
+            var map = client?.Player?.MapChannel;
+            if (map == null)
+                return false;
+            var missions = _missions();
+            var changed = missions.Scenes.Tick(map, Game.Missions.SceneTickScope.Scripts);
+            missions.RetryCharacterFlagPublications(map);
+            return changed;
+        }
+        public void TickMap(MapChannel map)
+        {
+            var missions = _missions();
+            missions.Scenes.Tick(map);
+            missions.RetryCharacterFlagPublications(map);
+        }
         public void Rebuild(uint characterId, MapChannel map) => _missions().Scenes.Rebuild(characterId, map);
         public void Release(uint characterId, MapChannel map) => _missions().Scenes.Detach(characterId, map);
         public void Detach(Client client, MapChannel map) => _missions().Scenes.Detach(client, map);

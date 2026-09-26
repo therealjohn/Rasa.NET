@@ -173,7 +173,7 @@ namespace Rasa.Test.Missions
         {
             using var harness = BootcampRuntimeTestHarness.Create();
             var mcAllister = harness.AddNpc(BootcampRuntimeTestHarness.MajorMcAllisterCreatureId);
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(
                 harness.Client, mcAllister.EntityId, BootcampRuntimeTestHarness.MissionInitiation));
             harness.Drain();
             Assert.IsTrue(harness.Manager.TryGetAreaDefinition(
@@ -200,7 +200,7 @@ namespace Rasa.Test.Missions
             using var harness = BootcampRuntimeTestHarness.Create();
             var mcAllister = harness.AddNpc(BootcampRuntimeTestHarness.MajorMcAllisterCreatureId);
 
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(
                 harness.Client,
                 mcAllister.EntityId,
                 BootcampRuntimeTestHarness.MissionInitiation));
@@ -267,7 +267,7 @@ namespace Rasa.Test.Missions
             var currentMcAllister = BootcampRuntimeTestHarness.FindCreature(
                 harness.BootcampMap,
                 BootcampRuntimeTestHarness.MajorMcAllisterCreatureId);
-            Assert.IsTrue(harness.Manager.TryCompleteNpcMission(
+            Assert.IsTrue(harness.Manager.CompleteOfferedMission(
                 harness.Client,
                 currentMcAllister?.EntityId ?? mcAllister.EntityId,
                 BootcampRuntimeTestHarness.MissionInitiation,
@@ -277,7 +277,7 @@ namespace Rasa.Test.Missions
                 MissionState.Completed,
                 harness.Client.Player.Missions[BootcampRuntimeTestHarness.MissionInitiation].State);
 
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(
                 harness.Client,
                 currentMcAllister.EntityId,
                 BootcampRuntimeTestHarness.MissionGearingUp));

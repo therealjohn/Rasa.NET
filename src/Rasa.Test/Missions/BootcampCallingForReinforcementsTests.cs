@@ -89,7 +89,7 @@ namespace Rasa.Test.Missions
                 harness.BootcampMap, BootcampRuntimeTestHarness.CorporalVanValkenbergPackageId);
             Assert.IsNotNull(van);
             harness.MovePlayerTo(van);
-            Assert.IsFalse(harness.Manager.TryCompleteNpcObjective(harness.Client, van.EntityId, 1995, 4, 1),
+            Assert.IsFalse(harness.Manager.CompleteOfferedObjective(harness.Client, van.EntityId, 1995, 4, 1),
                 "The check-in must wait for all assault enemies to be defeated.");
             Assert.IsNull(harness.Client.PendingTransfer);
         }
@@ -97,8 +97,16 @@ namespace Rasa.Test.Missions
         [TestMethod]
         public void ReconnectingAnAlreadyCheckedInCharacterClearsTheOldWreckBeforeStagingEvacuation()
         {
+            RemoveActorIntent wreckCleanup = null;
             using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true,
-                configureScenes: scenes => scenes[1995] = Rasa.Services.Preloader.Missions.BootcampMissionDataV1.Mission1995());
+                configureScenes: scenes =>
+                {
+                    var scene = scenes[1995];
+                    var arrival = scene.Sequences[scene.Names["exit"]];
+                    wreckCleanup = arrival.World.OfType<RemoveActorIntent>()
+                        .Single(intent => intent.Role == "bootcamp-dropship-debris");
+                    arrival.World.Remove(wreckCleanup);
+                });
             StartCrashSiteScene(harness);
             harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-conrad-corpse"));
             harness.UseObjectAndRecover(FindScenarioObject(harness, "bootcamp-dropship-debris"));
@@ -107,6 +115,7 @@ namespace Rasa.Test.Missions
             harness.UtcNow += ArrivalDelay;
             harness.Manager.TickScenarios(harness.Client);
             Assert.IsNotNull(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-dropship-debris"));
+            BootcampExtractionAssaultTests.DefeatAll(harness);
             using (var unit = harness.Context.CreateChar())
                 unit.ExecuteTransaction(() =>
                 {
@@ -115,7 +124,7 @@ namespace Rasa.Test.Missions
                     unit.CharacterMissions.GetByCharacterAndMission(harness.Client.Player.Id, 1995).Completeable = true;
                 });
             Content.MissionContentTestSupport.ConfigureScenes(harness.WorldContext,
-                scenes => scenes[1995] = Rasa.Services.Preloader.Missions.BootcampExtractionDataV5.Scene(1995));
+                scenes => scenes[1995].Sequences[scenes[1995].Names["exit"]].World.Insert(0, wreckCleanup));
 
             harness.ReconnectFresh();
 
@@ -321,7 +330,7 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(0, harness.ReadOwnedTemplateCounts(11519).GetValueOrDefault(11519U));
             var youngblood = BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, 2561);
 
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(harness.Client, youngblood.EntityId, 2005));
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(harness.Client, youngblood.EntityId, 2005));
             Assert.AreEqual(1, harness.ReadOwnedTemplateCounts(11519).GetValueOrDefault(11519U));
             harness.ReconnectFresh();
             Assert.AreEqual(1, harness.ReadOwnedTemplateCounts(11519).GetValueOrDefault(11519U));
@@ -502,7 +511,7 @@ namespace Rasa.Test.Missions
             using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);
             var youngblood = harness.AddNpc(BootcampRuntimeTestHarness.CaptainYoungbloodCreatureId, 2561);
             harness.SeedMission(harness.Client.Player.Id, 1994, (uint)MissionState.Completed, true);
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(harness.Client, youngblood.EntityId, 1995));
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(harness.Client, youngblood.EntityId, 1995));
             AssertSupportedObjectives(harness);
 
             var area = harness.WorldContext.MissionAreaEntries.Single(row => row.MissionId == 1995 && row.AreaId == 435);
@@ -583,6 +592,7 @@ namespace Rasa.Test.Missions
             harness.MovePlayerTo(npc);
             CellManager.Instance.UpdateVisibility(harness.Client);
             new MapTriggerManager().TriggersProximityWorker(harness.BootcampMap);
+            Assert.IsTrue(harness.Manager.OpenNpcConversation(harness.Client, npc.EntityId));
             using var stream = new MemoryStream();
             using (var writer = new PythonWriter(new BinaryWriter(stream, System.Text.Encoding.UTF8, true)))
             {
@@ -684,7 +694,7 @@ namespace Rasa.Test.Missions
 
             harness.SeedMission(1, 1994, (uint)MissionState.Completed, completeable: true);
 
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(
                 harness.Client,
                 youngblood.EntityId,
                 1995));
@@ -820,7 +830,7 @@ namespace Rasa.Test.Missions
                 2561);
 
             harness.SeedMission(1, 1994, (uint)MissionState.Completed, completeable: true);
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(
                 harness.Client,
                 youngblood.EntityId,
                 1995));
@@ -910,7 +920,7 @@ namespace Rasa.Test.Missions
                 retryMissionId: 2005,
                 retryNpc: youngblood);
 
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(
                 harness.Client,
                 youngblood.EntityId,
                 2005));
@@ -945,7 +955,7 @@ namespace Rasa.Test.Missions
                 retryMissionId: 2005,
                 retryNpc: youngblood);
 
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(
                 harness.Client,
                 youngblood.EntityId,
                 2005));
@@ -965,7 +975,7 @@ namespace Rasa.Test.Missions
 
             harness.SeedMission(1, 1994, (uint)MissionState.Completed, completeable: true);
 
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(
                 harness.Client,
                 youngblood.EntityId,
                 1995));

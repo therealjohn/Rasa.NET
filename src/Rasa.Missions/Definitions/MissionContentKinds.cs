@@ -22,6 +22,9 @@ namespace Rasa.Structures.World
         ActivateSpawnGroup = 6,
         ShowIndicator = 7,
         SetPlayerFlag = 8,
-        ShowAmbientConversation = 9
+        ShowAmbientConversation = 9,
+        IssueMissionItem = 10,
+        ConsumeMissionItem = 11,
+        RemoveMissionItems = 12
     }
 }

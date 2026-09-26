@@ -26,6 +26,52 @@ namespace Rasa.Managers
     using Structures.Missions;
     using Structures.World;
 
+    internal static class MissionStatePublication
+    {
+        internal static MissionLog Capture(CharacterMissionEntry mission,
+            IReadOnlyDictionary<uint, CharacterMissionObjectiveEntry> objectives) =>
+            new(mission.MissionId, (MissionState)mission.MissionState, mission.Completeable,
+                objectives.ToDictionary(entry => entry.Key, entry => new MissionObjectiveLog(
+                    entry.Key, (MissionObjectiveState)entry.Value.ObjectiveState,
+                    entry.Value.Counters.ToDictionary(counter => counter.CounterId, counter => counter.CounterValue),
+                    entry.Value.ItemCounters.ToDictionary(counter => counter.ItemClassId, counter => counter.CounterValue))),
+                mission.AssignmentId, mission.Generation, mission.ContentRevision);
+
+        internal static bool Converge(Client client, IEnumerable<MissionLog> snapshots, bool apply = true)
+        {
+            var committed = snapshots.ToArray();
+            foreach (var snapshot in committed)
+                if (!client.Player.Missions.TryGetValue(snapshot.MissionId, out var current) ||
+                    !snapshot.MatchesAssignment(current.AssignmentId, current.Generation, current.ContentRevision))
+                {
+                    Logger.WriteLog(LogType.Error, $"Discarded mission publication for retired assignment {snapshot.AssignmentId}.");
+                    return false;
+                }
+            if (!apply)
+                return true;
+
+            foreach (var snapshot in committed.GroupBy(mission => mission.MissionId).Select(group => group.Last()))
+            {
+                var current = client.Player.Missions[snapshot.MissionId];
+                foreach (var saved in snapshot.Objectives.Values)
+                {
+                    var objective = current.Objectives[saved.ObjectiveId];
+                    objective.State = saved.State;
+                    foreach (var counter in saved.Counters)
+                        objective.SetCounter(counter.Key, counter.Value);
+                    foreach (var counter in saved.ItemCounters)
+                        objective.SetItemCounter(counter.Key, counter.Value);
+                }
+                if (current.State == MissionState.Active)
+                {
+                    current.State = snapshot.State;
+                    current.Completeable = snapshot.Completeable;
+                }
+            }
+            return true;
+        }
+    }
+
     internal sealed class MissionFailurePublicationPlan
     {
         internal static readonly MissionFailurePublicationPlan Empty =
@@ -39,6 +85,7 @@ namespace Rasa.Managers
         private readonly bool _publishMissionStatus;
         private readonly Action<Client> _inventoryPublication;
         private readonly IReadOnlyDictionary<uint, uint> _flags;
+        private readonly MissionLog _assignment;
         internal IReadOnlyDictionary<uint, uint> FlagSnapshot => _flags;
         internal uint MissionId => _missionId;
         internal bool ChangesFlags { get; }
@@ -54,7 +101,8 @@ namespace Rasa.Managers
             bool publishMissionStatus = false,
             Action<Client> inventoryPublication = null,
             bool changesFlags = false,
-            IReadOnlyDictionary<uint, uint> flags = null)
+            IReadOnlyDictionary<uint, uint> flags = null,
+            MissionLog assignment = null)
         {
             _missionId = missionId;
             _objectiveId = objectiveId;
@@ -64,6 +112,7 @@ namespace Rasa.Managers
             _publishMissionStatus = publishMissionStatus;
             _inventoryPublication = inventoryPublication;
             _flags = flags;
+            _assignment = assignment;
             ChangesFlags = changesFlags;
             StartScenarioIds = Array.AsReadOnly(
                 (startScenarioIds ?? Array.Empty<uint>()).ToArray());
@@ -74,17 +123,32 @@ namespace Rasa.Managers
             MissionApplication manager,
             Func<Client, uint, uint, bool> startScenario = null,
             Func<Client, uint, uint, bool> startFailureScenario = null,
-            bool convergeFlags = true)
+            bool convergeFlags = true,
+            bool convergeMission = true)
         {
             if (!client.Player.Missions.TryGetValue(_missionId, out var mission) ||
                 !mission.Objectives.TryGetValue(_objectiveId, out var objective))
                 return;
+            if (_assignment != null && !_assignment.MatchesAssignment(
+                mission.AssignmentId, mission.Generation, mission.ContentRevision))
+            {
+                Logger.WriteLog(LogType.Error, $"Discarded failure publication for retired assignment {_assignment.AssignmentId}.");
+                return;
+            }
 
-            objective.State = MissionObjectiveState.Failed;
-            mission.State = _missionState;
-            mission.Completeable = _completeable;
+            if (convergeMission)
+            {
+                objective.State = MissionObjectiveState.Failed;
+                mission.State = _missionState;
+                mission.Completeable = _completeable;
+            }
+            if (_missionState == MissionState.Failed)
+                client.Player.MissionHistory[_missionId] = MissionState.Failed;
             if (convergeFlags && _flags != null)
-                client.Player.PlayerFlags = new Dictionary<uint, uint>(_flags);
+            {
+                client.FlagProjection.ApplyCommitted(client, _flags);
+                manager.PublishCharacterFlags(client);
+            }
             _inventoryPublication?.Invoke(client);
 
             manager.PublishMissionPacket(
@@ -140,7 +204,9 @@ namespace Rasa.Managers
         private readonly MissionApplication _manager;
         private readonly Action<Client> _inventoryPublication;
         private readonly IReadOnlyDictionary<uint, uint> _flags;
+        private readonly IReadOnlyDictionary<uint, MissionLog> _committedMissions;
         internal IReadOnlyDictionary<uint, uint> FlagSnapshot => _flags;
+        internal IReadOnlyDictionary<uint, MissionLog> CommittedMissions => _committedMissions;
 
         internal bool HasChanges => _publications.Length > 0 || _failurePlans.Length > 0;
 
@@ -154,7 +220,8 @@ namespace Rasa.Managers
             MissionApplication manager,
             Func<Client, uint, uint, bool> activateSpawnGroup = null,
             Action<Client> inventoryPublication = null,
-            IReadOnlyDictionary<uint, uint> flags = null)
+            IReadOnlyDictionary<uint, uint> flags = null,
+            IReadOnlyDictionary<uint, MissionLog> committedMissions = null)
         {
             _publications = publications.ToArray();
             _failurePlans = failurePlans.ToArray();
@@ -166,57 +233,19 @@ namespace Rasa.Managers
             _manager = manager;
             _inventoryPublication = inventoryPublication;
             _flags = flags;
+            _committedMissions = committedMissions ?? new Dictionary<uint, MissionLog>();
         }
 
-        internal void Publish(Client client, bool convergeFlags = true)
+        internal void Publish(Client client, bool convergeFlags = true, bool convergeMissions = true)
         {
+            if (!MissionStatePublication.Converge(client, _committedMissions.Values, convergeMissions))
+                return;
             if (convergeFlags && _flags != null)
-                client.Player.PlayerFlags = new Dictionary<uint, uint>(_flags);
+            {
+                client.FlagProjection.ApplyCommitted(client, _flags);
+                _manager.PublishCharacterFlags(client);
+            }
             _inventoryPublication?.Invoke(client);
-            foreach (var publication in _publications.Where(
-                publication =>
-                    publication.CounterId.HasValue &&
-                    !publication.IsItemCounter))
-                if (TryGetRuntimeObjective(
-                        client,
-                        publication,
-                        out var objective))
-                    objective.SetCounter(
-                        publication.CounterId.Value,
-                        publication.CounterValue.Value);
-
-            foreach (var publication in _publications.Where(
-                publication => publication.IsItemCounter))
-                if (TryGetRuntimeObjective(
-                        client,
-                        publication,
-                        out var objective))
-                    objective.SetItemCounter(
-                        publication.CounterId.Value,
-                        publication.CounterValue.Value);
-
-            foreach (var publication in _publications)
-                if (TryGetRuntimeObjective(
-                        client,
-                        publication,
-                        out var objective))
-                {
-                    if (publication.ObjectiveState.HasValue)
-                        objective.State = publication.ObjectiveState.Value;
-                    if (client.Player.Missions.TryGetValue(
-                            publication.MissionId,
-                            out var mission))
-                        foreach (var state in publication.FinalObjectiveStates)
-                            if (mission.Objectives.TryGetValue(
-                                    state.Key,
-                                    out var successor))
-                                successor.State = state.Value;
-                }
-
-            foreach (var missionId in _completableMissions)
-                if (client.Player.Missions.TryGetValue(
-                        missionId, out var mission))
-                    mission.Completeable = true;
 
             foreach (var publication in _publications.Where(
                 publication =>
@@ -271,7 +300,7 @@ namespace Rasa.Managers
                                 _manager.BuildPublishedMissionInfo(
                                     client.Player,
                                     publication.Definition,
-                                    publication.RuntimeMission))),
+                                    client.Player.Missions[publication.MissionId]))),
                         $"mission {publication.MissionId} objective {objectiveId} revealed");
                 foreach (var objectiveId in publication.ActivatedObjectiveIds)
                     MissionApplication.TryPublish(
@@ -320,7 +349,9 @@ namespace Rasa.Managers
                     client,
                     _manager,
                     _startScenario,
-                    _startFailureScenario);
+                    _startFailureScenario,
+                    convergeFlags: false,
+                    convergeMission: false);
 
             foreach (var publication in _publications)
                 _manager.PublishStartedScenarios(
@@ -368,17 +399,6 @@ namespace Rasa.Managers
             }
         }
 
-        private static bool TryGetRuntimeObjective(
-            Client client,
-            ProgressPublication publication,
-            out MissionObjectiveLog objective)
-        {
-            objective = null;
-            return client.Player.Missions.TryGetValue(
-                    publication.MissionId, out var mission) &&
-                mission.Objectives.TryGetValue(
-                    publication.ObjectiveId, out objective);
-        }
     }
 
 

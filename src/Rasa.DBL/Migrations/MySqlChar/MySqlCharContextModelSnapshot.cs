@@ -448,17 +448,17 @@ namespace Rasa.Migrations.MySqlChar
 
             modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionHistoryEntry", b =>
                 {
-                    b.Property<uint>("CharacterId")
-                        .HasColumnType("int(11) unsigned")
-                        .HasColumnName("character_id");
-
-                    b.Property<uint>("MissionId")
-                        .HasColumnType("int unsigned")
-                        .HasColumnName("mission_id");
-
                     b.Property<string>("AssignmentId")
                         .HasColumnType("varchar(32)")
                         .HasColumnName("assignment_id");
+
+                    b.Property<uint>("AssignmentGeneration")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("assignment_generation");
+
+                    b.Property<uint>("CharacterId")
+                        .HasColumnType("int(11) unsigned")
+                        .HasColumnName("character_id");
 
                     b.Property<DateTime>("CompletedAtUtc")
                         .HasColumnType("datetime(6)")
@@ -468,17 +468,137 @@ namespace Rasa.Migrations.MySqlChar
                         .HasColumnType("varchar(32)")
                         .HasColumnName("content_revision");
 
+                    b.Property<uint>("MissionId")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("mission_id");
+
                     b.Property<uint>("Outcome")
                         .HasColumnType("int unsigned")
                         .HasColumnName("outcome");
+
+                    b.Property<DateTime?>("RewardWindowStartUtc")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("reward_window_start_utc");
 
                     b.Property<bool>("Rewarded")
                         .HasColumnType("tinyint(1)")
                         .HasColumnName("rewarded");
 
-                    b.HasKey("CharacterId", "MissionId");
+                    b.Property<DateTime?>("RewardedAtUtc")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("rewarded_at_utc");
+
+                    b.HasKey("AssignmentId");
+
+                    b.HasIndex("CharacterId", "MissionId", "AssignmentGeneration");
+
+                    b.HasIndex("CharacterId", "MissionId", "RewardWindowStartUtc")
+                        .IsUnique();
 
                     b.ToTable("character_mission_history");
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionItemEntry", b =>
+                {
+                    b.Property<uint>("CharacterId")
+                        .HasColumnType("int(11) unsigned")
+                        .HasColumnName("character_id");
+
+                    b.Property<uint>("MissionId")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("mission_id");
+
+                    b.Property<string>("AssignmentId")
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("assignment_id");
+
+                    b.Property<string>("ItemKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)")
+                        .HasColumnName("item_key");
+
+                    b.Property<uint>("ItemId")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("item_id");
+
+                    b.Property<uint>("Generation")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("generation");
+
+                    b.Property<uint>("Quantity")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("quantity");
+
+                    b.HasKey("CharacterId", "MissionId", "AssignmentId", "ItemKey", "ItemId");
+
+                    b.HasIndex("ItemId")
+                        .IsUnique();
+
+                    b.ToTable("character_mission_item", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_mission_item_quantity", "quantity > 0");
+                        });
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionItemQuarantineEntry", b =>
+                {
+                    b.Property<uint>("CharacterId")
+                        .HasColumnType("int(11) unsigned")
+                        .HasColumnName("character_id");
+
+                    b.Property<string>("AssignmentId")
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("assignment_id");
+
+                    b.Property<uint>("MissionId")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("mission_id");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)")
+                        .HasColumnName("reason");
+
+                    b.HasKey("CharacterId", "AssignmentId");
+
+                    b.ToTable("character_mission_item_quarantine", (string)null);
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionItemReceiptEntry", b =>
+                {
+                    b.Property<uint>("CharacterId")
+                        .HasColumnType("int(11) unsigned")
+                        .HasColumnName("character_id");
+
+                    b.Property<string>("AssignmentId")
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("assignment_id");
+
+                    b.Property<string>("OperationKey")
+                        .HasMaxLength(160)
+                        .HasColumnType("varchar(160)")
+                        .HasColumnName("operation_key");
+
+                    b.Property<uint>("Generation")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("generation");
+
+                    b.Property<uint>("MissionId")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("mission_id");
+
+                    b.Property<string>("Payload")
+                        .IsRequired()
+                        .HasColumnType("longtext")
+                        .HasColumnName("payload");
+
+                    b.HasKey("CharacterId", "AssignmentId", "OperationKey");
+
+                    b.ToTable("character_mission_item_receipt", (string)null);
                 });
 
             modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionObjectiveCounterEntry", b =>
@@ -559,6 +679,125 @@ namespace Rasa.Migrations.MySqlChar
                     b.HasKey("CharacterId", "MissionId", "ObjectiveId", "ItemClassId");
 
                     b.ToTable("character_mission_objective_item_counter");
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionOfferEntry", b =>
+                {
+                    b.Property<uint>("CharacterId")
+                        .HasColumnType("int(11) unsigned")
+                        .HasColumnName("character_id");
+
+                    b.Property<uint>("MissionId")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("mission_id");
+
+                    b.Property<uint>("AccountId")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("account_id");
+
+                    b.Property<uint>("ConsumedAssignmentGeneration")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("consumed_assignment_generation");
+
+                    b.Property<string>("ConsumedAssignmentId")
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("consumed_assignment_id");
+
+                    b.Property<string>("ContentRevision")
+                        .IsRequired()
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("content_revision");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("expires_at_utc");
+
+                    b.Property<Guid>("MapEpoch")
+                        .HasColumnType("char(36)")
+                        .HasColumnName("map_epoch");
+
+                    b.Property<string>("OfferId")
+                        .IsRequired()
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("offer_id");
+
+                    b.Property<string>("PartySource")
+                        .HasColumnType("text")
+                        .HasColumnName("party_source");
+
+                    b.Property<ulong>("PlayerEntityId")
+                        .HasColumnType("bigint unsigned")
+                        .HasColumnName("player_entity_id");
+
+                    b.Property<Guid>("PlayerEpoch")
+                        .HasColumnType("char(36)")
+                        .HasColumnName("player_epoch");
+
+                    b.Property<uint>("PriorAssignmentGeneration")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("prior_assignment_generation");
+
+                    b.Property<string>("PriorAssignmentId")
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("prior_assignment_id");
+
+                    b.Property<string>("PriorAssignmentRevision")
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("prior_assignment_revision");
+
+                    b.Property<string>("PriorHistoryId")
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("prior_history_id");
+
+                    b.Property<Guid>("SessionId")
+                        .HasColumnType("char(36)")
+                        .HasColumnName("session_id");
+
+                    b.Property<uint>("SourceAssignmentGeneration")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("source_assignment_generation");
+
+                    b.Property<string>("SourceAssignmentId")
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("source_assignment_id");
+
+                    b.Property<uint>("SourceGeneration")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("source_generation");
+
+                    b.Property<string>("SourceInstanceId")
+                        .IsRequired()
+                        .HasColumnType("varchar(96)")
+                        .HasColumnName("source_instance_id");
+
+                    b.Property<string>("SourceKey")
+                        .IsRequired()
+                        .HasColumnType("varchar(96)")
+                        .HasColumnName("source_key");
+
+                    b.Property<int>("SourceKind")
+                        .HasColumnType("int")
+                        .HasColumnName("source_kind");
+
+                    b.Property<int>("State")
+                        .HasColumnType("int")
+                        .HasColumnName("state");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("CharacterId", "MissionId");
+
+                    b.HasIndex("OfferId")
+                        .IsUnique();
+
+                    b.ToTable("character_mission_offer");
                 });
 
             modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionScenarioStepEntry", b =>
@@ -1379,6 +1618,22 @@ namespace Rasa.Migrations.MySqlChar
                         .HasColumnType("text")
                         .HasColumnName("payload");
 
+                    b.Property<uint?>("SourceAssignmentGeneration")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("source_assignment_generation");
+
+                    b.Property<string>("SourceAssignmentId")
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("source_assignment_id");
+
+                    b.Property<uint?>("SourceGeneration")
+                        .HasColumnType("int unsigned")
+                        .HasColumnName("source_generation");
+
+                    b.Property<string>("SourceRunId")
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("source_run_id");
+
                     b.Property<string>("Status")
                         .HasColumnType("varchar(16)")
                         .HasColumnName("status");
@@ -1389,6 +1644,8 @@ namespace Rasa.Migrations.MySqlChar
                         .HasColumnName("version");
 
                     b.HasKey("RunId", "Generation", "OperationKey");
+
+                    b.HasIndex("SourceRunId");
 
                     b.ToTable("mission_world_effect");
                 });
@@ -1546,6 +1803,33 @@ namespace Rasa.Migrations.MySqlChar
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionItemEntry", b =>
+                {
+                    b.HasOne("Rasa.Structures.Char.CharacterEntry", null)
+                        .WithMany()
+                        .HasForeignKey("CharacterId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionItemQuarantineEntry", b =>
+                {
+                    b.HasOne("Rasa.Structures.Char.CharacterEntry", null)
+                        .WithMany()
+                        .HasForeignKey("CharacterId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionItemReceiptEntry", b =>
+                {
+                    b.HasOne("Rasa.Structures.Char.CharacterEntry", null)
+                        .WithMany()
+                        .HasForeignKey("CharacterId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionObjectiveCounterEntry", b =>
                 {
                     b.HasOne("Rasa.Structures.Char.CharacterMissionObjectiveEntry", "Objective")
@@ -1577,6 +1861,15 @@ namespace Rasa.Migrations.MySqlChar
                         .IsRequired();
 
                     b.Navigation("Objective");
+                });
+
+            modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionOfferEntry", b =>
+                {
+                    b.HasOne("Rasa.Structures.Char.CharacterEntry", null)
+                        .WithMany()
+                        .HasForeignKey("CharacterId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Rasa.Structures.Char.CharacterMissionScenarioStepEntry", b =>

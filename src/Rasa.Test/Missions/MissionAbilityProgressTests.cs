@@ -31,7 +31,7 @@ namespace Rasa.Test.Missions
             var abilityManager = CreateManager(manager);
             var target = AddTarget(context, 501, new Vector3(4, 0, 0));
 
-            Assert.IsTrue(manager.TryAcceptNpcMission(
+            Assert.IsTrue(manager.AcceptOfferedMission(
                 context.Client,
                 giver.EntityId,
                 321));
@@ -73,7 +73,7 @@ namespace Rasa.Test.Missions
             var rightTarget = AddTarget(context, 501, new Vector3(4, 0, 0));
             var wrongTarget = AddTarget(context, 502, new Vector3(5, 0, 0));
 
-            Assert.IsTrue(manager.TryAcceptNpcMission(
+            Assert.IsTrue(manager.AcceptOfferedMission(
                 context.Client,
                 giver.EntityId,
                 321));

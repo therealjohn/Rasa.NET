@@ -46,7 +46,7 @@ namespace Rasa.Test.Missions
             }
             else
             {
-                Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+                Assert.IsTrue(manager.AcceptOfferedMission(context.Client, giver.EntityId, 321));
                 var gained = context.Drain().OfType<MissionGainedPacket>().Single();
                 if (stage == "snapshot")
                 {

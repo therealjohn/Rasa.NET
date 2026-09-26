@@ -47,6 +47,8 @@ namespace Rasa.Repositories.UnitOfWork
         public ICensoredWordRepository CensoredWords => _parent.CensoredWords;
 
         public void ExecuteTransaction(System.Action operation) => _parent.ExecuteTransaction(operation);
+        public T Enlist<T>(System.Func<T> create) where T : class, ITransactionParticipant => _parent.Enlist(create);
+        public bool HasEnlisted<T>() where T : class, ITransactionParticipant => _parent.HasEnlisted<T>();
 
         public ICharacterRepository Characters => _parent.Characters;
 
@@ -61,6 +63,8 @@ namespace Rasa.Repositories.UnitOfWork
         public ICharacterLogosRepository CharacterLogoses => _parent.CharacterLogoses;
 
         public ICharacterMissionRepository CharacterMissions => _parent.CharacterMissions;
+        public Char.MissionOffer.MissionOfferRepository MissionOffers => _parent.MissionOffers;
+        public Char.CharacterMissionItem.ICharacterMissionItemRepository CharacterMissionItems => _parent.CharacterMissionItems;
 
         public ICharacterMissionDeadlineRepository CharacterMissionDeadlines =>
             _parent.CharacterMissionDeadlines;

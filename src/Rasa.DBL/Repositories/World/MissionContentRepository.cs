@@ -27,6 +27,11 @@ namespace Rasa.Repositories.World
             _worldContext.CreateNoTrackingQuery(_worldContext.MissionContentDefinitionEntries)
                 .ToList();
 
+        public List<MissionRepeatPolicyEntry> GetRepeatPolicies() =>
+            _worldContext.CreateNoTrackingQuery(_worldContext.Set<MissionRepeatPolicyEntry>()).ToList();
+        public List<MissionChannelPolicyEntry> GetChannelPolicies() =>
+            _worldContext.CreateNoTrackingQuery(_worldContext.Set<MissionChannelPolicyEntry>()).ToList();
+
         public List<MissionPrerequisiteEntry> GetPrerequisites() =>
             _worldContext.CreateNoTrackingQuery(_worldContext.MissionPrerequisiteEntries)
                 .ToList();

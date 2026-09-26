@@ -20,9 +20,12 @@ namespace Rasa.Missions.Scenes
         uint? LootMissionId = null, uint? LootRewardId = null, uint? LootObjectiveId = null,
         string SharedKey = null, uint? WindupMilliseconds = null, uint MissionId = 0,
         uint? GroupId = null, uint SpawnId = 0, ScenePosition FollowOffset = null,
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] SceneObjectConversation Conversation = null);
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] SceneObjectConversation Conversation = null,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Definitions.ActorGameplayPolicy GameplayPolicy = null);
     public sealed record SceneObjectConversation(uint MissionId, uint ObjectiveId, uint NpcPackageId,
-        uint DialogObjectiveId, uint PlayerFlagId = 1);
+        uint DialogObjectiveId, uint PlayerFlagId = 1,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] Definitions.MissionDialogueKind Kind =
+            Definitions.MissionDialogueKind.Completion);
     public sealed record SceneWaypoint(ScenePosition Position, double Orientation = 0, uint PauseMilliseconds = 0);
     public sealed record SceneSpawnPose(ActorHandle Handle, uint OwnerCharacterId, ScenePosition Position, double Orientation);
     public sealed record SceneRoute(string Key, IReadOnlyList<SceneWaypoint> Points, float Speed = 6.5f, bool ResumeAtDestination = false);
@@ -75,6 +78,10 @@ namespace Rasa.Missions.Scenes
     [JsonDerivedType(typeof(SetEntitlementIntent), "entitlement")]
     [JsonDerivedType(typeof(ObjectiveIntent), "objective")]
     [JsonDerivedType(typeof(MissionDeadlineIntent), "deadline")]
+    [JsonDerivedType(typeof(IssueMissionItemIntent), "issue-mission-item")]
+    [JsonDerivedType(typeof(ConsumeMissionItemIntent), "consume-mission-item")]
+    [JsonDerivedType(typeof(RemoveMissionItemsIntent), "remove-mission-items")]
+    [JsonDerivedType(typeof(OfferRadioMissionIntent), "offer-radio-mission")]
     public abstract record CharacterIntent(string OperationKey);
     public sealed record GrantRewardIntent(string OperationKey, uint MissionId, uint RewardId) : CharacterIntent(OperationKey);
     public sealed record GrantAbilityIntent(string OperationKey, uint SkillId, uint AbilityId, byte Level, byte? Slot) : CharacterIntent(OperationKey);
@@ -84,6 +91,15 @@ namespace Rasa.Missions.Scenes
     public sealed record ObjectiveIntent(string OperationKey, uint MissionId, uint ObjectiveId, Data.MissionObjectiveState State) : CharacterIntent(OperationKey);
     public enum DeadlineIntentKind { Start, Satisfy, Cancel }
     public sealed record MissionDeadlineIntent(string OperationKey, uint MissionId, DeadlineIntentKind Kind, uint Milliseconds = 0)
+        : CharacterIntent(OperationKey);
+    public enum MissionItemScope { AssignmentIssued, CharacterOwned }
+    public sealed record IssueMissionItemIntent(string OperationKey, uint MissionId,
+        string ItemKey, uint ItemTemplateId, uint Quantity) : CharacterIntent(OperationKey);
+    public sealed record ConsumeMissionItemIntent(string OperationKey, uint MissionId,
+        string ItemKey, uint Quantity, MissionItemScope Scope) : CharacterIntent(OperationKey);
+    public sealed record RemoveMissionItemsIntent(string OperationKey, uint MissionId,
+        string ItemKey) : CharacterIntent(OperationKey);
+    public sealed record OfferRadioMissionIntent(string OperationKey, uint MissionId, bool ForceDialog = true)
         : CharacterIntent(OperationKey);
 
     public sealed class SceneSequence
@@ -120,7 +136,9 @@ namespace Rasa.Missions.Scenes
             IDictionary<string, uint> names = null, IDictionary<string, uint> defeatSequences = null)
         {
             Release = release;
-            Actors = new ReadOnlyDictionary<string, SceneActorDefinition>(new Dictionary<string, SceneActorDefinition>(actors));
+            Actors = new ReadOnlyDictionary<string, SceneActorDefinition>(actors.ToDictionary(
+                entry => entry.Key, entry => entry.Value with
+                { GameplayPolicy = entry.Value.GameplayPolicy?.Snapshot() }, StringComparer.Ordinal));
             Routes = new ReadOnlyDictionary<string, SceneRoute>(new Dictionary<string, SceneRoute>(routes));
             Sequences = new ReadOnlyDictionary<uint, SceneSequence>(new Dictionary<uint, SceneSequence>(sequences));
             Names = new ReadOnlyDictionary<string, uint>(new Dictionary<string, uint>(

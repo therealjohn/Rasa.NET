@@ -119,7 +119,7 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(3, foreans.Length);
             var introduced = harness.Drain().OfType<CreatePhysicalEntityPacket>().Select(packet => packet.EntityId).ToArray();
             Assert.IsTrue(foreans.All(creature => introduced.Contains(creature.EntityId)));
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(harness.Client, deSimone.EntityId, 1994));
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(harness.Client, deSimone.EntityId, 1994));
             BootcampRuntimeTestHarness.PrepareDirectDamageClient(harness.Client);
             harness.Client.Player.GmFlagAlwaysFriendly = true;
             var destination = new Vector3(347.66016f, 121.69922f, 64.625f);

@@ -10,6 +10,8 @@ namespace Rasa.Managers
 {
     using Data;
     using Game;
+    using Game.Missions.Persistence;
+    using Game.Missions.Protocol;
     using Packets;
     using Packets.Communicator.Server;
     using Packets.Game.Server;
@@ -105,6 +107,7 @@ namespace Rasa.Managers
         private static readonly object InstanceLock = new object();
         private readonly IGameUnitOfWorkFactory _gameUnitOfWorkFactory;
         private readonly CharacterManager _characterManager;
+        private readonly MissionApplication _missionManager;
 
         private static List<AutoFireTimer> AutoFire = new List<AutoFireTimer>();
 
@@ -158,10 +161,11 @@ namespace Rasa.Managers
             }
         }
 
-        internal ManifestationManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory)
+        internal ManifestationManager(IGameUnitOfWorkFactory gameUnitOfWorkFactory, MissionApplication missionManager = null)
         {
             _gameUnitOfWorkFactory = gameUnitOfWorkFactory;
             _characterManager = new CharacterManager(gameUnitOfWorkFactory);
+            _missionManager = missionManager;
         }
 
         // constant skillId data
@@ -837,20 +841,42 @@ namespace Rasa.Managers
             if (item.StackSize == 0)
                 return;
 
-            // Spent before it is granted, so that a failure here cannot mint a credit from
-            // nothing. ReduceStackCount's own preconditions - a live player, a non-null item, a
-            // non-zero count, and the item being in the named inventory - are all established
-            // above, so once it is reached it consumes.
-            //
-            // Worth knowing which branch it takes, because only one of them touches StackSize: a
-            // stack of several is decremented, while the last of a stack is destroyed and
-            // unregistered with its count left alone. Anything downstream that wants to know
-            // whether an item is gone has to look at the inventory slot, not the number.
-            InventoryManager.Instance.ReduceStackCount(client, InventoryType.Personal, item, 1);
+            lock (client.SyncRoot)
+            {
+                var player = client.Player;
+                var previousCredits = player.CloneCredits;
+                var consumption = new InventoryManager.InventoryConsumption();
+                try
+                {
+                    using var unit = _gameUnitOfWorkFactory.CreateChar();
+                    unit.ExecuteTransaction(() =>
+                    {
+                        if (MissionItemProtection.IsProtected(item, unit))
+                            throw new GameplayRejectionException("Assignment-owned clone credits cannot be redeemed.");
+                        if (previousCredits == uint.MaxValue || unit.Characters.Get(player.Id).CloneCredits != previousCredits)
+                            throw new GameplayRejectionException("Clone credit balance changed or is already full.");
+                        consumption.PlanAndSave(client, new Dictionary<ulong, uint> { [item.EntityId] = 1 }, unit);
+                        unit.Characters.UpdateCharacterCloneCredits(player.Id, previousCredits + 1);
+                        TransactionValidation.Add(unit, () =>
+                        {
+                            if (player.CloneCredits != previousCredits ||
+                                unit.Characters.Get(player.Id).CloneCredits != previousCredits + 1)
+                                throw new GameplayRejectionException("Clone credit balance changed during persistence.");
+                        });
+                    });
+                }
+                catch (Exception error) when (GameplayRejectionException.IsExpected(error))
+                {
+                    Logger.WriteLog(LogType.Error, $"Could not redeem clone credit item {item.Id}: {error.Message}");
+                    return;
+                }
 
-            client.Player.CloneCredits++;
-            CharacterManager.Instance.UpdateCharacter(client, CharacterUpdate.CloneCredits);
-            client.CallMethod(client.Player.EntityId, new CloneCreditsPacket(client.Player.CloneCredits));
+                consumption.Publish(client);
+                player.CloneCredits = previousCredits + 1;
+                client.CallMethod(player.EntityId, new CloneCreditsPacket(player.CloneCredits));
+                foreach (var progress in consumption.ProgressEvents)
+                    (_missionManager ?? MissionApplication.Instance).RecordProgress(client, progress);
+            }
         }
 
         public void RequestArmAbility(Client client, int abilityDrawerSlot)
@@ -1309,14 +1335,21 @@ namespace Rasa.Managers
                 if (tempClient == client)
                     continue;
 
-                tempClient.CallMethod(SysEntity.ClientMethodId, new CreatePhysicalEntityPacket(player.EntityId, player.EntityClass, CreatePlayerEntityData(client)));
+                tempClient.CallMethod(SysEntity.ClientMethodId, new CreatePhysicalEntityPacket(player.EntityId, player.EntityClass, CreatePlayerEntityData(client, tempClient)));
 
             }
         }
 
         public void CellIntroduceClientToSefl(Client client)
         {
-            client.CallMethod(SysEntity.ClientMethodId, new CreatePhysicalEntityPacket(client.Player.EntityId, client.Player.EntityClass, CreatePlayerEntityData(client)));
+            lock (client.SyncRoot)
+            {
+                var player = client.Player;
+                var entityData = CreatePlayerEntityData(client, client);
+                client.CallMethod(SysEntity.ClientMethodId,
+                    new CreatePhysicalEntityPacket(player.EntityId, player.EntityClass, entityData));
+                client.FlagProjection.Acknowledge(client, player, entityData.OfType<PlayerFlagsPacket>().Single());
+            }
         }
 
         public void CellIntroducePlayersToClient(Client client, List<Client> clientList)
@@ -1329,11 +1362,11 @@ namespace Rasa.Managers
                 if (tempClient == client)
                     continue;
 
-                client.CallMethod(SysEntity.ClientMethodId, new CreatePhysicalEntityPacket(tempClient.Player.EntityId, tempClient.Player.EntityClass, CreatePlayerEntityData(tempClient)));
+                client.CallMethod(SysEntity.ClientMethodId, new CreatePhysicalEntityPacket(tempClient.Player.EntityId, tempClient.Player.EntityClass, CreatePlayerEntityData(tempClient, client)));
             }
         }
 		
-		public List<PythonPacket> CreatePlayerEntityData(Client client)
+        public List<PythonPacket> CreatePlayerEntityData(Client client, Client recipient)
         {
             var player = client.Player;
 
@@ -1355,7 +1388,9 @@ namespace Rasa.Managers
                 new ActorNamePacket(player.FamilyName),
                 new IsRunningPacket(player.IsRunning),
                 new TargetCategoryPacket(Factions.AFS),
-                new PlayerFlagsPacket(),
+                new PlayerFlagsPacket(ReferenceEquals(client, recipient)
+                    ? CharacterFlagProjection.ToNativeIds(player.PlayerFlags)
+                    : Array.Empty<uint>()),
                 new IsTrialAccountPacket(player.IsTrialAccount),
                 new EquipmentInfoPacket(client.Player.Inventory.EquippedInventory),
                 // "Received because the manifestation was loaded on the server", and only ever
@@ -1395,21 +1430,30 @@ namespace Rasa.Managers
                 throw new GameplayRejectionException(
                     "Runtime progression no longer matches durable character state.");
 
-            var totalExperience = checked(durableCharacter.Experience + experience);
+            uint totalExperience;
             var previousLevel = durableCharacter.Level;
             var finalLevel = previousLevel;
-            while (finalLevel < MaxPlayerLevel)
-            {
-                var requiredExperience = GetLevelNeededExperience(finalLevel);
-                if (requiredExperience < 0 || totalExperience < requiredExperience)
-                    break;
-                finalLevel++;
-            }
-
             var cloneCredits = durableCharacter.CloneCredits;
-            for (var level = previousLevel + 1; level <= finalLevel; level++)
-                if (Array.IndexOf(CloneCreditLevels, level) >= 0)
-                    cloneCredits = checked(cloneCredits + 1);
+            try
+            {
+                totalExperience = checked(durableCharacter.Experience + experience);
+                while (finalLevel < MaxPlayerLevel)
+                {
+                    var requiredExperience = GetLevelNeededExperience(finalLevel);
+                    if (requiredExperience < 0 || totalExperience < requiredExperience)
+                        break;
+                    finalLevel++;
+                }
+
+                foreach (var level in CloneCreditLevels)
+                    if (level > previousLevel && level <= finalLevel)
+                        cloneCredits = checked(cloneCredits + 1);
+            }
+            catch (OverflowException error)
+            {
+                throw new GameplayRejectionException(
+                    "Mission reward progression exceeds the supported range.", error);
+            }
 
             unitOfWork.Characters.UpdateCharacterProgression(
                 player.Id, totalExperience, finalLevel);
@@ -2587,7 +2631,8 @@ namespace Rasa.Managers
                 if (weaponAmmo == null)
                     continue;
 
-                if (weaponAmmo.ItemTemplate.Class == weaponClassInfo.AmmoClassId)
+                if (weaponAmmo.ItemTemplate.Class == weaponClassInfo.AmmoClassId && weaponAmmo.StackSize > 0 &&
+                    !MissionItemProtection.IsProtected(weaponAmmo, _gameUnitOfWorkFactory))
                 {
                     // consume ammo
                     var ammoToGrab = Math.Min(weaponClassInfo.ClipSize - foundAmmo - weapon.CurrentAmmo, weaponAmmo.StackSize);
@@ -3101,7 +3146,8 @@ namespace Rasa.Managers
 
                 var weaponAmmo = EntityManager.Instance.GetItem(entityId);
 
-                if (weaponAmmo == null || weaponAmmo.ItemTemplate.Class != weaponClassInfo.AmmoClassId || weaponAmmo.StackSize == 0)
+                if (weaponAmmo == null || weaponAmmo.ItemTemplate.Class != weaponClassInfo.AmmoClassId || weaponAmmo.StackSize == 0 ||
+                    MissionItemProtection.IsProtected(weaponAmmo, _gameUnitOfWorkFactory))
                     continue;
 
                 var ammoToGrab = Math.Min(weaponClassInfo.ClipSize - loaded, weaponAmmo.StackSize);
@@ -3126,7 +3172,7 @@ namespace Rasa.Managers
                     foreach (var stack in consumed)
                     {
                         var saved = unitOfWork.Items.GetItem(stack.Item.Id);
-                        if (saved == null || saved.StackSize != stack.Original)
+                        if (saved == null || saved.StackSize != stack.Original || MissionItemProtection.IsProtected(stack.Item, unitOfWork))
                             throw new GameplayRejectionException("Reserve ammunition changed during reload.");
 
                         if (stack.Remaining == 0)

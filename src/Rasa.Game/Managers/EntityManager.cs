@@ -5,6 +5,7 @@ namespace Rasa.Managers
 {
     using Data;
     using Game;
+    using Game.Missions.Integration;
     using Packets.MapChannel.Server;
     using Structures;
 
@@ -187,7 +188,16 @@ namespace Rasa.Managers
 
         public void UnregisterEntity(ulong entityId)
         {
+            InvalidateConversationTarget(entityId);
             RegisteredEntities.Remove(entityId);
+        }
+
+        private void InvalidateConversationTarget(ulong entityId)
+        {
+            if (Creatures.TryGetValue(entityId, out var creature))
+                MissionInteractionPolicy.InvalidateTarget(creature.RuntimeMapChannel, entityId);
+            if (DynamicObjects.TryGetValue(entityId, out var obj))
+                MissionInteractionPolicy.InvalidateTarget(obj.RuntimeMapChannel, entityId);
         }
         // Actors
         public Actor GetActor(ulong entityId)
@@ -244,6 +254,7 @@ namespace Rasa.Managers
 
         internal void UnregisterDynamicObject(ulong entityId)
         {
+            InvalidateConversationTarget(entityId);
             DynamicObjects.Remove(entityId);
         }
 
@@ -283,6 +294,7 @@ namespace Rasa.Managers
 
         public void UnregisterCreature(ulong entityId)
         {
+            InvalidateConversationTarget(entityId);
             Creatures.Remove(entityId);
         }
 

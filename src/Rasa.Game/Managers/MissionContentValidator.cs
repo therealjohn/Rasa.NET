@@ -33,7 +33,10 @@ namespace Rasa.Managers
                 MissionActionKind.ShowIndicator,
                 MissionActionKind.SetPlayerFlag,
                 MissionActionKind.GrantReward,
-                MissionActionKind.ShowAmbientConversation
+                MissionActionKind.ShowAmbientConversation,
+                MissionActionKind.IssueMissionItem,
+                MissionActionKind.ConsumeMissionItem,
+                MissionActionKind.RemoveMissionItems
             };
 
         private static readonly HashSet<MissionSpawnGroupPolicy> SupportedSpawnPolicies =
@@ -113,6 +116,17 @@ namespace Rasa.Managers
             MissionContentReferenceSet references,
             ICollection<MissionValidationDiagnostic> diagnostics)
         {
+            foreach (var channelError in Rasa.Missions.Definitions.MissionChannelValidation.Errors(definition.Mission))
+                diagnostics.Add(new MissionValidationDiagnostic("invalid-mission-channel",
+                    channelError, definition.MissionId, definition.ContentRevision));
+            foreach (var source in definition.Mission.RadioSources)
+                if (source?.MapContextId is uint map && !references.MapContextIds.Contains(map))
+                    diagnostics.Add(new MissionValidationDiagnostic("missing-radio-source-map",
+                        $"Radio source {source.Key} references unavailable map context {map}.",
+                        definition.MissionId, definition.ContentRevision));
+            if (definition.Mission.RepeatPolicy.ValidationError is { } repeatError)
+                diagnostics.Add(new MissionValidationDiagnostic("invalid-repeat-policy", repeatError,
+                    definition.MissionId, definition.ContentRevision));
             if (!definition.Mission.ClientNameTextId.HasValue)
             {
                 diagnostics.Add(new MissionValidationDiagnostic(
@@ -292,6 +306,10 @@ namespace Rasa.Managers
 
                 foreach (var action in transition.Actions)
                 {
+                    if (!Rasa.Missions.Definitions.MissionItemValidation.ActionMatches(action))
+                        diagnostics.Add(new MissionValidationDiagnostic("invalid-item-action",
+                            "Mission item action kind does not match its typed item intent.", definition.MissionId,
+                            definition.ContentRevision, transition.ObjectiveId, transition.TransitionId, actionId: action.ActionId));
                     if (!action.HasDefinedKind())
                     {
                         diagnostics.Add(new MissionValidationDiagnostic(
@@ -660,9 +678,7 @@ namespace Rasa.Managers
                 }
             }
 
-            var graph = definition.Objectives.Values.ToDictionary(
-                objective => objective.ObjectiveId,
-                objective => objective.RevealedObjectiveIds.Concat(objective.ActivatedObjectiveIds).Distinct().ToArray());
+            var graph = BuildObjectiveGraph(definition.Objectives.Values);
             var visiting = new HashSet<uint>();
             var visited = new HashSet<uint>();
             foreach (var node in graph.Keys.OrderBy(value => value))
@@ -679,6 +695,13 @@ namespace Rasa.Managers
                 }
             }
         }
+
+        internal static IReadOnlyDictionary<uint, uint[]> BuildObjectiveGraph(
+            IEnumerable<Structures.MissionObjectiveDefinition> objectives) =>
+            objectives.ToDictionary(objective => objective.ObjectiveId,
+                objective => objective.GetExecutableTransitionsOrLegacyDefault()
+                    .SelectMany(transition => transition.RevealedObjectiveIds.Concat(transition.ActivatedObjectiveIds))
+                    .Distinct().ToArray());
 
         private static bool DetectCycle(
             uint node,

@@ -317,7 +317,7 @@ namespace Rasa.Test.Missions
             Assert.IsTrue(manager.LoadedMissions[321].IsOperational);
             Assert.IsTrue(manager.TryGetRewardInfo(321, out var rewardInfo));
             Assert.AreEqual(1, rewardInfo.SelectableReward.Count);
-            Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            Assert.IsTrue(manager.AcceptOfferedMission(context.Client, giver.EntityId, 321));
         }
 
         [TestMethod]
@@ -394,7 +394,7 @@ namespace Rasa.Test.Missions
             Assert.IsFalse(report.BlocksReadiness);
             Assert.IsTrue(manager.LoadedMissions[321].IsOperational);
             Assert.AreEqual(2, manager.LoadedMissions[321].Objectives[10].ExecutableTransitions.Count);
-            Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            Assert.IsTrue(manager.AcceptOfferedMission(context.Client, giver.EntityId, 321));
         }
 
         [TestMethod]
@@ -412,7 +412,7 @@ namespace Rasa.Test.Missions
 
             Assert.IsFalse(report.BlocksReadiness);
             Assert.IsTrue(manager.LoadedMissions[321].IsOperational);
-            Assert.IsTrue(manager.TryAcceptNpcMission(context.Client, giver.EntityId, 321));
+            Assert.IsTrue(manager.AcceptOfferedMission(context.Client, giver.EntityId, 321));
         }
 
         private static MissionContentFixture CreatePureProgressFixture()

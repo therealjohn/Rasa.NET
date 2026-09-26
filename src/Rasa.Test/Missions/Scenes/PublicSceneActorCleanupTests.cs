@@ -56,7 +56,7 @@ namespace Rasa.Test.Missions.Scenes
             Assert.IsTrue(MapInstanceScope.Contains(context.Map, fixture.Giver));
             Assert.IsTrue(fixture.Giver.IsInteractable);
 
-            Assert.IsTrue(context.Manager.TryAcceptNpcMission(fixture.Other, fixture.Giver.EntityId, 321));
+            Assert.IsTrue(context.Manager.AcceptOfferedMission(fixture.Other, fixture.Giver.EntityId, 321));
             Assert.AreEqual(2, context.Map.SpawnPools.Count(pool => pool.SceneRunId != null));
             Assert.AreEqual(2, context.Map.DynamicObjects.Count(obj => obj.SceneRunId != null));
             if (fault)
@@ -119,7 +119,7 @@ namespace Rasa.Test.Missions.Scenes
             Assert.IsFalse(MapInstanceScope.Contains(context.Map, owned));
             Assert.IsFalse(context.Manager.PublicActors.TryResolve(context.Map, handle, out _));
             Assert.IsTrue(fixture.Giver.IsInteractable);
-            Assert.IsTrue(context.Manager.TryAcceptNpcMission(fixture.Other, fixture.Giver.EntityId, 321));
+            Assert.IsTrue(context.Manager.AcceptOfferedMission(fixture.Other, fixture.Giver.EntityId, 321));
         }
 
         [TestMethod]
@@ -185,7 +185,7 @@ namespace Rasa.Test.Missions.Scenes
                 UnrelatedRunId = Context.Manager.Scenes.Start(Other, "data.sequence", Bindings(false));
                 Context.Manager.Scenes.Bind(321, "data.sequence", Bindings(true));
                 Context.Manager.PublicActors.Bind(new PublicEncounterBinding(321, 77, "guide", "data.sequence", ownerLossPolicy));
-                Assert.IsTrue(Context.Manager.TryAcceptNpcMission(Context.Client, Giver.EntityId, 321));
+                Assert.IsTrue(Context.Manager.AcceptOfferedMission(Context.Client, Giver.EntityId, 321));
                 Context.Manager.PublishInitialState(Context.Client);
                 using var unit = Context.CreateChar();
                 RunId = unit.CharacterMissions.Runtime.Scenes(1, 321).Single().RunId;

@@ -1,4 +1,6 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Data;
 using System.Data.Common;
 using System.Runtime.ExceptionServices;
@@ -10,6 +12,7 @@ namespace Rasa.Repositories.UnitOfWork
     public abstract class UnitOfWork
     {
         private readonly DbContext _dbContext;
+        private Dictionary<Type, ITransactionParticipant> _participants;
 
         protected UnitOfWork(DbContext dbContext)
         {
@@ -31,12 +34,31 @@ namespace Rasa.Repositories.UnitOfWork
 
         public void ExecuteTransaction(System.Action operation)
         {
+            if (_participants != null)
+                throw new InvalidOperationException("Character transactions cannot be nested.");
             using var transaction = _dbContext.Database.BeginTransaction(IsolationLevel.Serializable);
+            _participants = new();
+            EventHandler<SavingChangesEventArgs> guard = (_, _) => RequireOpenTransaction();
+            _dbContext.SavingChanges += guard;
             try
             {
                 try
                 {
                     operation();
+                    RequireOpenTransaction();
+                    foreach (var participant in _participants.Values.ToArray())
+                        participant.Prepare();
+                    Complete();
+                    RequireOpenTransaction();
+                    foreach (var participant in _participants.Values.ToArray())
+                        participant.FinalizePersistence();
+                    Complete();
+                    RequireOpenTransaction();
+                    foreach (var participant in _participants.Values.ToArray())
+                        participant.Validate();
+                    RequireOpenTransaction();
+                    foreach (var participant in _participants.Values.ToArray())
+                        participant.ValidateCommitBoundary();
                 }
                 catch (InvalidOperationException error) when (IsTransientUpdateWrapper(error))
                 {
@@ -48,12 +70,11 @@ namespace Rasa.Repositories.UnitOfWork
                     throw new DbUpdateException("Transaction connection was lost before commit.", error);
                 }
 
-                RequireOpenTransaction();
-                Complete();
-                RequireOpenTransaction();
                 try
                 {
                     transaction.Commit();
+                    foreach (var participant in _participants.Values)
+                        participant.Committed();
                 }
                 catch (InvalidOperationException error) when (
                     transaction.GetDbTransaction().Connection?.State != ConnectionState.Open)
@@ -78,6 +99,13 @@ namespace Rasa.Repositories.UnitOfWork
                 }
 
                 throw;
+            }
+            finally
+            {
+                _dbContext.SavingChanges -= guard;
+                foreach (var participant in _participants.Values)
+                    participant.Dispose();
+                _participants = null;
             }
 
             void RequireOpenTransaction()
@@ -107,6 +135,18 @@ namespace Rasa.Repositories.UnitOfWork
                 return databaseError.GetType().Assembly == providerConnectionType.Assembly;
             }
         }
+
+        public T Enlist<T>(Func<T> create) where T : class, ITransactionParticipant
+        {
+            if (_participants == null)
+                throw new InvalidOperationException("Transaction state requires ExecuteTransaction.");
+            if (!_participants.TryGetValue(typeof(T), out var state))
+                _participants.Add(typeof(T), state = create());
+            return (T)state;
+        }
+
+        public bool HasEnlisted<T>() where T : class, ITransactionParticipant =>
+            _participants?.ContainsKey(typeof(T)) == true;
 
         public void Reject()
         {

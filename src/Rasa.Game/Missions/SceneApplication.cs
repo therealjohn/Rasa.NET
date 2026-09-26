@@ -31,7 +31,7 @@ namespace Rasa.Game.Missions
         private readonly Dictionary<string, Resident> _runs = new(StringComparer.Ordinal);
         private readonly Dictionary<uint, (string Script, SceneBindings Bindings)> _bindings = new();
         private readonly Dictionary<(uint Character, uint Mission, string Assignment), string> _assignmentScenes = new();
-        private readonly Dictionary<string, DateTime> _worldRetries = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, WorldRetry> _worldRetries = new(StringComparer.Ordinal);
         private readonly Dictionary<string, DateTime> _messageRetries = new(StringComparer.Ordinal);
         private readonly Dictionary<string, DateTime> _terminationRetries = new(StringComparer.Ordinal);
         private readonly Dictionary<string, PendingPause> _pauseRetries = new(StringComparer.Ordinal);
@@ -122,11 +122,14 @@ namespace Rasa.Game.Missions
             }
             var assignments = unit.CharacterMissions.Get(characterId).ToDictionary(mission => mission.MissionId);
             var states = assignments.ToDictionary(entry => entry.Key, entry => entry.Value.MissionState);
-            foreach (var history in unit.CharacterMissions.Runtime.History(characterId))
-                states.TryAdd(history.MissionId, history.Outcome);
+            var history = unit.CharacterMissions.Runtime.History(characterId);
+            foreach (var outcome in history.OrderByDescending(entry => entry.AssignmentGeneration)
+                .ThenByDescending(entry => entry.CompletedAtUtc).ThenByDescending(entry => entry.AssignmentId))
+                states.TryAdd(outcome.MissionId, outcome.Outcome);
             foreach (var trigger in experience.MissionTriggers.Where(trigger =>
                 states.TryGetValue(trigger.MissionId, out var state) &&
-                (trigger.Event == "Accepted" || trigger.Event == "Rewarded" && state == (uint)Data.MissionState.Completed ||
+                (trigger.Event == "Accepted" || trigger.Event == "Rewarded" &&
+                    (state == (uint)Data.MissionState.Completed || history.Any(entry => entry.MissionId == trigger.MissionId && entry.Rewarded)) ||
                  trigger.Event == "Completeable" && state == (uint)Data.MissionState.Active &&
                     assignments.TryGetValue(trigger.MissionId, out var assignment) && assignment.Completeable)))
                 Submit(runId, new SceneObservation(SceneEventKind.Signal, _runs[runId].Run.Generation, SequenceId: trigger.SequenceId));
@@ -174,7 +177,7 @@ namespace Rasa.Game.Missions
             using var unit = _factory.CreateChar();
             foreach (var binding in _bindings.OrderBy(entry => entry.Key))
                 foreach (var row in unit.CharacterMissions.Runtime.Scenes(characterId, binding.Key))
-                    if (map.IsPrivateInstance || row.MapKey == PublicActorLeaseService.MapKey(map))
+                    if (row.Status != "Resetting" && (map.IsPrivateInstance || row.MapKey == PublicActorLeaseService.MapKey(map)))
                         Attach(characterId, map, owner, row.RunId, binding.Value.Bindings);
         }
 
@@ -194,6 +197,7 @@ namespace Rasa.Game.Missions
         {
             if (!_bindings.TryGetValue(assignment.MissionId, out var binding))
                 return;
+            RequireSceneControl(unit, assignment);
             var scene = new MissionSceneEntry
             {
                 RunId = Guid.NewGuid().ToString("N"), AssignmentId = assignment.AssignmentId,
@@ -209,13 +213,64 @@ namespace Rasa.Game.Missions
             });
         }
 
+        internal void AttachSharedAssignment(Repositories.Char.ICharUnitOfWork unit, CharacterMissionEntry assignment,
+            global::Rasa.Missions.Definitions.MissionOfferSourceIdentity source)
+        {
+            var store = unit.CharacterMissions.Runtime;
+            var scene = store.ReadScene(source.InstanceId);
+            if (source.Generation == 0 || scene?.Generation != source.Generation ||
+                scene.MissionId != assignment.MissionId || scene.Release != assignment.ContentRevision ||
+                scene.Status is not ("Running" or "Waiting") || scene.OwnerCharacterId == assignment.CharacterId)
+                throw new GameplayRejectionException("The shared scene is not the offered live run.");
+            var participant = store.Participants(scene.RunId).SingleOrDefault(entry => entry.CharacterId == assignment.CharacterId);
+            if (participant?.Active == true)
+                throw new GameplayRejectionException("A live participant already occupies this character's run slot.");
+            if (participant == null)
+            {
+                participant = new MissionSceneParticipantEntry { RunId = scene.RunId, CharacterId = assignment.CharacterId };
+                store.Add(participant);
+            }
+            participant.AssignmentId = assignment.AssignmentId;
+            participant.AssignmentGeneration = assignment.Generation;
+            participant.Active = true;
+            TransactionValidation.AtCommitBoundary(unit, () =>
+            {
+                var current = store.ReadParticipant(source.InstanceId, assignment.CharacterId);
+                var run = store.ReadScene(source.InstanceId);
+                if (current?.Active != true || current.AssignmentId != assignment.AssignmentId ||
+                    current.AssignmentGeneration != assignment.Generation || run?.Generation != source.Generation ||
+                    run.Status is not ("Running" or "Waiting") || run.AssignmentId != scene.AssignmentId)
+                    throw new GameplayRejectionException("Shared participation changed before assignment commit.");
+            });
+        }
+
+        private static bool IsJoinedAssignment(Repositories.Char.ICharUnitOfWork unit, CharacterMissionEntry assignment) =>
+            unit.CharacterMissions.Runtime.Participations(assignment.AssignmentId).Any(participant =>
+                participant.CharacterId == assignment.CharacterId && participant.AssignmentGeneration == assignment.Generation &&
+                unit.CharacterMissions.Runtime.Scene(participant.RunId)?.OwnerCharacterId != assignment.CharacterId);
+
+        private static void RequireSceneControl(Repositories.Char.ICharUnitOfWork unit, CharacterMissionEntry assignment)
+        {
+            if (IsJoinedAssignment(unit, assignment))
+                throw new GameplayRejectionException("A shared participant cannot control or create the initiator's world scene.");
+        }
+
         internal IReadOnlyList<string> CancelAssignment(Repositories.Char.ICharUnitOfWork unit, CharacterMissionEntry assignment)
         {
             var store = unit.CharacterMissions.Runtime;
             var scenes = store.Scenes(assignment.CharacterId, assignment.MissionId)
                 .Where(scene => scene.AssignmentId == assignment.AssignmentId).ToArray();
+            foreach (var participant in store.Participations(assignment.AssignmentId).Where(participant =>
+                participant.CharacterId == assignment.CharacterId && participant.AssignmentGeneration == assignment.Generation))
+                participant.Active = false;
             foreach (var scene in scenes)
             {
+                foreach (var effect in store.ForwardedEffects(scene.RunId).Where(effect =>
+                    effect.SourceAssignmentId == assignment.AssignmentId &&
+                    effect.SourceAssignmentGeneration == assignment.Generation && effect.Status != "Cancelled"))
+                { effect.Status = "Cancelled"; effect.Version++; }
+                if (scene.Status == "Resetting")
+                    continue;
                 scene.Generation++;
                 scene.Version++;
                 scene.Status = "Resetting";
@@ -234,6 +289,11 @@ namespace Rasa.Game.Missions
                     lease.State = "Resetting";
                     lease.Version++;
                 }
+            }
+            foreach (var delivery in store.Deliveries(assignment.CharacterId).Where(entry => entry.AssignmentId == assignment.AssignmentId))
+            {
+                delivery.Status = "Expired";
+                delivery.Version++;
             }
             return scenes.Select(scene => scene.RunId).ToArray();
         }
@@ -257,6 +317,10 @@ namespace Rasa.Game.Missions
         {
             try
             {
+                using (var unit = _factory.CreateChar())
+                    foreach (var effect in unit.CharacterMissions.Runtime.ForwardedEffects(runId)
+                        .Where(effect => effect.Status == "Cancelled"))
+                        _world.CancelOperation(effect.RunId, effect.Generation, effect.OperationKey);
                 _missions.PublicActors.BeginReset(runId, "AssignmentAbandoned");
                 LeaseReset(runId);
                 _terminationRetries.Remove(runId);
@@ -268,16 +332,59 @@ namespace Rasa.Game.Missions
             }
         }
 
-        private static void RequireCurrentAssignment(Repositories.Char.ICharUnitOfWork unit, MissionSceneEntry scene)
+        private static void RequireCurrentAssignment(Repositories.Char.ICharUnitOfWork unit, MissionSceneEntry scene,
+            bool persisted = false)
         {
             if (string.IsNullOrEmpty(scene.AssignmentId))
                 return;
-            var assignment = unit.CharacterMissions.GetByCharacterAndMission(scene.OwnerCharacterId, scene.MissionId);
-            var participant = unit.CharacterMissions.Runtime.Participants(scene.RunId)
-                .SingleOrDefault(entry => entry.CharacterId == scene.OwnerCharacterId);
+            var assignment = persisted ? unit.CharacterMissions.Runtime.ReadAssignment(scene.OwnerCharacterId, scene.MissionId) :
+                unit.CharacterMissions.GetByCharacterAndMission(scene.OwnerCharacterId, scene.MissionId);
+            var participant = persisted ? unit.CharacterMissions.Runtime.ReadParticipant(scene.RunId, scene.OwnerCharacterId) :
+                unit.CharacterMissions.Runtime.Participants(scene.RunId).SingleOrDefault(entry => entry.CharacterId == scene.OwnerCharacterId);
             if (assignment?.AssignmentId != scene.AssignmentId || participant == null ||
                 participant.AssignmentId != scene.AssignmentId || participant.AssignmentGeneration != assignment.Generation)
                 throw new GameplayRejectionException($"Scene {scene.RunId} no longer owns its mission assignment/generation.");
+        }
+
+        private bool HasCurrentEffectSource(Repositories.Char.ICharUnitOfWork unit, MissionSceneEntry target,
+            MissionWorldEffectEntry effect)
+        {
+            if (effect.SourceRunId == null)
+                return effect.SourceGeneration == null && effect.SourceAssignmentId == null &&
+                    effect.SourceAssignmentGeneration == null;
+            var store = unit.CharacterMissions.Runtime;
+            var source = store.ReadScene(effect.SourceRunId);
+            // Private instance keys can change on recreation; attachment enforces their current owner.
+            var samePrivateOwner = _runs.TryGetValue(target.RunId, out var execution) &&
+                execution.Map.IsPrivateInstance && execution.Map.OwnerCharacterId == target.OwnerCharacterId;
+            if (target.MissionId != 0 || source == null || source.MissionId == 0 ||
+                source.OwnerCharacterId != target.OwnerCharacterId || !samePrivateOwner && source.MapKey != target.MapKey ||
+                source.Generation != effect.SourceGeneration || source.Status is "Resetting" or "Faulted" ||
+                string.IsNullOrEmpty(effect.SourceAssignmentId) || source.AssignmentId != effect.SourceAssignmentId ||
+                !effect.SourceAssignmentGeneration.HasValue || effect.SourceAssignmentGeneration == 0)
+                return false;
+            var participant = store.ReadParticipant(source.RunId, source.OwnerCharacterId);
+            if (participant?.Active != true || participant.AssignmentId != effect.SourceAssignmentId ||
+                participant.AssignmentGeneration != effect.SourceAssignmentGeneration)
+                return false;
+            var assignment = store.ReadAssignment(source.OwnerCharacterId, source.MissionId);
+            if (assignment != null)
+                return assignment.AssignmentId == effect.SourceAssignmentId &&
+                    assignment.Generation == effect.SourceAssignmentGeneration;
+            // A cleared one-time success still owns its authored experience state.
+            var history = store.ReadHistory(effect.SourceAssignmentId);
+            return _missions.TryGetOperationalMission(source.MissionId, out var definition) &&
+                definition.RepeatPolicy.Kind == global::Rasa.Missions.Runtime.MissionRepeatKind.Once &&
+                history?.CharacterId == source.OwnerCharacterId && history.MissionId == source.MissionId &&
+                history.AssignmentGeneration == effect.SourceAssignmentGeneration &&
+                history.Outcome is (uint)Data.MissionState.Success or (uint)Data.MissionState.Completed;
+        }
+
+        private static void CancelStaleEffect(MissionWorldEffectEntry effect)
+        {
+            effect.Status = "Cancelled";
+            effect.Failure = "Source assignment or scene generation is no longer current.";
+            effect.Version++;
         }
 
         internal void SynchronizeDeadline(Repositories.Char.ICharUnitOfWork unit, CharacterMissionEntry assignment,
@@ -384,15 +491,19 @@ namespace Rasa.Game.Missions
             string assignmentId;
             using (var unit = _factory.CreateChar())
             {
-                assignmentId = unit.CharacterMissions.GetByCharacterAndMission(owner.Player.Id, missionId)?.AssignmentId;
-                if (assignmentId == null)
-                    return Reject("Scene assignment disappeared.");
+                var assignment = unit.CharacterMissions.GetByCharacterAndMission(owner.Player.Id, missionId);
+                if (assignment == null || !mission.MatchesAssignment(
+                    assignment.AssignmentId, assignment.Generation, assignment.ContentRevision))
+                    return Reject("Scene assignment disappeared or the caller belongs to a different attempt.");
+                if (IsJoinedAssignment(unit, assignment))
+                    return Reject("A shared participant cannot execute the initiator's scene.");
+                assignmentId = assignment.AssignmentId;
             }
             if (!_assignmentScenes.TryGetValue((owner.Player.Id, missionId, assignmentId), out var id))
             {
                 using var unit = _factory.CreateChar();
                 var assignment = unit.CharacterMissions.GetByCharacterAndMission(owner.Player.Id, missionId);
-                if (assignment == null)
+                if (assignment == null || !mission.MatchesAssignment(assignment.AssignmentId, assignment.Generation, assignment.ContentRevision))
                     return Reject("Scene assignment disappeared.");
                 var existing = unit.CharacterMissions.Runtime.Scenes(owner.Player.Id, missionId)
                     .SingleOrDefault(scene => scene.AssignmentId == assignment.AssignmentId &&
@@ -418,12 +529,25 @@ namespace Rasa.Game.Missions
             return DrainMessages(id);
         }
 
+        internal void QueueNamedSequence(Repositories.Char.ICharUnitOfWork unit, Client owner, uint missionId, string name)
+        {
+            if (!_bindings.TryGetValue(missionId, out var binding) ||
+                !binding.Bindings.Names.TryGetValue(name, out var sequence) ||
+                !binding.Bindings.Sequences.ContainsKey(sequence))
+                throw new GameplayRejectionException($"Mission {missionId} has no executable sequence {name}.");
+            QueueSequence(unit, owner, missionId, sequence);
+        }
+
         internal void QueueSequence(Repositories.Char.ICharUnitOfWork unit, Client owner, uint missionId, uint sequenceId)
         {
             if (!Owns(missionId))
                 return;
             var assignment = unit.CharacterMissions.GetByCharacterAndMission(owner.Player.Id, missionId)
                 ?? throw new GameplayRejectionException("Scene input has no assignment.");
+            if (!owner.Player.Missions.TryGetValue(missionId, out var runtime) ||
+                !runtime.MatchesAssignment(assignment.AssignmentId, assignment.Generation, assignment.ContentRevision))
+                throw new GameplayRejectionException("Scene input caller belongs to a different attempt.");
+            RequireSceneControl(unit, assignment);
             var store = unit.CharacterMissions.Runtime;
             var scene = store.AssignmentScene(assignment.AssignmentId);
             if (scene == null)
@@ -471,6 +595,12 @@ namespace Rasa.Game.Missions
                 {
                     var assignment = missionId == 0 ? null :
                         unit.CharacterMissions.GetByCharacterAndMission(characterId, missionId);
+                    if (missionId != 0 && (assignment == null || owner != null &&
+                        (!owner.Player.Missions.TryGetValue(missionId, out var log) ||
+                         !log.MatchesAssignment(assignment.AssignmentId, assignment.Generation, assignment.ContentRevision))))
+                        throw new GameplayRejectionException("Scene start has no matching runtime assignment.");
+                    if (assignment != null)
+                        RequireSceneControl(unit, assignment);
                     unit.CharacterMissions.Runtime.Add(new MissionSceneEntry
                     {
                         RunId = run.Id, Release = run.Release, ScriptKey = run.ScriptKey, StateVersion = run.StateVersion,
@@ -580,6 +710,7 @@ namespace Rasa.Game.Missions
             using var publication = new MissionScenarioPlan();
             var worldTargets = new HashSet<string>(StringComparer.Ordinal) { runId };
             var sharedVersions = new Dictionary<string, long>(StringComparer.Ordinal);
+            MissionWorldEffectEntry observedEffect = null;
             var next = resident.Run with
             {
                 Checkpoint = decision.Checkpoint, Status = decision.Status, Version = resident.Run.Version + 1,
@@ -611,6 +742,9 @@ namespace Rasa.Game.Missions
                             entry.Status == "Running");
                         if (effect == null)
                             throw new GameplayRejectionException("Unmatched world operation callback.");
+                        if (!HasCurrentEffectSource(unit, scene, effect))
+                            throw new GameplayRejectionException("World operation callback belongs to a retired source attempt.");
+                        observedEffect = effect;
                         if (observation.Kind == SceneEventKind.RouteCompleted)
                             effect.Status = "Applied";
                         else if (observation.Kind == SceneEventKind.WaypointReached &&
@@ -657,16 +791,20 @@ namespace Rasa.Game.Missions
                     foreach (var intent in decision.CharacterIntents)
                     {
                         var generation = intent is GrantRewardIntent or GrantAbilityIntent ? 0U : next.Generation;
-                        if (store.HasReceipt(runId, generation, intent.OperationKey))
+                        var recorded = store.HasReceipt(runId, generation, intent.OperationKey);
+                        if (recorded && !Rasa.Missions.Definitions.MissionItemValidation.IsItemIntent(intent) &&
+                            intent is not OfferRadioMissionIntent)
                             continue;
                         _characters.Apply(resident.Owner, next, intent, unit, publication);
-                        store.Add(new MissionReceiptEntry
-                        {
-                            OwnerId = runId, Generation = generation, OperationKey = intent.OperationKey,
-                            Kind = "Grant", CreatedAtUtc = _utcNow()
-                        });
+                        if (!recorded)
+                            store.Add(new MissionReceiptEntry
+                            {
+                                OwnerId = runId, Generation = generation, OperationKey = intent.OperationKey,
+                                Kind = "Grant", CreatedAtUtc = _utcNow()
+                            });
                     }
                     var order = 0;
+                    CharacterMissionEntry sourceAssignment = null;
                     foreach (var intent in decision.WorldIntents)
                     {
                         var target = resident;
@@ -682,6 +820,9 @@ namespace Rasa.Game.Missions
                             var key = "shared-" + Convert.ToHexString(SHA256.HashData(
                                 Encoding.UTF8.GetBytes($"{runId}:{next.Generation}:{intent.OperationKey}"))).ToLowerInvariant();
                             applied = intent with { OperationKey = key, Role = role };
+                            sourceAssignment ??= unit.CharacterMissions.GetByCharacterAndMission(
+                                scene.OwnerCharacterId, scene.MissionId)
+                                ?? throw new GameplayRejectionException("Forwarded world work has no source assignment.");
                             if (applied is RunRouteIntent route && !target.Bindings.Routes.ContainsKey(route.Route))
                                 throw new GameplayRejectionException("Shared actor routes must be owned by their experience.");
                             if (!sharedVersions.ContainsKey(target.Run.Id))
@@ -701,6 +842,10 @@ namespace Rasa.Game.Missions
                             store.Add(new MissionWorldEffectEntry
                             {
                                 RunId = target.Run.Id, Generation = targetGeneration, OperationKey = applied.OperationKey,
+                                SourceRunId = target == resident ? null : scene.RunId,
+                                SourceGeneration = target == resident ? null : next.Generation,
+                                SourceAssignmentId = target == resident ? null : sourceAssignment.AssignmentId,
+                                SourceAssignmentGeneration = target == resident ? null : sourceAssignment.Generation,
                                 Payload = JsonSerializer.Serialize<WorldIntent>(applied), Version = checked(version * 100 + order++)
                             });
                     }
@@ -744,6 +889,19 @@ namespace Rasa.Game.Missions
                         {
                             OwnerId = runId, Generation = next.Generation, OperationKey = signalKey,
                             Kind = "Signal", CreatedAtUtc = _utcNow()
+                        });
+                    }
+                    {
+                        var plannedGeneration = scene.Generation;
+                        var plannedVersion = scene.Version;
+                        Repositories.UnitOfWork.TransactionValidation.Add(unit, () =>
+                        {
+                            var current = store.ReadScene(runId);
+                            if (current?.Generation != plannedGeneration || current.Version != plannedVersion)
+                                throw new GameplayRejectionException("Scene changed during final item persistence.");
+                            RequireCurrentAssignment(unit, current, persisted: true);
+                            if (observedEffect != null && !HasCurrentEffectSource(unit, current, observedEffect))
+                                throw new GameplayRejectionException("World operation source changed during final persistence.");
                         });
                     }
                 });
@@ -801,19 +959,38 @@ namespace Rasa.Game.Missions
                 var scene = unit.CharacterMissions.Runtime.Scene(runId);
                 if (scene == null || scene.Generation != resident.Run.Generation || scene.Status == "Resetting" ||
                     !resident.Map.IsPrivateInstance && scene.Status is "Ended" or "Faulted")
+                {
+                    _worldRetries.Remove(runId);
                     return;
+                }
                 try
                 {
                     RequireCurrentAssignment(unit, scene);
                 }
                 catch (GameplayRejectionException error)
                 {
+                    _worldRetries.Remove(runId);
                     Reject($"Scene {runId} reconciliation rejected: {error.Message}");
                     return;
                 }
                 effects = unit.CharacterMissions.Runtime.Effects(runId)
                     .Where(effect => effect.Generation == resident.Run.Generation && effect.Status != "Cancelled")
                     .OrderBy(effect => effect.Version).ToArray();
+                var stale = effects.Where(effect => !HasCurrentEffectSource(unit, scene, effect)).ToArray();
+                if (stale.Length > 0)
+                {
+                    unit.ExecuteTransaction(() =>
+                    {
+                        foreach (var effect in stale)
+                            CancelStaleEffect(effect);
+                    });
+                    foreach (var effect in stale)
+                    {
+                        _world.CancelOperation(effect.RunId, effect.Generation, effect.OperationKey);
+                        Reject($"Scene {runId} effect {effect.OperationKey} cancelled: {effect.Failure}");
+                    }
+                    effects = effects.Where(effect => effect.Status != "Cancelled").ToArray();
+                }
                 defeated = unit.CharacterMissions.Runtime.ActorStates(runId)
                     .Where(actor => actor.Generation == resident.Run.Generation && actor.Outcome == "Defeated")
                     .Select(actor => actor.ActorRole).ToHashSet(StringComparer.Ordinal);
@@ -827,19 +1004,27 @@ namespace Rasa.Game.Missions
             var following = effects.Select(effect => JsonSerializer.Deserialize<WorldIntent>(effect.Payload))
                 .OfType<FollowActorIntent>().GroupBy(intent => intent.Role)
                 .Where(group => group.Last().Enabled).Select(group => group.Key).ToHashSet(StringComparer.Ordinal);
+            _worldRetries.Remove(runId, out var retry);
+            var acknowledgements = new Dictionary<string, EffectAcknowledgementRetry>(StringComparer.Ordinal);
+            if (retry != null)
+                foreach (var acknowledgement in retry.Acknowledgements.Values)
+                    if (effects.Any(acknowledgement.Matches) && !HasSupersedingWorldEffect(acknowledgement, effects))
+                        acknowledgements.Add(acknowledgement.OperationKey, acknowledgement);
+                    else
+                        Reject($"Scene {runId} effect {acknowledgement.OperationKey} acknowledgement retry retired: durable identity, status or desired command changed.");
             var selected = reconstruct ? DesiredEffects(effects) :
-                effects.Where(effect => effect.Status == "Pending");
-            _worldRetries.Remove(runId);
+                effects.Where(effect => effect.Status == "Pending" || acknowledgements.ContainsKey(effect.OperationKey));
             foreach (var effect in selected)
             {
                 WorldEffectResult result;
                 WorldIntent appliedIntent = null;
+                acknowledgements.TryGetValue(effect.OperationKey, out var acknowledgement);
                 try
                 {
-                    var intent = JsonSerializer.Deserialize<WorldIntent>(effect.Payload);
+                    var intent = acknowledgement?.Intent ?? JsonSerializer.Deserialize<WorldIntent>(effect.Payload);
                     if (intent.Role != null && defeated.Contains(intent.Role))
                         continue;
-                    if (intent is EnsureActorIntent ensure && following.Contains(ensure.Role) &&
+                    if (acknowledgement?.Intent == null && intent is EnsureActorIntent ensure && following.Contains(ensure.Role) &&
                         savedCharacter?.MapContextId == resident.Map.MapInfo.MapContextId)
                     {
                         var offset = resident.Bindings.Actors[ensure.Role].FollowOffset ?? new ScenePosition(0, 0, 0);
@@ -849,7 +1034,7 @@ namespace Rasa.Game.Missions
                             ?? throw new GameplayRejectionException($"Scene {runId} has no grounded follower checkpoint.");
                         intent = ensure with { RestorePosition = new ScenePosition(position.X, position.Y, position.Z) };
                     }
-                    if (reconstruct && intent is RunRouteIntent route &&
+                    if (reconstruct && acknowledgement?.Intent == null && intent is RunRouteIntent route &&
                         resident.Bindings.Routes[route.Route].ResumeAtDestination)
                     {
                         var destination = resident.Bindings.Routes[route.Route].Points.Last();
@@ -863,34 +1048,92 @@ namespace Rasa.Game.Missions
                     result = WorldEffectResult.Failed(error.ToString());
                 }
                 using var unit = _factory.CreateChar();
-                unit.ExecuteTransaction(() =>
+                var sourceRetired = false;
+                try
                 {
-                    var current = unit.CharacterMissions.Runtime.Effects(runId)
-                        .SingleOrDefault(candidate => candidate.Generation == effect.Generation &&
-                            candidate.OperationKey == effect.OperationKey);
-                    var scene = unit.CharacterMissions.Runtime.Scene(runId);
-                    if (current == null || current.Status == "Cancelled" ||
-                        scene == null || scene.Generation != current.Generation || scene.Status == "Resetting")
-                        return;
-                    current.Status = result.State switch
+                    unit.ExecuteTransaction(() =>
                     {
-                        WorldEffectState.Applied => "Applied",
-                        WorldEffectState.Running => "Running",
-                        WorldEffectState.Suppressed => "Cancelled",
-                        _ => "Pending"
-                    };
-                    current.Failure = result.Failure;
-                    if (appliedIntent is RestoreActorPoseIntent)
-                        current.Payload = JsonSerializer.Serialize<WorldIntent>(appliedIntent);
-                });
+                        var current = unit.CharacterMissions.Runtime.Effects(runId)
+                            .SingleOrDefault(candidate => candidate.Generation == effect.Generation &&
+                                candidate.OperationKey == effect.OperationKey);
+                        var scene = unit.CharacterMissions.Runtime.Scene(runId);
+                        if (current == null || current.Status == "Cancelled" ||
+                            acknowledgement != null && !acknowledgement.Matches(current) ||
+                            scene == null || scene.Generation != current.Generation || scene.Status == "Resetting")
+                        {
+                            sourceRetired = true;
+                            return;
+                        }
+                        if (!HasCurrentEffectSource(unit, scene, current))
+                        {
+                            CancelStaleEffect(current);
+                            sourceRetired = true;
+                            return;
+                        }
+                        current.Status = result.State switch
+                        {
+                            WorldEffectState.Applied => "Applied",
+                            WorldEffectState.Running => "Running",
+                            WorldEffectState.Suppressed => "Cancelled",
+                            _ => "Pending"
+                        };
+                        current.Failure = result.Failure;
+                        if (appliedIntent is RestoreActorPoseIntent)
+                            current.Payload = JsonSerializer.Serialize<WorldIntent>(appliedIntent);
+                        if (current.SourceRunId != null)
+                            TransactionValidation.Add(unit, () =>
+                            {
+                                var owner = unit.CharacterMissions.Runtime.ReadScene(runId);
+                                if (owner == null || owner.Generation != current.Generation || owner.Status == "Resetting" ||
+                                    !HasCurrentEffectSource(unit, owner, current))
+                                    throw new GameplayRejectionException("Forwarded effect source changed during acknowledgement.");
+                            });
+                    });
+                }
+                catch (Exception error) when (GameplayRejectionException.IsExpected(error))
+                {
+                    _world.CancelOperation(effect.RunId, effect.Generation, effect.OperationKey);
+                    ScheduleWorldRetry(runId, effect.Status is "Running" or "Applied"
+                        ? EffectAcknowledgementRetry.Capture(effect, appliedIntent) : null);
+                    Reject($"Scene {runId} effect {effect.OperationKey} acknowledgement failed: {error}");
+                    continue;
+                }
+                if (sourceRetired)
+                {
+                    _world.CancelOperation(effect.RunId, effect.Generation, effect.OperationKey);
+                    Reject($"Scene {runId} effect {effect.OperationKey} lost its source before acknowledgement.");
+                    continue;
+                }
                 if (result.State is WorldEffectState.Failed or WorldEffectState.Deferred)
                 {
                     if (result.State == WorldEffectState.Failed)
                         Reject($"Scene {runId} effect {effect.OperationKey} remains pending: {result.Failure}");
-                    _worldRetries[runId] = _utcNow().AddSeconds(1);
+                    ScheduleWorldRetry(runId);
                 }
             }
         }
+
+        private void ScheduleWorldRetry(string runId, EffectAcknowledgementRetry acknowledgement = null)
+        {
+            if (!_worldRetries.TryGetValue(runId, out var retry))
+                _worldRetries.Add(runId, retry = new WorldRetry());
+            retry.RetryAt = _utcNow().AddSeconds(1);
+            if (acknowledgement != null)
+                retry.Acknowledgements[acknowledgement.OperationKey] = acknowledgement;
+        }
+
+        private static bool HasSupersedingWorldEffect(EffectAcknowledgementRetry retry, IEnumerable<MissionWorldEffectEntry> effects)
+        {
+            var intent = JsonSerializer.Deserialize<WorldIntent>(retry.Payload);
+            return effects.Where(effect => effect.Version > retry.Version)
+                .Select(effect => JsonSerializer.Deserialize<WorldIntent>(effect.Payload))
+                .Any(later => later.Role == intent.Role &&
+                    (later is EnsureActorIntent or RemoveActorIntent || later.GetType() == intent.GetType() ||
+                        IsControllerCommand(later) && IsControllerCommand(intent)));
+        }
+
+        private static bool IsControllerCommand(WorldIntent intent) =>
+            intent is RunRouteIntent or RestoreActorPoseIntent or FollowActorIntent or AttackActorIntent;
 
         private static IEnumerable<MissionWorldEffectEntry> DesiredEffects(IEnumerable<MissionWorldEffectEntry> effects)
         {
@@ -914,14 +1157,33 @@ namespace Rasa.Game.Missions
                 return;
             using (var unit = _factory.CreateChar())
             {
-                if (unit.CharacterMissions.Runtime.HasReceipt(runId, observation.Generation, WorldResultKey(observation)))
+                var store = unit.CharacterMissions.Runtime;
+                var scene = store.ReadScene(runId);
+                var effect = store.Effects(runId).SingleOrDefault(entry =>
+                    entry.Generation == observation.Generation && entry.OperationKey == observation.OperationKey);
+                if (scene == null || scene.Generation != observation.Generation || scene.Status == "Resetting" ||
+                    effect == null || effect.Status == "Cancelled" || !HasCurrentEffectSource(unit, scene, effect))
+                {
+                    if (effect != null && effect.Status != "Cancelled")
+                        unit.ExecuteTransaction(() => CancelStaleEffect(effect));
+                    _world.CancelOperation(runId, observation.Generation, observation.OperationKey);
+                    Reject($"Scene {runId} rejected world result {observation.OperationKey} from a retired operation.");
+                    return;
+                }
+                if (store.HasReceipt(runId, observation.Generation, WorldResultKey(observation)))
                 {
                     unit.ExecuteTransaction(() =>
                     {
-                        var effect = unit.CharacterMissions.Runtime.Effects(runId).Single(entry =>
-                            entry.Generation == observation.Generation && entry.OperationKey == observation.OperationKey);
                         if (observation.Kind == SceneEventKind.RouteCompleted)
                             effect.Status = "Applied";
+                        if (effect.SourceRunId != null)
+                            TransactionValidation.Add(unit, () =>
+                            {
+                                var owner = store.ReadScene(runId);
+                                if (owner == null || owner.Generation != observation.Generation || owner.Status == "Resetting" ||
+                                    !HasCurrentEffectSource(unit, owner, effect))
+                                    throw new GameplayRejectionException("Forwarded world receipt lost its source before commit.");
+                            });
                     });
                     return;
                 }
@@ -943,7 +1205,7 @@ namespace Rasa.Game.Missions
                 FinishCancellation(retry.Key);
             if (scope != SceneTickScope.Deadlines)
                 _world.Tick(map, _utcNow());
-            foreach (var retry in _worldRetries.Where(entry => entry.Value <= _utcNow() &&
+            foreach (var retry in _worldRetries.Where(entry => entry.Value.RetryAt <= _utcNow() &&
                 _runs.TryGetValue(entry.Key, out var run) && run.Map == map).ToArray())
                 Reconcile(retry.Key);
             foreach (var retry in _messageRetries.Where(entry => entry.Value <= _utcNow() &&
@@ -1062,6 +1324,23 @@ namespace Rasa.Game.Missions
         }
 
         private sealed record PendingPause(uint Generation, DateTime Cutoff, DateTime RetryAt);
+
+        private sealed class WorldRetry
+        {
+            internal DateTime RetryAt { get; set; }
+            internal Dictionary<string, EffectAcknowledgementRetry> Acknowledgements { get; } = new(StringComparer.Ordinal);
+        }
+
+        private sealed record EffectAcknowledgementRetry(
+            string RunId, uint Generation, string OperationKey, string Status, long Version, string Payload,
+            string SourceRunId, uint? SourceGeneration, string SourceAssignmentId, uint? SourceAssignmentGeneration,
+            WorldIntent Intent)
+        {
+            internal static EffectAcknowledgementRetry Capture(MissionWorldEffectEntry effect, WorldIntent intent) =>
+                new(effect.RunId, effect.Generation, effect.OperationKey, effect.Status, effect.Version, effect.Payload,
+                    effect.SourceRunId, effect.SourceGeneration, effect.SourceAssignmentId, effect.SourceAssignmentGeneration, intent);
+            internal bool Matches(MissionWorldEffectEntry effect) => this == Capture(effect, Intent);
+        }
 
         private void LoadTimers(Resident resident, IReadOnlyList<MissionTimerEntry> timers)
         {

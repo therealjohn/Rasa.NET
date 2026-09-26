@@ -203,6 +203,7 @@ namespace Rasa.Managers
             if (!MapInstanceScope.Contains(mapChannel, creature))
                 return false;
 
+            Game.Missions.World.CreatureGameplayRules.ClearRole(creature);
             var isRegistered = EntityManager.Instance.Creatures.TryGetValue(creature.EntityId, out var registered) &&
                 registered == creature;
             if (isRegistered)
@@ -313,6 +314,10 @@ namespace Rasa.Managers
 
         internal void DetachClient(MapChannel map, Client client)
         {
+            if (client.Player?.MapChannel == map)
+                client.InvalidateMissionSession();
+            if (client.MissionConversation?.Map == map)
+                client.MissionConversation = null;
             var memberships = map.MapCellInfo.Cells.Values.Where(cell => cell.ClientList.Contains(client)).ToArray();
             if (memberships.Length == 0)
                 return;
@@ -345,6 +350,7 @@ namespace Rasa.Managers
 
         internal void UpdateVisibility(Client client)
         {
+            Game.Missions.Integration.MissionInteractionPolicy.InvalidateIfUnavailable(client);
             var player = client.Player;
             if (player?.MapChannel == null || player.Disconected ||
                 client.State == ClientState.Disconnected || client.State == ClientState.Loading)

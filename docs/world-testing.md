@@ -123,7 +123,7 @@ dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore 
 
 For guidance on authoring new mission content itself - conversation delivery,
 text/position sourcing, real-client verification - see the
-[mission authoring guide](missions.md#author-a-new-mission).
+[mission authoring guide](missions.md#add-a-mission).
 
 ## Mission protocol boundary
 
@@ -131,10 +131,14 @@ The mission request boundary matches the local 1.16.5.0 client scripts:
 
 - `AbandonMission` (392): `(missionId,)`
 - `AssignNPCMission` (407): `(npcId, missionId)`
-- `AssignRadioMission` (408): `(missionId,)`, currently restricted to the Bootcamp arrival offer
+- `AssignRadioMission` (408): `(missionId,)`, requiring a current server-authored radio offer
+- `AssignSharedMission` (409): `(sourcePlayerEntityId, missionId)`, requiring a current party offer
 - `CompleteNPCMission` (430): `(npcId, missionId, selectionIdx, rating)`
 - `CompleteNPCObjective` (431): `(npcId, missionId, objectiveId, playerFlagId)`
+- `CompleteRadioMission` (432): `(missionId, selectionIdx, rating)`
+- `PerformNPCChoice` (497): `(npcId, missionId, objectiveId, playerFlagId, choiceIdx)`
 - `RewardNPCMission` (540): `(npcId, missionId, selectionIdx, rating)`
+- `ShareMission` (547): `(missionId,)`
 
 `selectionIdx` and `rating` accept only Python `int` or `None`; boolean structs,
 longs, and incorrect tuple sizes are rejected. Registering these handlers does
@@ -148,9 +152,12 @@ Objective updates use the client receiver tuple layouts for
 including separate generic and item counter dictionaries, nullable remaining
 time, and complete X/Y/Z indicator coordinates. Objective state and current
 counter values are persisted separately from immutable initial/target metadata.
-An arrival offer uses the six-field conversation information tuple, not the
-five-field mission-status tuple. Other radio-mission admission rules remain
-unsupported.
+Radio and shared offers use the six-field conversation information tuple, not
+the five-field mission-status tuple. Radio channels and party sharing use the
+same acceptance/reward planners with separate durable source authority; a
+submitted mission ID alone grants nothing. Bootcamp remains private, Once and
+unshareable, and only its existing Initiation arrival source is enabled in
+production. See the [radio and sharing checks](protocol-testing.md#authorized-radio-missions).
 
 Run the focused boundary checks with:
 

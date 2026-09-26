@@ -16,6 +16,7 @@ namespace Rasa.Test.Missions
     using Rasa.Packets.MapChannel.Client;
     using Rasa.Packets.MapChannel.Server;
     using Rasa.Structures;
+    using Rasa.Structures.Char;
     using Rasa.Structures.World;
 
     [TestClass]
@@ -160,6 +161,67 @@ namespace Rasa.Test.Missions
             Assert.AreEqual(1U, item.StackSize);
         }
 
+        [TestMethod]
+        [DataRow(false)]
+        [DataRow(true)]
+        public void AbilityIngredientsSkipProtectedFirstStackAndConsumeTheUnboundCost(bool clearRuntimeOwnership)
+        {
+            using var harness = BootcampRuntimeTestHarness.Create();
+            void Grant(params InventoryManager.InventoryItemGrant[] items)
+            {
+                using var grant = new InventoryManager.InventoryGrant();
+                using (var unit = harness.Context.CreateChar())
+                    unit.ExecuteTransaction(() => grant.PlanAndSave(harness.Client, items, unit));
+                grant.Publish(harness.Client);
+            }
+            Item[] Inventory() => harness.Client.Player.Inventory.PersonalInventory.Where(id => id != 0)
+                .Select(EntityManager.Instance.GetItem).ToArray();
+            Grant(new InventoryManager.InventoryItemGrant(28, 3));
+            var protectedIngredient = Inventory().Single(item => item.ItemTemplateId == 28);
+            var assignmentId = Guid.NewGuid().ToString("N");
+            protectedIngredient.MissionOwnership = new MissionItemOwnership(harness.Client.Player.Id, 901, assignmentId, 1, "survey-ammo");
+            using (var unit = harness.Context.CreateChar())
+                unit.CharacterMissionItems.Save(new CharacterMissionItemEntry
+                {
+                    CharacterId = harness.Client.Player.Id, MissionId = 901, AssignmentId = assignmentId,
+                    Generation = 1, ItemKey = "survey-ammo", ItemId = protectedIngredient.Id, Quantity = 3
+                });
+            Grant(new InventoryManager.InventoryItemGrant(44917, 2), new InventoryManager.InventoryItemGrant(28, 4));
+            var source = Inventory().Single(item => item.ItemTemplateId == 44917);
+            var unbound = Inventory().Single(item => item.ItemTemplateId == 28 && item != protectedIngredient);
+            Assert.IsTrue(protectedIngredient.OwnerSlotId < unbound.OwnerSlotId);
+            if (clearRuntimeOwnership)
+                protectedIngredient.MissionOwnership = null;
+            var manager = CreateMedpackManager(harness,
+                new ActionItemRequirement { ItemClass = (EntityClasses)3147, Quantity = 2 });
+            harness.Drain();
+
+            manager.RequestPerformAbility(harness.Client, ReadMedpackRequest(source.EntityId));
+
+            var pending = harness.BootcampMap.PerformRecovery.Single(action => action.ActionId == (ActionId)419);
+            lock (Server.Clients)
+                Server.Clients.Add(harness.Client);
+            try { manager.PerformRecovery(harness.BootcampMap, pending); }
+            finally
+            {
+                lock (Server.Clients)
+                    Server.Clients.Remove(harness.Client);
+            }
+
+            Assert.AreEqual(2U, unbound.StackSize, "Landing must choose the available unbound ingredients, not reject the protected first stack.");
+            Assert.AreEqual(1U, source.StackSize, "The source also satisfies its own item requirement exactly once.");
+            Assert.AreEqual(3U, protectedIngredient.StackSize);
+            Assert.AreEqual(assignmentId, protectedIngredient.MissionOwnership.AssignmentId);
+            Assert.IsTrue(harness.Client.Player.ActiveEffects.Values.Any(effect => effect.TypeId == 280));
+            Assert.IsTrue(harness.Drain().OfType<AbilityRecoveryPacket>().Any());
+            using var verify = harness.Context.CreateChar();
+            Assert.AreEqual(2U, verify.Items.GetItem(unbound.Id).StackSize);
+            Assert.AreEqual(1U, verify.Items.GetItem(source.Id).StackSize);
+            Assert.AreEqual(3U, verify.Items.GetItem(protectedIngredient.Id).StackSize);
+            Assert.AreEqual(assignmentId, verify.CharacterMissionItems.GetOwner(protectedIngredient.Id).AssignmentId);
+            Assert.AreEqual(3U, verify.CharacterMissionItems.GetOwner(protectedIngredient.Id).Quantity);
+        }
+
         private static RequestPerformAbilityPacket ReadMedpackRequest(ulong itemId)
         {
             using var stream = new MemoryStream();
@@ -179,7 +241,8 @@ namespace Rasa.Test.Missions
             return packet;
         }
 
-        private static AbilityManager CreateMedpackManager(BootcampRuntimeTestHarness.Harness harness)
+        private static AbilityManager CreateMedpackManager(BootcampRuntimeTestHarness.Harness harness,
+            params ActionItemRequirement[] additionalRequirements)
         {
             var manager = (AbilityManager)Activator.CreateInstance(typeof(AbilityManager),
                 BindingFlags.Instance | BindingFlags.NonPublic, null,
@@ -196,6 +259,7 @@ namespace Rasa.Test.Missions
                 info.Properties[(AbilityProperty)property.PropertyId] = property.Value;
             foreach (var requirement in harness.WorldContext.Set<ActionItemRequirementEntry>().Where(entry => entry.ActionId == 419 && entry.Level == 1))
                 info.ItemRequirements.Add(new ActionItemRequirement { ItemClass = (EntityClasses)requirement.ItemClassId, Quantity = requirement.Quantity });
+            info.ItemRequirements.AddRange(additionalRequirements);
             action.Levels[1] = info;
             ((Dictionary<ActionId, ActionInfo>)typeof(AbilityManager).GetField("_actions",
                 BindingFlags.Instance | BindingFlags.NonPublic).GetValue(manager))[action.ActionId] = action;

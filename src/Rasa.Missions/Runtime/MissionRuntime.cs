@@ -57,13 +57,17 @@ namespace Rasa.Missions.Runtime
         {
             var missions = (definitions ?? throw new ArgumentNullException(nameof(definitions)))
                 .Where(mission => mission.IsOperational).OrderBy(mission => mission.MissionId).ToArray();
-            _npcs = missions.SelectMany(mission => new[] { mission.MissionGiver.Value, mission.MissionReciver.Value }
-                    .Distinct().Select(id => (Id: id, Mission: mission)))
+            _npcs = missions.SelectMany(mission => new[]
+                {
+                    mission.AcceptanceChannel.HasFlag(Definitions.MissionChannel.Npc) ? mission.MissionGiver : null,
+                    mission.CompletionChannel.HasFlag(Definitions.MissionChannel.Npc) ? mission.MissionReciver : null
+                }.Where(id => id.HasValue).Select(id => id.Value).Distinct().Select(id => (Id: id, Mission: mission)))
                 .GroupBy(entry => entry.Id).ToDictionary(group => group.Key,
                     group => group.Select(entry => entry.Mission).ToArray());
             _conversations = missions.SelectMany(mission => mission.Objectives.Values
                     .SelectMany(objective => objective.Conversations)
-                    .Select(conversation => conversation.NpcPackageId).Distinct()
+                    .Select(conversation => conversation.NpcPackageId)
+                    .Concat(mission.Dialogue.Select(topic => topic.NpcPackageId)).Distinct()
                     .Select(id => (Id: id, Mission: mission)))
                 .GroupBy(entry => entry.Id).ToDictionary(group => group.Key,
                     group => group.Select(entry => entry.Mission).ToArray());
@@ -160,7 +164,7 @@ namespace Rasa.Missions.Runtime
                 throw new MissionRuleException("Durable mission objective state is stale.");
             var rule = candidate.ExecutableTransition.ProgressRule;
             var state = candidate.ExecutableTransition.ToState ?? MissionObjectiveState.Completed;
-            if (rule.RuleType == MissionProgressRuleType.CompleteExact)
+            if (rule == null || rule.RuleType == MissionProgressRuleType.CompleteExact)
                 return new ObjectiveDecision(state);
             if (state != MissionObjectiveState.Completed)
                 throw new MissionRuleException("Counter and distinct-set transitions must complete objectives.");

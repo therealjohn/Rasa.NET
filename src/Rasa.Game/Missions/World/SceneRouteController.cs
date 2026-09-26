@@ -62,6 +62,8 @@ namespace Rasa.Game.Missions.World
         {
             foreach (var run in _routes.Values.Where(run => run.Map == map).ToArray())
             {
+                if (!IsCurrent(run))
+                    continue;
                 var actor = _resolve(map, run.Handle);
                 if (actor != null && actor.State != Data.CharacterState.Dead &&
                     run.Intent.ResumeAfterCombat && actor.Controller.CurrentAction != BehaviorManager.BehaviorActionScriptedMove)
@@ -73,7 +75,8 @@ namespace Rasa.Game.Missions.World
                         RestoreSpeed(run);
                         _observe(run.Handle.RunId, new SceneObservation(SceneEventKind.Cancelled,
                             run.Handle.Generation, "route-blocked", run.Handle.Role, run.Intent.OperationKey));
-                        _routes.Remove((run.Handle.RunId, run.Handle.Role));
+                        if (IsCurrent(run))
+                            _routes.Remove((run.Handle.RunId, run.Handle.Role));
                     }
                     continue;
                 }
@@ -83,7 +86,8 @@ namespace Rasa.Game.Missions.World
                     RestoreSpeed(run);
                     _observe(run.Handle.RunId, new SceneObservation(SceneEventKind.ActorDied,
                         run.Handle.Generation, "route-lost-actor", run.Handle.Role, run.Intent.OperationKey));
-                    _routes.Remove((run.Handle.RunId, run.Handle.Role));
+                    if (IsCurrent(run))
+                        _routes.Remove((run.Handle.RunId, run.Handle.Role));
                     continue;
                 }
                 if (!run.Move.Arrived)
@@ -100,6 +104,8 @@ namespace Rasa.Game.Missions.World
                 _observe(run.Handle.RunId, new SceneObservation(SceneEventKind.WaypointReached,
                     run.Handle.Generation, Role: run.Handle.Role,
                     OperationKey: run.Intent.OperationKey, Waypoint: run.Index));
+                if (!IsCurrent(run))
+                    continue;
                 run.Index++;
                 run.ResumeAt = null;
                 if (run.Index == run.Route.Points.Count)
@@ -119,9 +125,14 @@ namespace Rasa.Game.Missions.World
             _observe(run.Handle.RunId, new SceneObservation(SceneEventKind.RouteCompleted,
                 run.Handle.Generation, Role: run.Handle.Role, OperationKey: run.Intent.OperationKey,
                 Position: new ScenePosition(actor.Position.X, actor.Position.Y, actor.Position.Z)));
+            if (!IsCurrent(run))
+                return;
             _routes.Remove((run.Handle.RunId, run.Handle.Role));
             actor.RunSpeed = run.PreviousSpeed;
         }
+
+        private bool IsCurrent(RouteRun run) =>
+            _routes.TryGetValue((run.Handle.RunId, run.Handle.Role), out var current) && ReferenceEquals(current, run);
 
         private static void RestoreSpeed(RouteRun run)
         {
@@ -130,10 +141,12 @@ namespace Rasa.Game.Missions.World
                 run.Actor.RunSpeed = run.PreviousSpeed;
         }
 
-        internal void Cancel(string runId, string role = null)
+        internal void Cancel(string runId, string role = null, string operationKey = null, uint? generation = null)
         {
             foreach (var entry in _routes.Where(entry =>
-                entry.Key.Run == runId && (role == null || entry.Key.Role == role)).ToArray())
+                entry.Key.Run == runId && (role == null || entry.Key.Role == role) &&
+                (operationKey == null || entry.Value.Intent.OperationKey == operationKey) &&
+                (!generation.HasValue || entry.Value.Handle.Generation == generation.Value)).ToArray())
             {
                 var actor = _resolve(entry.Value.Map, entry.Value.Handle) ?? entry.Value.Actor;
                 if (actor != null && MapInstanceScope.Contains(entry.Value.Map, actor) &&
@@ -141,7 +154,8 @@ namespace Rasa.Game.Missions.World
                 {
                     actor.RunSpeed = entry.Value.PreviousSpeed;
                     actor.Controller.ScriptedMove = null;
-                    BehaviorManager.Instance.SetActionAnchor(actor, actor.Position);
+                    if (actor.Controller.CurrentAction == BehaviorManager.BehaviorActionScriptedMove)
+                        BehaviorManager.Instance.SetActionAnchor(actor, actor.Position);
                 }
                 _routes.Remove(entry.Key);
             }

@@ -103,6 +103,14 @@ namespace Rasa.Managers
                 packet.PlayerFlagId);
         }
 
+        public void PerformNPCChoice(Client client, PerformNPCChoicePacket packet)
+        {
+            if (packet == null)
+                return;
+            Missions.TryPerformNpcChoice(client, packet.EntityId, packet.MissionId, packet.ObjectiveId,
+                packet.PlayerFlagId, packet.ChoiceIdx);
+        }
+
         public void RewardNPCMission(Client client, RewardNPCMissionPacket packet)
         {
             if (packet == null)
@@ -142,24 +150,25 @@ namespace Rasa.Managers
 
         public void RequestNpcConverse(Client client, RequestNPCConversePacket packet)
         {
-            if (EntityManager.Instance.TryGetObject(packet.EntityId, out var conversationObject) &&
+            if (client == null || packet == null)
+                return;
+            lock (client.SyncRoot)
+                OpenConversation(client, packet.EntityId);
+        }
+
+        private void OpenConversation(Client client, ulong entityId)
+        {
+            client.MissionConversation = null;
+            if (EntityManager.Instance.TryGetObject(entityId, out var conversationObject) &&
                 conversationObject.MissionConversation != null)
             {
-                Missions.ObjectConversations.Open(client, packet.EntityId);
+                Missions.ObjectConversations.Open(client, entityId);
                 return;
             }
-            if (client?.Player?.MapChannel == null ||
-                !MapInstanceScope.TryGetCreature(
-                    client.Player.MapChannel,
-                    packet.EntityId,
-                    out var creature) ||
-                creature.Npc == null ||
-                !creature.IsInteractable)
+            if (!Missions.TryOpenNpcConversation(client, entityId, out var creature, out var conversation))
                 return;
 
-            var convoDataDict = Missions
-                .ClassifyNpcConversation(client.Player, creature)
-                .CreateConversationData();
+            var convoDataDict = conversation.CreateConversationData();
 
             if (creature.Npc.Vendor != null)
                 convoDataDict.Add(ConversationType.Vending, new List<uint> { creature.Npc.Vendor.VendorPackageId });
@@ -864,14 +873,15 @@ namespace Rasa.Managers
                 return;
             }
 
+            using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
+            if (Game.Missions.Persistence.MissionItemProtection.IsProtected(soldItem, unitOfWork))
+                return;
             var quantity = (uint) Math.Min(packet.Quantity, soldItem.StackSize);
             var sellPrice = Math.Min((long) Math.Max(soldItem.ItemTemplate.SellPrice, 0) * quantity, int.MaxValue);
 
             if (sellPrice > 0 &&
                 !_currencyManager.GainCredits(client, (int)sellPrice))
                 return;
-
-            using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
 
             if (quantity < soldItem.StackSize)
             {

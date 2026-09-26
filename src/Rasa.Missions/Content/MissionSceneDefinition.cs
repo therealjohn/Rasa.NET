@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json.Serialization;
 using Rasa.Missions.Definitions;
 using Rasa.Missions.Runtime;
 using Rasa.Missions.Scenes;
@@ -22,6 +23,12 @@ namespace Rasa.Missions.Content
         public MissionRequirement TurnInRequirement { get; set; }
         public Dictionary<uint, MissionRequirement> ObjectiveRequirements { get; set; } = new();
         public PublicEncounterBinding PublicEncounter { get; set; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public List<MissionDialogueTopicDefinition> Dialogue { get; set; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public List<MissionItemBinding> Items { get; set; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public List<CharacterIntent> AcceptanceItems { get; set; }
 
         public SceneBindings Bindings(string revision) => new(revision, Actors, Routes,
             Sequences.ToDictionary(entry => entry.Key, entry => new SceneSequence(

@@ -62,7 +62,7 @@ namespace Rasa.Game.Missions
 
         internal IReadOnlyList<uint> FreezeWorld(ICharUnitOfWork unit, Client source, MissionProgressEvent progress,
             Vector3 position, string eventId, string runId, uint generation) =>
-            Freeze(unit, source, progress, eventId, runId, generation, Select(source, progress, position, null));
+            FreezeScene(unit, source, progress, position, eventId, runId, generation);
 
         internal bool HasGroupRule(Client source, MissionProgressEvent progress) =>
             _missions.ProgressCandidates(source, progress).Any(candidate =>
@@ -91,7 +91,8 @@ namespace Rasa.Game.Missions
                 if (!eligible)
                     continue;
                 var assignment = unit.CharacterMissions.GetByCharacterAndMission(client.Player.Id, missionId);
-                if (assignment?.MissionState != (uint)MissionState.Active)
+                if (assignment?.MissionState != (uint)MissionState.Active ||
+                    !journal.MatchesAssignment(assignment.AssignmentId, assignment.Generation, assignment.ContentRevision))
                     continue;
                 unit.CharacterMissions.Runtime.Add(new MissionSceneParticipantEntry
                 {
@@ -114,13 +115,21 @@ namespace Rasa.Game.Missions
                     continue;
                 var sameParty = party != null && ReferenceEquals(party, PartyManager.Instance.PartyOf(client)) &&
                     party.Find(client.AccountEntry.Id)?.EntityId == client.Player.EntityId;
-                var participant = participants?.GetValueOrDefault(client.Player.Id);
-                foreach (var group in _missions.ProgressCandidates(client, progress).Where(candidate =>
-                    candidate.ObjectiveDefinition.CreditPolicy.Eligible(ReferenceEquals(source, client), true,
-                        sameParty, participant != null, Vector3.Distance(client.Player.Position, position)))
+                foreach (var group in _missions.ProgressCandidates(client, progress)
                     .GroupBy(candidate => candidate.Definition.MissionId))
-                    result.Add(new Recipient(client, group.Key,
-                        group.Select(candidate => candidate.ObjectiveDefinition.ObjectiveId).ToArray(), participant));
+                {
+                    var assignment = group.First().RuntimeMission;
+                    var participant = participants?.GetValueOrDefault(client.Player.Id);
+                    if (participant != null && (participant.AssignmentId != assignment.AssignmentId ||
+                        participant.AssignmentGeneration != assignment.Generation))
+                        participant = null;
+                    var objectives = group.Where(candidate =>
+                        candidate.ObjectiveDefinition.CreditPolicy.Eligible(ReferenceEquals(source, client), true,
+                            sameParty, participant != null, Vector3.Distance(client.Player.Position, position)))
+                        .Select(candidate => candidate.ObjectiveDefinition.ObjectiveId).ToArray();
+                    if (objectives.Length > 0)
+                        result.Add(new Recipient(client, group.Key, objectives, participant, assignment));
+                }
             }
             return result;
         }
@@ -139,6 +148,7 @@ namespace Rasa.Game.Missions
                 var assignment = unit.CharacterMissions.GetByCharacterAndMission(
                     candidate.Client.Player.Id, candidate.MissionId);
                 if (assignment?.MissionState != (uint)MissionState.Active ||
+                    !candidate.Assignment.MatchesAssignment(assignment.AssignmentId, assignment.Generation, assignment.ContentRevision) ||
                     candidate.Participant != null && (candidate.Participant.AssignmentId != assignment.AssignmentId ||
                         candidate.Participant.AssignmentGeneration != assignment.Generation))
                     continue;
@@ -258,7 +268,8 @@ namespace Rasa.Game.Missions
         }
         internal void Detach(uint characterId) => _pending.Remove(characterId);
 
-        private sealed record Recipient(Client Client, uint MissionId, uint[] Objectives, MissionSceneParticipantEntry Participant);
+        private sealed record Recipient(Client Client, uint MissionId, uint[] Objectives,
+            MissionSceneParticipantEntry Participant, MissionLog Assignment);
         private sealed record CreditPayload(MissionProgressEventKind Kind, uint Subject, uint Quantity,
             uint? Scope, uint? Detail, uint[] Objectives);
     }

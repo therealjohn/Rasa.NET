@@ -28,7 +28,7 @@ namespace Rasa.Test.Missions
             var manager = LoadManager(context, fixture);
             var giver = context.AddNpc(101);
 
-            Assert.IsTrue(manager.TryAcceptNpcMission(
+            Assert.IsTrue(manager.AcceptOfferedMission(
                 context.Client,
                 giver.EntityId,
                 321));
@@ -72,7 +72,7 @@ namespace Rasa.Test.Missions
             var manager = LoadManager(context, fixture);
             var giver = context.AddNpc(101);
 
-            Assert.IsTrue(manager.TryAcceptNpcMission(
+            Assert.IsTrue(manager.AcceptOfferedMission(
                 context.Client,
                 giver.EntityId,
                 321));
@@ -119,7 +119,7 @@ namespace Rasa.Test.Missions
             var manager = LoadManager(context, fixture);
             var giver = context.AddNpc(101);
 
-            Assert.IsTrue(manager.TryAcceptNpcMission(
+            Assert.IsTrue(manager.AcceptOfferedMission(
                 context.Client,
                 giver.EntityId,
                 321));
@@ -149,7 +149,7 @@ namespace Rasa.Test.Missions
             var manager = LoadManager(context, fixture);
             var giver = context.AddNpc(101);
 
-            Assert.IsTrue(manager.TryAcceptNpcMission(
+            Assert.IsTrue(manager.AcceptOfferedMission(
                 context.Client,
                 giver.EntityId,
                 321));

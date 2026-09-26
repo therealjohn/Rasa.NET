@@ -49,7 +49,7 @@ namespace Rasa.Test.Missions
 
             harness.SeedMission(1, 1994, (uint)MissionState.Completed, true);
 
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(
                 harness.Context.Client,
                 youngblood.EntityId,
                 1995));
@@ -127,7 +127,7 @@ namespace Rasa.Test.Missions
                 harness.Context.Client.Player.Missions[1995].Objectives[4].State);
             var vanValkenberg = FindNpcByPackage(harness.BootcampMap, 2564);
             Assert.IsNotNull(vanValkenberg);
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+            Assert.IsTrue(harness.Manager.CompleteOfferedObjective(
                 harness.Context.Client,
                 vanValkenberg.EntityId,
                 1995,
@@ -152,7 +152,7 @@ namespace Rasa.Test.Missions
 
             harness.SeedMission(1, 1994, (uint)MissionState.Completed, true);
 
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(
                 harness.Context.Client,
                 youngblood.EntityId,
                 1995));
@@ -182,7 +182,7 @@ namespace Rasa.Test.Missions
             var youngblood = harness.AddNpc(510207, 2561);
 
             harness.SeedMission(1, 1994, (uint)MissionState.Completed, true);
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(
                 harness.Context.Client,
                 youngblood.EntityId,
                 1995));
@@ -195,7 +195,7 @@ namespace Rasa.Test.Missions
             harness.UtcNow += BombDeadline + TimeSpan.FromSeconds(1);
             Assert.IsTrue(harness.Manager.EvaluateDeadlines(harness.Context.Client));
 
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(
                 harness.Context.Client,
                 youngblood.EntityId,
                 2005));
@@ -240,7 +240,7 @@ namespace Rasa.Test.Missions
                 retryMission.Objectives[4].State);
             var vanValkenberg = FindNpcByPackage(harness.BootcampMap, 2564, missionId: 2005);
             Assert.IsNotNull(vanValkenberg);
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+            Assert.IsTrue(harness.Manager.CompleteOfferedObjective(
                 harness.Context.Client,
                 vanValkenberg.EntityId,
                 2005,

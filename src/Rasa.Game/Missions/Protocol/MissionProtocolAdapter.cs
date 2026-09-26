@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Data.Common;
+using System.IO;
 using System.Linq;
+using System.Net.Sockets;
 using Microsoft.EntityFrameworkCore;
 using Rasa.Missions.Runtime;
 using ProgressCandidate = Rasa.Missions.Runtime.MissionProgressCandidate;
@@ -34,11 +36,14 @@ namespace Rasa.Managers
         private readonly MissionJournalAdapter _journal;
         private readonly Func<DateTime> _utcNow;
         private readonly Action<PythonPacket> _beforeMissionPacketPublication;
+        private readonly Func<Mission, bool> _canShare;
         internal MissionProtocolAdapter(IGameUnitOfWorkFactory factory, MissionContentCatalog catalog,
-            MissionJournalAdapter journal, Func<DateTime> clock, Action<PythonPacket> beforePublication)
+            MissionJournalAdapter journal, Func<DateTime> clock, Action<PythonPacket> beforePublication,
+            Func<Mission, bool> canShare)
         {
             _gameUnitOfWorkFactory = factory; _catalog = catalog; _journal = journal;
             _utcNow = clock; _beforeMissionPacketPublication = beforePublication;
+            _canShare = canShare;
         }
         public IReadOnlyDictionary<uint, MissionInfo> BuildStatusSnapshot(Manifestation player)
         {
@@ -158,6 +163,7 @@ namespace Rasa.Managers
 
         private MissionInfo WithRewardInfo(Mission definition, MissionInfo info)
         {
+            info.MissionConstantData.Shareable = _canShare(definition);
             if (_catalog.Rewards.TryGetValue(definition.MissionId, out var reward))
                 info.MissionConstantData.RewardInfo = reward.CreateInfo();
             return info;
@@ -185,6 +191,24 @@ namespace Rasa.Managers
                 description);
         }
 
+        internal bool PublishCharacterFlags(Client client)
+        {
+            try
+            {
+                return client.FlagProjection.PublishPending(client, packet =>
+                {
+                    _beforeMissionPacketPublication?.Invoke(packet);
+                    client.CallMethod(client.Player.EntityId, packet);
+                });
+            }
+            catch (Exception error) when (error is IOException || error is SocketException ||
+                error is InvalidOperationException)
+            {
+                Logger.WriteLog(LogType.Error,
+                    $"Unable to publish character {client.Player.Id} flags; committed snapshot remains pending: {error}");
+                return false;
+            }
+        }
 
     }
 }

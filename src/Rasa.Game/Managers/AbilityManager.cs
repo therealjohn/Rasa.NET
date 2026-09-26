@@ -624,10 +624,13 @@ namespace Rasa.Managers
         {
             if (sourceItemId == 0 && info.ItemRequirements.Count == 0)
                 return;
+            using var unit = _gameUnitOfWorkFactory.CreateChar();
             var quantities = new Dictionary<ulong, uint>();
             var source = sourceItemId == 0 ? null : EntityManager.Instance.GetItem(sourceItemId);
             if (sourceItemId != 0 && source == null)
                 throw new GameplayRejectionException("The ability source item is no longer available.");
+            if (source != null && Game.Missions.Persistence.MissionItemProtection.IsProtected(source, unit))
+                throw new GameplayRejectionException("Assignment-owned items cannot pay ordinary ability costs.");
             if (source != null)
                 quantities[source.EntityId] = 1;
             var sourceCredit = source == null ? 0U : 1U;
@@ -644,7 +647,8 @@ namespace Rasa.Managers
                     if (remaining == 0)
                         break;
                     var item = EntityManager.Instance.GetItem(entityId);
-                    if (item?.ItemTemplate?.Class != requirement.ItemClass)
+                    if (item?.ItemTemplate?.Class != requirement.ItemClass ||
+                        Game.Missions.Persistence.MissionItemProtection.IsProtected(item, unit))
                         continue;
                     var reserved = quantities.GetValueOrDefault(entityId);
                     if (reserved > item.StackSize)
@@ -659,7 +663,6 @@ namespace Rasa.Managers
                     throw new GameplayRejectionException("Required ability items are no longer available.");
             }
             var consumption = new InventoryManager.InventoryConsumption();
-            using var unit = _gameUnitOfWorkFactory.CreateChar();
             unit.ExecuteTransaction(() => consumption.PlanAndSave(client, quantities, unit));
             consumption.Publish(client);
             foreach (var progress in consumption.ProgressEvents)

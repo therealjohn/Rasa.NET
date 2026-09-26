@@ -967,6 +967,12 @@ namespace Rasa.Test.Missions
                 ConfigureRuntimePlayer(freshClient);
                 using (var reload = Context.CreateChar())
                 {
+                    var character = reload.Characters.Get(characterId);
+                    freshClient.Player.Experience = character.Experience;
+                    freshClient.Player.Level = character.Level;
+                    freshClient.Player.CloneCredits = character.CloneCredits;
+                    freshClient.Player.Credits[CurencyType.Credits] = character.Credit;
+                    freshClient.Player.Credits[CurencyType.Prestige] = character.Prestige;
                     freshClient.Player.PlayerFlags = new Dictionary<uint, uint>(reload.CharacterFlags.Get(characterId));
                     Manager.HydrateAndClearInvalid(freshClient.Player, reload);
                     freshClient.Player.StartingExperienceCompleted =

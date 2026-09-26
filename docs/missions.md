@@ -4,11 +4,58 @@ Mission content is deployed by **EF Core database migrations**, just like the
 other World data. There is no mission pack, publication command, release
 activation step, or separate database path to provide to another tool.
 
-This branch's transition to migration-owned content targets **fresh databases**.
+The original transition to migration-owned content targets **fresh databases**.
 It does not convert previously published mission databases or old experimental
 saves. Database files are never deleted automatically. Use a fresh development
 database path, or remove your own disposable databases when you intend to start
 over.
+
+The subsequent integration fixtures also verify SQLite upgrades from the actual
+current-branch baseline: `PersistentCharacterFlags` in Char and
+`BootcampCorpseDialogue` in World. Existing assignments, counters, flags, scene
+state, rewards and ordinary items survive the combined item/repeat/offer
+migrations. Legacy bombs are adopted only with proven assignment, scene and
+issue-receipt identity. This narrow upgrade coverage does not extend the original
+transition to older experimental saves, or certify live MySQL behavior.
+
+Current-branch Bootcamp bomb assignments have a separate, narrow forward
+upgrade to assignment-owned inventory. It preserves unambiguous item identities
+and receipts, and quarantines ambiguity instead of reissuing or deleting
+items. See [quest-item persistence](mission-reference.md#assignment-owned-quest-items).
+
+Current-branch mission history also has a forward upgrade for repeatability.
+`MissionRepeatAttempts` changes history to per-assignment rows;
+`MissionRepeatHistoryUpgrade` preserves old outcomes and receipts and imports
+terminal journal rows. Apply both Char migrations and the World
+`MissionRepeatPolicies` migration before running this build. These changes do
+not enable any new production content or make Bootcamp repeatable.
+
+Apply the paired Char `ForwardedSceneEffectProvenance` migration as well. It
+records the originating assignment and scene generation independently of the
+experience root that executes shared-actor work. Existing forwarding hashes
+cannot recover that identity: the migration cancels unattributed `Pending` and
+`Running` forwarded effects with an explicit failure reason, while preserving
+root-owned work and already-applied experience state. Inspect those cancelled
+operations when upgrading an in-flight mission; they are not silently replayed
+against a later attempt. Removing provenance is not a supported downgrade;
+restore a backup instead.
+
+Radio admission requires the paired Char `MissionRadioOffers`, World
+`MissionRadioChannels`, and World `BootcampRadioOfferAuthority` migrations.
+They add bounded pending authority, explicit
+channels and nullable NPC IDs without rewriting assignments or history.
+Only Initiation gains a radio source: its existing arrival offer now uses the
+generic authority. Its NPC path is retained, completion stays NPC-only, and
+all Bootcamp missions remain Once, private and unshareable. Wilderness content
+remains disabled. The data-only authority migration follows the schema migration
+so SQLite finishes its nullable-ID table rebuild before seeding the source.
+These migrations are forward-only.
+
+Explicit party sharing also requires the paired Char `MissionPartyOffers`
+migration. It adds nullable sender/party identity to the existing offer table,
+preserving old radio offers, assignments and history. No World schema or
+production content activation accompanies this change. Native UI and live
+MySQL behavior still need separate acceptance checks.
 
 ## Start the servers
 
@@ -132,6 +179,142 @@ Validate its complete footprint and route against the intended surface, especial
 at bridges and other stacked geometry; finding a nearby navmesh polygon is not
 proof of visible, reachable placement.
 
+## Opt in to repeatable missions
+
+Missing repeat metadata means `Once`. Leave all five Bootcamp missions at that
+default, private and unshareable. Author repeats in an ordinary paired forward
+World data migration by inserting a `mission_repeat_policy` child row for the
+exact mission ID and content revision. No scene script is required.
+
+For example, a Daily mission with a 06:00 UTC reset uses:
+
+```csharp
+migration.InsertData(
+    "mission_repeat_policy",
+    new[] { "mission_id", "content_revision", "repeat_kind", "cooldown_seconds", "reset_second_utc" },
+    new object[] { missionId, revision, (int)MissionRepeatKind.Daily, null, 21600U });
+```
+
+`Immediate` has no timing fields. `Cooldown` requires a positive number of
+seconds and no reset field. `Daily` requires a reset second between 0 and 86399
+and no cooldown field. Mixed or unsupported policies fail validation; the
+database also enforces these parameter combinations.
+
+An eligible acceptance replaces a terminal journal entry in the same character
+transaction. It creates a new assignment ID, fresh objectives and counters,
+and new item/scene ownership. It does not reset persistent flags or copy prior
+progress or choices. Existing exclusive public actors must finish returning
+and release their old lease before another run can reserve them.
+The client receives the old journal's clear followed by the new mission gain,
+only after commit. `Once` retains its existing failure-dismissal behavior;
+Bootcamp's failed retry does not become an automatic new offer.
+
+Cooldown starts at the committed reward timestamp. A Daily reward uses the
+window containing its commit, even when the attempt began before reset.
+Neither failure nor abandonment spends an entitlement. An active assignment
+or unrewarded `Success` blocks another attempt; settle the latter at its
+receiver rather than clearing it. See the
+[repeatability reference](mission-reference.md#repeat-policies-and-attempt-history)
+for persistence, lifetime prerequisites and retry semantics.
+
+## Author a radio mission
+
+Add a `mission_channel_policy` row for the exact mission/revision in a paired
+World data migration. Acceptance and completion independently use
+`MissionChannel.Npc`, `Radio` or `Mixed`. Missing policy means NPC-only on both
+sides. Set `GiverId` or `ReceiverId` to `null` when that side is radio-only;
+there is no need for a dummy NPC. The CLR zero defaults remain solely for
+historical migration seed compatibility.
+
+For example, after defining the mission and its rewards:
+
+```csharp
+var sources = new[]
+{
+    new MissionOfferSourceDefinition(MissionOfferSourceKind.ServerEvent, "area.arrival", mapContextId)
+};
+migration.InsertData(
+    "mission_channel_policy",
+    new[] { "mission_id", "content_revision", "acceptance_channel", "completion_channel", "radio_sources" },
+    new object[] { missionId, revision, (int)MissionChannel.Radio, (int)MissionChannel.Radio,
+        System.Text.Json.JsonSerializer.Serialize(sources) });
+```
+
+The trusted server event calls
+`missions.Offers.TryOffer(client, missionId, MissionOfferSourceIdentity.ServerEvent("area.arrival"))`.
+Use a stable event identity for retries. A submitted native mission ID is not
+authority. The service verifies the authored source, ownership, requirements
+and repeat eligibility, persists the offer, then sends the native dialog.
+Acceptance consumes that offer in the existing assignment/item transaction.
+
+A scene can instead declare a `Scene` source keyed by its script and emit
+`new OfferRadioMissionIntent(operationKey, missionId)`. The adapter captures
+the real originating scene and assignment generations; scripts do not supply
+them or fabricate an NPC. The source must remain Running/Waiting with its
+current assignment and active participant. Replaying a sequence inbox entry
+still does nothing; a new trusted scene signal may reissue an eligible offer
+after reconnect. Other character-operation receipts remain unchanged.
+
+Offers last five minutes, with one pending slot per character/mission and at
+most 30 per character. Identical retries do not notify again or renew expiry.
+Session/map/character changes invalidate old offers. A still-eligible source
+must issue a fresh offer; reconnect does not turn old native input into authority.
+
+Radio completion uses the shared turn-in/reward planner and the current exact
+assignment. Author the completion channel explicitly; the old
+`RadioCompleteable` database boolean no longer enables it. Non-null ratings
+are unsupported. Test the native UI separately from packet/server tests.
+See [radio authority contracts](mission-reference.md#radio-offer-authority)
+for identity, retention and commit-boundary rules.
+
+## Author a party-shareable mission
+
+Set the normalized definition's `Shareable` flag only when the mission supports
+independent recipient assignments. NPC/radio acceptance and completion channels
+stay separate. Each recipient must explicitly accept a durable offer from a
+living party member within the native 20-unit range, on the same live instance.
+Do not use account IDs as native source entities.
+
+An ordinary mission without a scene needs no additional sharing source metadata.
+A scripted public encounter must opt in through its existing binding:
+
+```csharp
+scene.PublicEncounter = new PublicEncounterBinding(
+    missionId, spawnId, "guide", scene.Script,
+    OwnerLossPolicy: "Reset", AllowPartyJoin: true);
+```
+
+This attaches new assignments to the exact existing actor/run. It does not
+reserve another actor or replay scene startup. Keep assignment-owned deadlines
+and `StartScenario`/`ActivateSpawnGroup` objective actions nonshareable; those
+paths need a separate scene controller. Content validation rejects an
+incompatible shareable scene rather than exposing a broken native button.
+Required `Personal` scenario-event objectives also make a scripted mission
+unshareable: joined assignments cannot receive initiator-only scene signals.
+An optional personal signal is also unsafe when required progress depends on
+its reveal/activate actions, including chains through other optional objectives,
+or observes its objective state. Keep those dependencies nonshareable even if
+another authored branch could unlock the same objective; validation does not
+prove alternate branches equivalent. Independent optional signals and personal
+dialogue/actions remain supported, including dialogue that independently
+activates required objectives. A redundant unlock of an initially active
+objective does not create a dependency. Author group credit explicitly only
+when future scene events should be available to eligible participants.
+
+Use `NearbyParty` or `EncounterParticipants` objective credit only for eligible
+future kills/scenario signals. Personal dialogue, flags, choices, items and
+rewards remain per character. A participant cannot control or cancel the
+initiator's world operations, and late joiners receive no prior progress.
+`IncludeEligibleParty` remains the separate option for already-assigned members
+present when an encounter is reserved; it never accepts a mission.
+Encounter membership belongs to one assignment and generation. It cannot
+authorize another mission's encounter-only objectives or prevent an independent
+`Personal`/`NearbyParty` kill mission from receiving its own eligible credit.
+
+Run the [party sharing checks](protocol-testing.md#explicit-party-mission-sharing)
+before enabling authored content. Bootcamp stays private, Once and unshareable;
+the sharing implementation does not activate Wilderness missions.
+
 ## Write a scripted mission
 
 Implement `ISceneScript` in `Rasa.Missions` and register it with
@@ -156,6 +339,10 @@ rather than parsing runtime entity IDs or legacy scenario-key strings.
 - Optional `Audio`, binding briefing narration, accepted/completed voice cues
   and audio paired with mission announcements. This is shared by all missions,
   not restricted to Bootcamp.
+- Optional `Items` and `AcceptanceItems`, binding temporary quest items and
+  explicit acceptance-time item actions. Ordinary transition item actions use
+  `MissionActionEntry.ItemIntentJson`; scene-only item operations belong in the
+  sequence's `Character` list.
 
 Use `data.sequence` for ordinary authored sequences. Bootcamp scripts and
 `example.escort` show how to add unusual behavior without enlarging the
@@ -167,6 +354,46 @@ unlocking an NPC objective. Enemy movement and combat use shared world intents.
 Recovery is defined by the script checkpoint, route resume settings and
 public encounter policy. There is no generic `Recovery` string that dispatches
 an automatic recovery strategy.
+
+### Give an actor role a gameplay policy
+
+Set optional `SceneActorDefinition.GameplayPolicy` on a `Creature` or
+`PublicSpawn` role. Public scenes do not need a private experience to configure
+combat or kill rewards:
+
+```csharp
+scene.Actors["hostile"] = new SceneActorDefinition(
+    "hostile", SceneActorKind.Creature, 510210,
+    new ScenePosition(0, 0, 0),
+    GameplayPolicy: new ActorGameplayPolicy
+    {
+        RewardScenarioKills = true,
+        TrackParticipation = true,
+        Tags = new[] { "encounter-hostile" },
+        Loot = new AuthoredLootProfile(new[] { new LootDrop(28, 100, 12, 12) })
+    });
+```
+
+Replace the example template, position and loot IDs with verified content.
+This declaration does not enable a mission or activate a map. For a
+`PublicSpawn`, `TemplateId` is the existing spawn-pool ID, and the public
+encounter must reserve that same role.
+
+A role policy replaces the entire applicable private-experience policy; its
+unset fields use `ActorGameplayPolicy` defaults rather than merging with the
+experience. `RewardScenarioKills = false` explicitly suppresses kill rewards,
+including for a leased static actor. Set it to `true` when adding tags or
+defense to a role that should still reward eligible kills. Without a role policy,
+ordinary static spawns retain normal rewards; the legacy experience reward flag
+continues to apply to scene-created actors only. Scene-created actors with
+neither role nor experience opt-in remain nonrewarding.
+Keep policies identical wherever a private `SharedKey` names the same actor.
+
+Game snapshots the policy at binding, applies it to the exact actor and
+scene/lease generation, and clears it on release or replacement. Do not mutate
+a creature template or a caller-owned tag list to change a running encounter.
+Use a forward content migration for authored changes; omitted policy metadata
+does not add a field to historical seed serialization.
 
 ## Private experiences and public encounters
 
@@ -199,8 +426,26 @@ checkpoint shape must explicitly handle the corresponding character state.
 
 Keep journal assignments, completion history, reward receipts, deadlines and
 scene receipts intact during ordinary gameplay. Clearing a completed journal
-entry must not allow its rewards again. Inventory and progress changes commit
-before success packets.
+entry never erases its reward claim. `Once` remains blocked; an explicitly
+repeatable mission can reward only a new, eligible assignment. Inventory and
+progress changes commit before success packets.
+
+Assignment item ledgers are not children of the active journal row. Cleanup
+runs inside the terminal transaction, before removing that row, and targets
+only that assignment's durable item IDs. Normal reward and loot stacks remain
+unbound. When a legacy item upgrade cannot prove ownership, inspect the
+read-only diagnostic before preparing a corrective migration:
+
+```sql
+SELECT character_id, mission_id, assignment_id, reason
+FROM character_mission_item_quarantine;
+```
+
+Do not clear a quarantine row, adopt by template alone, or remove all matching
+templates as a repair. Reconcile the exact assignment, old issue receipt,
+scene participant and concrete inventory row first. Deploy both providers'
+equivalent migration changes with the server build; a generated MySQL script
+does not replace testing against a live MySQL server.
 
 General character flags are stored in `character_flag`; `Manifestation.PlayerFlags`
 is their login-restored cache. Mission flag actions must not write only to the
@@ -217,9 +462,10 @@ chooses when to remove old files. The server does not delete databases.
 MySQL remains manually migrated. Historical migrations remain unchanged even
 though the final schema no longer contains the qualification table.
 
-This redesign has no upgrade contract for old experimental databases. It also
-does not add an automatic reset, database deletion or background publication hook.
-Back up real databases before applying future schema/data changes.
+That fresh-database restriction applies to the original flag/content transition,
+not to the later incremental upgrades described above. There is no automatic
+reset, database deletion or mission-pack publishing. Back up real databases
+before applying schema/data changes.
 
 ## Focused verification
 
@@ -229,6 +475,12 @@ dotnet test .\src\Rasa.Test\Rasa.Test.csproj --no-restore --filter "FullyQualifi
 
 The migration checks exercise fresh SQLite initialization, repeat startup,
 enabled content, script validation and provider-equivalent seed operations.
+`MissionIntegrationUpgradePreservesBaselineCharacterFactsAndLegacyBomb` and
+`MissionIntegrationUpgradePreservesBaselineWorldContentAndAddsOnlyAuthoredCapabilities`
+exercise the complete forward path from that baseline, including consumed items
+and prior successful history beside a newer failed attempt. Historical rollback
+tests stop at the migration they test; they must not first apply later
+forward-only migrations or query a historical schema with newly added columns.
 Use the affected gameplay suites for the mission being changed, then the
 [native-client checklist](world-testing.md#native-client-bootcamp-acceptance-checklist).
 Offline MySQL model/SQL checks are not a live MySQL acceptance result.

@@ -15,6 +15,13 @@ namespace Rasa.Test.Missions.Content
     {
         internal static MissionExperienceDefinition ReadExperience() => BootcampMissionDataV1.Experience();
 
+        internal static MissionSceneDefinition PreserveItemMetadata(MissionSceneDefinition replacement, MissionSceneDefinition current)
+        {
+            replacement.Items = current.Items;
+            replacement.AcceptanceItems = current.AcceptanceItems;
+            return replacement;
+        }
+
         internal static Dictionary<uint, MissionSceneDefinition> ReadScenes(WorldContext context) =>
             context.Set<MissionSceneBindingEntry>().AsNoTracking().ToArray().ToDictionary(entry => entry.MissionId,
                 entry => JsonSerializer.Deserialize<MissionSceneDefinition>(entry.Bindings, MissionContentCodec.Options)

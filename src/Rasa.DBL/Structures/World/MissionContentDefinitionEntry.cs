@@ -38,12 +38,10 @@ namespace Rasa.Structures.World
         public uint ClientNameTextId { get; set; }
 
         [Column("giver_id")]
-        [Required]
-        public uint GiverId { get; set; }
+        public uint? GiverId { get; set; } = 0;
 
         [Column("receiver_id")]
-        [Required]
-        public uint ReceiverId { get; set; }
+        public uint? ReceiverId { get; set; } = 0;
 
         [Column("level")]
         [Required]

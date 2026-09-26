@@ -35,6 +35,9 @@
         void ExecuteTransaction(System.Action operation) =>
             throw new System.NotSupportedException(
                 "This character unit of work does not support transactions.");
+        T Enlist<T>(System.Func<T> create) where T : class, ITransactionParticipant =>
+            throw new System.NotSupportedException("This character unit of work cannot enlist transaction state.");
+        bool HasEnlisted<T>() where T : class, ITransactionParticipant => false;
 
         IAuctionRepository Auctions { get; }
         ICensoredWordRepository CensoredWords { get; }
@@ -45,6 +48,10 @@
         ICharacterLockboxRepository CharacterLockboxes { get; }
         ICharacterLogosRepository CharacterLogoses { get; }
         ICharacterMissionRepository CharacterMissions { get; }
+        MissionOffer.MissionOfferRepository MissionOffers =>
+            throw new System.NotSupportedException("This character unit of work has no mission offer authority store.");
+        CharacterMissionItem.ICharacterMissionItemRepository CharacterMissionItems =>
+            throw new System.NotSupportedException("This character unit of work has no mission item ledger.");
         ICharacterMissionDeadlineRepository CharacterMissionDeadlines { get; }
         ICharacterMissionProgressRepository CharacterMissionProgress { get; }
         ICharacterMissionScenarioRepository CharacterMissionScenario { get; }

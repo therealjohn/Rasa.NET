@@ -38,6 +38,10 @@ namespace Rasa.Context.Char
         public DbSet<CharacterLockboxEntry> CharacterLockboxEntries { get; set; }
         public DbSet<CharacterLogosEntry> CharacterLogosEntries { get; set; }
         public DbSet<CharacterMissionEntry> CharacterMissionEntries { get; set; }
+        public DbSet<CharacterMissionOfferEntry> CharacterMissionOfferEntries { get; set; }
+        public DbSet<CharacterMissionItemEntry> CharacterMissionItemEntries { get; set; }
+        public DbSet<CharacterMissionItemReceiptEntry> CharacterMissionItemReceiptEntries { get; set; }
+        public DbSet<CharacterMissionItemQuarantineEntry> CharacterMissionItemQuarantineEntries { get; set; }
         public DbSet<CharacterMissionDeadlineEntry> CharacterMissionDeadlineEntries { get; set; }
         public DbSet<CharacterMissionObjectiveEntry> CharacterMissionObjectiveEntries { get; set; }
         public DbSet<CharacterMissionObjectiveCounterEntry> CharacterMissionObjectiveCounterEntries { get; set; }
@@ -114,6 +118,7 @@ namespace Rasa.Context.Char
             SetupCharacterMissionObjectiveTables(modelBuilder);
             SetupCharacterMissionDurabilityTables(modelBuilder);
             MissionRuntimeModel.Configure(modelBuilder);
+            MissionItemModel.Configure(modelBuilder);
             SetupCharacterSkillTable(modelBuilder);
             SetupCharacterStartingExperienceTables(modelBuilder);
             SetupCharacterFlagTable(modelBuilder);

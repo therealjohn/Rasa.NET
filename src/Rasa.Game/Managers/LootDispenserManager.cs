@@ -16,6 +16,7 @@ namespace Rasa.Managers
     using Rasa.Packets.ClientMethod.Server;
     using Rasa.Packets.Game.Server;
     using Rasa.Packets.LootDispenser.Client;
+    using Rasa.Missions.Definitions;
     using Repositories.UnitOfWork;
     using Structures;
     using Structures.Char;
@@ -200,7 +201,7 @@ namespace Rasa.Managers
             return Math.Max(deadTime, creature.Controller?.DeadTime ?? 0) >= EmptyCorpseMs;
         }
 
-        internal LootDispenser Create(Client killer, Creature creature)
+        internal LootDispenser Create(Client killer, Creature creature, ActorGameplayPolicy policy = null)
         {
             RetryPendingRetirements();
             var mapChannel = killer.Player.MapChannel;
@@ -216,7 +217,7 @@ namespace Rasa.Managers
             loot.AccountId = killer.AccountEntry?.Id ?? 0;
             loot.UnitOfWorkFactory = _gameUnitOfWorkFactory;
 
-            CreateLoot(killer, loot);
+            CreateLoot(killer, loot, (policy ?? Game.Missions.World.CreatureGameplayRules.Policy(creature)).Loot);
 
             lock (mapChannel.LootSyncRoot)
             {
@@ -233,10 +234,10 @@ namespace Rasa.Managers
         /// </summary>
         private static readonly Random Roll = new Random();
 
-        private LootDispenser CreateLoot(Client killer, LootDispenser loot)
+        private LootDispenser CreateLoot(Client killer, LootDispenser loot, AuthoredLootProfile profile)
         {
-            if (Game.Missions.World.CreatureGameplayRules.Policy(loot.Corpse).Loot != null)
-                return CreateAuthoredLoot(killer, loot);
+            if (profile != null)
+                return CreateAuthoredLoot(killer, loot, profile);
 
             int giveLoot;
 
@@ -263,7 +264,7 @@ namespace Rasa.Managers
             return loot;
         }
 
-        private LootDispenser CreateAuthoredLoot(Client owner, LootDispenser loot)
+        private LootDispenser CreateAuthoredLoot(Client owner, LootDispenser loot, AuthoredLootProfile profile)
         {
             var staged = new List<Item>();
             var committed = false;
@@ -272,7 +273,7 @@ namespace Rasa.Managers
                 using var unit = _gameUnitOfWorkFactory.CreateChar();
                 unit.ExecuteTransaction(() =>
                 {
-                    foreach (var drop in Game.Missions.World.CreatureGameplayRules.Policy(loot.Corpse).Loot.Roll(_lootRoll))
+                    foreach (var drop in profile.Roll(_lootRoll))
                     {
                         var template = ItemManager.Instance.GetItemTemplateById(drop.TemplateId);
                         var itemClass = template == null ? null :
@@ -309,9 +310,9 @@ namespace Rasa.Managers
             return loot;
         }
 
-        internal void Loot(Client client, Creature creature)
+        internal void Loot(Client client, Creature creature, ActorGameplayPolicy policy = null)
         {
-            var loot = Create(client, creature);
+            var loot = Create(client, creature, policy);
 
             client.CallMethod(SysEntity.ClientMethodId, new CreatePhysicalEntityPacket(loot.EntityId, loot.EntityClassId));
 

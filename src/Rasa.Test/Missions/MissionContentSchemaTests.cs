@@ -440,7 +440,7 @@ namespace Rasa.Test.Missions
         {
             WithDisposableSqliteWorld((context, database) =>
             {
-                context.Database.Migrate();
+                context.GetService<IMigrator>().Migrate("20260919114029_MissionContentScenarioSpawnPolicy");
 
                 var upgradedGroups = context.MissionSpawnGroupEntries
                     .Where(entry => entry.MissionId == 1994 &&
@@ -489,7 +489,7 @@ namespace Rasa.Test.Missions
         {
             WithDisposableSqliteWorld((context, database) =>
             {
-                context.Database.Migrate();
+                context.GetService<IMigrator>().Migrate("20260919035937_MissionContentRewardShape");
                 context.Database.ExecuteSqlRaw(
                     "INSERT INTO mission_content_definition " +
                     "(mission_id, content_revision, requirement, client_name_text_id, giver_id, receiver_id, level, group_type, category_id, shareable, radio_completeable, comment) " +
@@ -939,13 +939,17 @@ namespace Rasa.Test.Missions
                 var backfilled = context.MissionContentDefinitionEntries
                     .Where(entry => entry.MissionId == 900321 || entry.MissionId == 900429)
                     .OrderBy(entry => entry.MissionId)
+                    .Select(entry => new
+                    {
+                        entry.Requirement, entry.ClientNameTextId, entry.GiverId, entry.ReceiverId,
+                        entry.Level, entry.GroupType, entry.CategoryId, entry.Shareable,
+                        entry.RadioCompleteable, entry.Comment
+                    })
                     .ToArray();
                 Assert.AreEqual(2, backfilled.Length);
 
                 var allLegacy = context.MissionContentDefinitionEntries
-                    .Where(entry => entry.ContentRevision == "legacy")
-                    .OrderBy(entry => entry.MissionId)
-                    .ToArray();
+                    .Count(entry => entry.ContentRevision == "legacy");
                 Assert.AreEqual(MissionContentRequirement.Optional, backfilled[0].Requirement);
                 Assert.AreEqual(0U, backfilled[0].ClientNameTextId);
                 Assert.AreEqual(101U, backfilled[0].GiverId);
@@ -967,7 +971,7 @@ namespace Rasa.Test.Missions
                 {
                     reopened.Database.Migrate();
                     Assert.AreEqual(
-                        allLegacy.Length,
+                        allLegacy,
                         reopened.MissionContentDefinitionEntries.Count(
                             entry => entry.ContentRevision == "legacy"));
                     Assert.AreEqual(2, reopened.MissionContentDefinitionEntries.Count(

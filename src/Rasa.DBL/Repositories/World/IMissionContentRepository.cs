@@ -7,6 +7,8 @@ namespace Rasa.Repositories.World
     public interface IMissionContentRepository
     {
         List<MissionContentDefinitionEntry> GetDefinitions();
+        List<MissionRepeatPolicyEntry> GetRepeatPolicies() => new();
+        List<MissionChannelPolicyEntry> GetChannelPolicies() => new();
         List<MissionPrerequisiteEntry> GetPrerequisites();
         List<MissionObjectiveDefinitionEntry> GetObjectives();
         List<MissionObjectiveTransitionEntry> GetTransitions();

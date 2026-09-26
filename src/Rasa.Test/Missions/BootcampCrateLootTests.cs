@@ -487,9 +487,9 @@ namespace Rasa.Test.Missions
                 BootcampRuntimeTestHarness.CaptainDelessioPackageId);
             harness.SeedMission(harness.Client.Player.Id,
                 BootcampRuntimeTestHarness.MissionInitiation, (uint)MissionState.Completed, false);
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(harness.Client,
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(harness.Client,
                 mcAllister.EntityId, BootcampRuntimeTestHarness.MissionGearingUp));
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(harness.Client,
+            Assert.IsTrue(harness.Manager.CompleteOfferedObjective(harness.Client,
                 delessio.EntityId, BootcampRuntimeTestHarness.MissionGearingUp, 4, 1));
             var crate = BootcampRuntimeTestHarness.FindScenarioObject(
                 harness.BootcampMap, "bootcamp-equipment-crate");

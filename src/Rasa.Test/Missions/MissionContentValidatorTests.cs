@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -8,6 +9,10 @@ namespace Rasa.Test.Missions
 {
     using Rasa.Data;
     using Rasa.Managers;
+    using Rasa.Missions.Content;
+    using Rasa.Missions.Definitions;
+    using Rasa.Missions.Runtime;
+    using Rasa.Missions.Scenes;
     using Rasa.Structures.Char;
     using Rasa.Structures.Missions;
     using Rasa.Structures.World;
@@ -15,6 +20,128 @@ namespace Rasa.Test.Missions
     [TestClass]
     public class MissionContentValidatorTests
     {
+        [TestMethod]
+        [DataRow("missing-index")]
+        [DataRow("index-zero")]
+        [DataRow("index-four")]
+        [DataRow("transition")]
+        [DataRow("objective")]
+        [DataRow("package")]
+        [DataRow("flag")]
+        [DataRow("native-id")]
+        [DataRow("duplicate")]
+        [DataRow("unknown-kind")]
+        [DataRow("read-only-transition")]
+        [DataRow("read-only-choices")]
+        [DataRow("nonterminal")]
+        [DataRow("unknown-action")]
+        public void DialogueValidationRejectsAmbiguousUnmappedAndNonExecutableTopics(string invalid)
+        {
+            var fixture = MissionContentFixture.CreateValid();
+            if (invalid == "unknown-action")
+                fixture.Actions[0].Kind = (MissionActionKind)255;
+            if (invalid == "nonterminal")
+                fixture.Transitions[0].ToState = (byte)MissionObjectiveState.Incomplete;
+            var choices = new Dictionary<int, uint> { [1] = 20, [2] = 20, [3] = 20 };
+            if (invalid == "missing-index") choices.Remove(2);
+            if (invalid == "index-zero") { choices.Remove(1); choices[0] = 20; }
+            if (invalid == "index-four") { choices.Remove(3); choices[4] = 20; }
+            if (invalid == "transition") choices[2] = 999;
+            var kind = invalid == "unknown-kind" ? (MissionDialogueKind)99 :
+                invalid.StartsWith("read-only") ? MissionDialogueKind.Reminder : MissionDialogueKind.Choice;
+            var topic = new MissionDialogueTopicDefinition(invalid == "objective" ? 999U : 10U,
+                invalid == "package" ? 999U : 77U, invalid == "flag" ? 12U : 11U, kind,
+                transitionId: invalid == "read-only-transition" ? 20U : null,
+                choices: invalid == "read-only-transition" ? null : choices,
+                dialogObjectiveId: invalid == "native-id" ? uint.MaxValue : null);
+            var original = new MissionContentLoader().Load(fixture.CreateRepository()).Definitions[321].Mission;
+
+            var mission = original.WithDialogue(invalid == "duplicate" ? new[] { topic, topic } : new[] { topic });
+
+            Assert.IsFalse(mission.IsOperational);
+            StringAssert.Contains(mission.OperationalDiagnostic, "dialogue");
+        }
+
+        [TestMethod]
+        public void TypedDialogueMetadataRoundTripsWithoutChangingHistoricalSceneShapes()
+        {
+            var topic = new MissionDialogueTopicDefinition(8, 586, 1, MissionDialogueKind.Choice,
+                choices: new Dictionary<int, uint> { [1] = 101, [2] = 102, [3] = 103 });
+            var json = JsonSerializer.Serialize(topic, MissionContentCodec.Options);
+            var decoded = JsonSerializer.Deserialize<MissionDialogueTopicDefinition>(json, MissionContentCodec.Options);
+            Assert.AreEqual(MissionDialogueKind.Choice, decoded.Kind);
+            Assert.AreEqual(102U, decoded.Choices[2]);
+            Assert.AreEqual(
+                "{\"missionId\":1995,\"objectiveId\":3,\"npcPackageId\":2584,\"dialogObjectiveId\":2,\"playerFlagId\":1}",
+                JsonSerializer.Serialize(new SceneObjectConversation(1995, 3, 2584, 2), MissionContentCodec.Options));
+            Assert.IsFalse(JsonSerializer.Serialize(new MissionSceneDefinition(), MissionContentCodec.Options)
+                .Contains("\"dialogue\""));
+            Assert.ThrowsExactly<JsonException>(() => JsonSerializer.Deserialize<MissionDialogueTopicDefinition>(
+                "{\"objectiveId\":8,\"npcPackageId\":586,\"playerFlagId\":1,\"choiceLabels\":[\"invented\"]}",
+                MissionContentCodec.Options));
+        }
+
+        [TestMethod]
+        public void DialogueAliasCannotCollideWithAnUnchangedCompletionTopic()
+        {
+            var fixture = MissionContentFixture.CreateValid();
+            fixture.Transitions.Add(new MissionObjectiveTransitionEntry
+            {
+                MissionId = 321, ContentRevision = "deployment_11", ObjectiveId = 11, TransitionId = 21,
+                FromState = (byte)MissionObjectiveState.Incomplete, ToState = (byte)MissionObjectiveState.Completed
+            });
+            fixture.Triggers.Add(new MissionTriggerEntry
+            {
+                MissionId = 321, ContentRevision = "deployment_11", ObjectiveId = 11, TransitionId = 21,
+                TriggerId = 1, Kind = MissionTriggerKind.Conversation, NpcPackageId = 77, PlayerFlagId = 11
+            });
+            var original = new MissionContentLoader().Load(fixture.CreateRepository()).Definitions[321].Mission;
+
+            var mission = original.WithDialogue(new[]
+            {
+                new MissionDialogueTopicDefinition(10, 77, 11, transitionId: 20, dialogObjectiveId: 11)
+            });
+
+            Assert.IsFalse(mission.IsOperational);
+            StringAssert.Contains(mission.OperationalDiagnostic, "duplicate native topic");
+        }
+
+        [TestMethod]
+        [DoNotParallelize]
+        public void MigratedChoiceObjectMustHaveAnAuthoredBranchMap()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create();
+            var scene = MissionDialogueTestContent.Install(harness.WorldContext, conversationObject: true);
+            scene.Dialogue = null;
+            MissionDialogueTestContent.SaveScene(harness.WorldContext, scene);
+
+            Assert.ThrowsExactly<MissionRuleException>(() => harness.Manager.LoadMissions());
+        }
+
+        [TestMethod]
+        [DoNotParallelize]
+        public void MigratedReadOnlyDialogueMustReferenceAnExistingNpcPackage()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create();
+            var scene = MissionDialogueTestContent.Install(harness.WorldContext, kind: MissionDialogueKind.Reminder);
+            scene.Dialogue[0] = new(8, 9999999, 1, MissionDialogueKind.Reminder);
+            MissionDialogueTestContent.SaveScene(harness.WorldContext, scene);
+
+            Assert.ThrowsExactly<MissionRuleException>(() => harness.Manager.LoadMissions());
+        }
+
+        [TestMethod]
+        [DoNotParallelize]
+        public void MigratedChoiceMustNotQueueAnUnboundSceneSequence()
+        {
+            using var harness = BootcampRuntimeTestHarness.Create();
+            var scene = MissionDialogueTestContent.Install(harness.WorldContext);
+            scene.Sequences.Remove(202);
+            MissionDialogueTestContent.SaveScene(harness.WorldContext, scene);
+
+            Assert.ThrowsExactly<MissionRuleException>(() => harness.Manager.LoadMissions());
+        }
+
         [TestMethod]
         public void ValidatorAcceptsACompleteOperationalGraph()
         {

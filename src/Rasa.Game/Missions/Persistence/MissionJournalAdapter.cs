@@ -37,7 +37,10 @@ namespace Rasa.Managers
         {
             player.Missions = BuildHydration(player.Id, rows, progress).Missions;
             foreach (var row in rows.Where(row => row.MissionState is 1 or 4))
+            {
                 player.MissionHistory[row.MissionId] = (MissionState)row.MissionState;
+                player.MissionSuccessHistory.Add(row.MissionId);
+            }
         }
 
         internal void HydrateAndClearInvalid(
@@ -45,12 +48,10 @@ namespace Rasa.Managers
             ICharUnitOfWork unitOfWork)
         {
             HydrationResult result = null;
-            Dictionary<uint, MissionState> history = null;
+            IReadOnlyList<CharacterMissionHistoryEntry> history = null;
             unitOfWork.ExecuteTransaction(() =>
             {
-                history = unitOfWork.CharacterMissions.Runtime.History(player.Id)
-                    .ToDictionary(entry => entry.MissionId,
-                        entry => (MissionState)entry.Outcome);
+                history = unitOfWork.CharacterMissions.Runtime.History(player.Id);
                 result = BuildHydration(
                     player.Id,
                     unitOfWork.CharacterMissions.Get(player.Id),
@@ -59,9 +60,22 @@ namespace Rasa.Managers
                     unitOfWork.CharacterMissions.Remove(player.Id, missionId);
             });
             player.Missions = result.Missions;
-            player.MissionHistory = history;
+            ApplyHistory(player, history);
+            foreach (var row in result.Missions.Values.Where(row => row.State is MissionState.Success or MissionState.Completed))
+                player.MissionSuccessHistory.Add(row.MissionId);
         }
 
+        internal static void ApplyHistory(Manifestation player, IReadOnlyList<CharacterMissionHistoryEntry> history)
+        {
+            player.MissionHistory = history.GroupBy(entry => entry.MissionId).ToDictionary(group => group.Key,
+                group => (MissionState)group.OrderByDescending(entry => entry.AssignmentGeneration)
+                    .ThenByDescending(entry => entry.CompletedAtUtc).ThenByDescending(entry => entry.AssignmentId).First().Outcome);
+            player.MissionSuccessHistory = history.Where(entry => entry.Rewarded || entry.Outcome is 1 or 4)
+                .Select(entry => entry.MissionId).ToHashSet();
+            player.MissionRewardTimes = history.Where(entry => entry.Rewarded).GroupBy(entry => entry.MissionId)
+                .ToDictionary(group => group.Key, group => DateTime.SpecifyKind(
+                    group.Max(entry => entry.RewardedAtUtc ?? entry.CompletedAtUtc), DateTimeKind.Utc));
+        }
         internal bool TryHydrateMission(
             uint characterId,
             CharacterMissionEntry row,
@@ -135,7 +149,7 @@ namespace Rasa.Managers
                     row.MissionId,
                     state,
                     derivedCompleteable,
-                    objectives);
+                    objectives, row.AssignmentId, row.Generation, row.ContentRevision);
             }
 
             return new HydrationResult(hydrated, invalid);

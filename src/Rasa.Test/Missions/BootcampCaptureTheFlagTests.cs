@@ -36,14 +36,15 @@ namespace Rasa.Test.Missions
                 BootcampRuntimeTestHarness.CorporalDeSimoneCreatureId,
                 BootcampRuntimeTestHarness.CorporalDeSimonePackageId);
 
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(
                 harness.Client,
                 deSimone.EntityId,
                 CaptureTheFlagMissionId));
             harness.Context.Drain();
             var before = harness.Context.ReadRewardTotals();
+            var previousCloneCredits = harness.Client.Player.CloneCredits;
 
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+            Assert.IsTrue(harness.Manager.CompleteOfferedObjective(
                 harness.Client,
                 deSimone.EntityId,
                 CaptureTheFlagMissionId,
@@ -58,6 +59,10 @@ namespace Rasa.Test.Missions
                 (3U, MissionObjectiveState.Inactive));
             Assert.AreEqual((uint)CharacterClass.Recruit, harness.Client.Player.Class);
             Assert.AreEqual((byte)5, harness.Client.Player.Level);
+            Assert.AreEqual(previousCloneCredits + 1, harness.Client.Player.CloneCredits);
+            using (var unit = harness.Context.CreateChar())
+                Assert.AreEqual(harness.Client.Player.CloneCredits,
+                    unit.Characters.Get(harness.Client.Player.Id).CloneCredits);
             Assert.AreEqual(
                 before.Experience + PromotionRewardExperience,
                 harness.Context.ReadRewardTotals().Experience);
@@ -251,14 +256,16 @@ namespace Rasa.Test.Missions
             Assert.IsNotNull(youngblood);
 
             var before = harness.Context.ReadRewardTotals();
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+            Assert.IsTrue(harness.Manager.TryGetRewardInfo(CaptureTheFlagMissionId, out var authoredReward));
+            Assert.AreEqual(200U, authoredReward.FixedReward.Credits[CurencyType.Credits]);
+            Assert.IsTrue(harness.Manager.CompleteOfferedObjective(
                 harness.Client,
                 youngblood.EntityId,
                 CaptureTheFlagMissionId,
                 3,
                 1));
             Assert.IsTrue(harness.Client.Player.Missions[CaptureTheFlagMissionId].Completeable);
-            Assert.IsTrue(harness.Manager.TryCompleteNpcMission(
+            Assert.IsTrue(harness.Manager.CompleteOfferedMission(
                 harness.Client,
                 youngblood.EntityId,
                 CaptureTheFlagMissionId,
@@ -266,10 +273,18 @@ namespace Rasa.Test.Missions
                 rating: null));
             var after = harness.Context.ReadRewardTotals();
             Assert.AreEqual(before.Experience + YoungbloodRewardExperience, after.Experience);
-            Assert.AreEqual(before.Credits, after.Credits);
+            Assert.AreEqual(before.Credits + 200, after.Credits);
             Assert.AreEqual(before.Prestige, after.Prestige);
             Assert.AreEqual(before.ItemCount, after.ItemCount);
             Assert.AreEqual((uint)CharacterClass.Recruit, harness.Client.Player.Class);
+            Assert.IsFalse(harness.Manager.CompleteOfferedMission(
+                harness.Client, youngblood.EntityId, CaptureTheFlagMissionId, null, null));
+            Assert.AreEqual(after, harness.Context.ReadRewardTotals());
+            harness.ReconnectFresh();
+            Assert.AreEqual(after, harness.Context.ReadRewardTotals());
+            Assert.AreEqual(after.Experience, harness.Client.Player.Experience);
+            Assert.AreEqual(after.Credits, harness.Client.Player.Credits[CurencyType.Credits]);
+            Assert.AreEqual(MissionState.Completed, harness.Client.Player.Missions[CaptureTheFlagMissionId].State);
         }
 
         private static void SeedCaptureTheFlagPrerequisites(
@@ -311,12 +326,12 @@ namespace Rasa.Test.Missions
             var deSimone = harness.AddNpc(
                 BootcampRuntimeTestHarness.CorporalDeSimoneCreatureId,
                 BootcampRuntimeTestHarness.CorporalDeSimonePackageId);
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(
                 harness.Client,
                 deSimone.EntityId,
                 CaptureTheFlagMissionId));
             harness.Context.Drain();
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(
+            Assert.IsTrue(harness.Manager.CompleteOfferedObjective(
                 harness.Client,
                 deSimone.EntityId,
                 CaptureTheFlagMissionId,

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -8,6 +9,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Rasa.Data;
 using Rasa.Managers;
+using Rasa.Memory;
 using Rasa.Packets.Game.Server;
 using Rasa.Packets.MapChannel.Client;
 using Rasa.Packets.MapChannel.Server;
@@ -28,6 +30,14 @@ namespace Rasa.Test.Missions
         [DataRow("distance")]
         [DataRow("owner")]
         [DataRow("missing-entity")]
+        [DataRow("non-finite")]
+        [DataRow("dead")]
+        [DataRow("disabled")]
+        [DataRow("foreign-map")]
+        [DataRow("removed")]
+        [DataRow("assignment")]
+        [DataRow("generation")]
+        [DataRow("revision")]
         public void InvalidCorpseContinueCannotGrantOrAdvance(string invalid)
         {
             using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);
@@ -38,19 +48,44 @@ namespace Rasa.Test.Missions
             if (invalid != "unopened")
                 npcs.RequestNpcConverse(harness.Client, new RequestNPCConversePacket { EntityId = corpse.EntityId });
             var request = Continue(corpse);
+            var originalPosition = corpse.Position;
             if (invalid == "mission") request.MissionId = 2005;
             if (invalid == "objective") request.ObjectiveId = 3;
             if (invalid == "flag") request.PlayerFlagId = 2;
             if (invalid == "distance") harness.MovePlayerTo(corpse.Position + new System.Numerics.Vector3(50, 0, 0));
             if (invalid == "owner") corpse.SceneOwnerCharacterId = 999;
             if (invalid == "missing-entity") request.EntityId = ulong.MaxValue;
+            if (invalid == "non-finite") corpse.Position = new System.Numerics.Vector3(float.NaN, 0, 0);
+            if (invalid == "dead") harness.Client.Player.State = CharacterState.Dead;
+            if (invalid == "disabled") corpse.IsEnabled = false;
+            if (invalid == "foreign-map") corpse.RuntimeMapChannel = new MapChannel { MapInfo = harness.BootcampMap.MapInfo };
+            if (invalid == "removed") EntityManager.Instance.UnregisterEntity(corpse.EntityId);
+            if (invalid is "assignment" or "generation" or "revision")
+            {
+                using var unit = harness.Context.CreateChar();
+                unit.ExecuteTransaction(() =>
+                {
+                    var row = unit.CharacterMissions.GetByCharacterAndMission(harness.Client.Player.Id, 1995);
+                    if (invalid == "assignment") row.AssignmentId = Guid.NewGuid().ToString("N");
+                    if (invalid == "generation") row.Generation++;
+                    if (invalid == "revision") row.ContentRevision = "stale-dialogue";
+                });
+            }
 
-            npcs.CompleteNPCObjective(harness.Client, request);
+            try
+            {
+                npcs.CompleteNPCObjective(harness.Client, request);
 
-            Assert.AreEqual(MissionObjectiveState.Incomplete, harness.Client.Player.Missions[1995].Objectives[3].State);
-            Assert.AreEqual(0, harness.ReadOwnedTemplateCounts(11519).GetValueOrDefault(11519U));
-            using var verify = harness.Context.CreateChar();
-            Assert.IsNull(verify.CharacterMissionDeadlines.Get(harness.Client.Player.Id, 1995));
+                Assert.AreEqual(MissionObjectiveState.Incomplete, harness.Client.Player.Missions[1995].Objectives[3].State);
+                Assert.AreEqual(0, harness.ReadOwnedTemplateCounts(11519).GetValueOrDefault(11519U));
+                using var verify = harness.Context.CreateChar();
+                Assert.IsNull(verify.CharacterMissionDeadlines.Get(harness.Client.Player.Id, 1995));
+            }
+            finally
+            {
+                corpse.Position = originalPosition;
+                corpse.RuntimeMapChannel = harness.BootcampMap;
+            }
         }
 
         [TestMethod]
@@ -66,7 +101,7 @@ namespace Rasa.Test.Missions
             harness.ReconnectFresh();
 
             var npcs = new NpcManager(harness.Context, harness.Manager);
-            npcs.CompleteNPCObjective(harness.Client, Continue(corpse));
+            npcs.CompleteNPCObjective(harness.Client, DecodeContinue(corpse));
             Assert.AreEqual(0, harness.ReadOwnedTemplateCounts(11519).GetValueOrDefault(11519U));
             harness.UseObjectAndRecover(Corpse(harness));
             Assert.AreEqual(1, harness.ReadOwnedTemplateCounts(11519).GetValueOrDefault(11519U));
@@ -83,7 +118,7 @@ namespace Rasa.Test.Missions
             npcs.RequestNpcConverse(harness.Client, new RequestNPCConversePacket { EntityId = corpse.EntityId });
             harness.Context.AfterSave = _ => throw new DbUpdateException("Injected corpse Continue failure.");
 
-            npcs.CompleteNPCObjective(harness.Client, Continue(corpse));
+            npcs.CompleteNPCObjective(harness.Client, DecodeContinue(corpse));
 
             Assert.AreEqual(0, harness.ReadOwnedTemplateCounts(11519).GetValueOrDefault(11519U));
             Assert.AreEqual(MissionObjectiveState.Incomplete, harness.Client.Player.Missions[1995].Objectives[3].State);
@@ -102,14 +137,14 @@ namespace Rasa.Test.Missions
         public void ForwardMigrationsRepairOldSurvivorSavesWithoutResettingTheBombAttempt(string stage)
         {
             using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);
-            harness.WorldContext.GetService<IMigrator>().Migrate("20260924164052_BootcampExtractionAssault");
+            ApplyLegacyWorldDialogue(harness, forward: false);
             harness.ReconnectFresh();
             FindMissingSoldiers(harness);
             var survivor = BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, 2584);
             Assert.IsNotNull(survivor);
             if (stage != "search")
             {
-                Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(harness.Client, survivor.EntityId, 1995, 2, 1));
+                Assert.IsTrue(harness.Manager.CompleteOfferedObjective(harness.Client, survivor.EntityId, 1995, 2, 1));
                 if (stage is "bomb" or "planted")
                     harness.UseObjectAndRecover(Corpse(harness));
                 if (stage == "planted")
@@ -120,7 +155,7 @@ namespace Rasa.Test.Missions
             using (var before = harness.Context.CreateChar())
                 deadline = before.CharacterMissionDeadlines.Get(harness.Client.Player.Id, 1995)?.DueAtUtc;
 
-            harness.WorldContext.Database.Migrate();
+            ApplyLegacyWorldDialogue(harness, forward: true);
             using (var database = harness.Context.Open())
             {
                 database.Database.OpenConnection();
@@ -151,6 +186,28 @@ namespace Rasa.Test.Missions
                 harness.UseObjectAndRecover(corpse);
                 Assert.AreEqual(1, harness.ReadOwnedTemplateCounts(11519).GetValueOrDefault(11519U));
             }
+        }
+
+        private static void ApplyLegacyWorldDialogue(BootcampRuntimeTestHarness.Harness harness, bool forward)
+        {
+            var current = Content.MissionContentTestSupport.ReadScenes(harness.WorldContext)[1995];
+            var migration = new Rasa.Migrations.SqliteWorld.BootcampCorpseDialogue();
+            var operations = forward ? migration.UpOperations : migration.DownOperations;
+            using (var transaction = harness.WorldContext.Database.BeginTransaction())
+            {
+                foreach (var command in harness.WorldContext.GetService<IMigrationsSqlGenerator>()
+                    .Generate(operations, harness.WorldContext.Model))
+                {
+                    using var sql = harness.WorldContext.Database.GetDbConnection().CreateCommand();
+                    sql.Transaction = transaction.GetDbTransaction();
+                    sql.CommandText = command.CommandText;
+                    sql.ExecuteNonQuery();
+                }
+                transaction.Commit();
+            }
+            harness.WorldContext.ChangeTracker.Clear();
+            Content.MissionContentTestSupport.ConfigureScenes(harness.WorldContext, scenes =>
+                scenes[1995] = Content.MissionContentTestSupport.PreserveItemMetadata(scenes[1995], current));
         }
 
         [TestMethod]
@@ -217,7 +274,7 @@ namespace Rasa.Test.Missions
         {
             var youngblood = harness.AddNpc(BootcampRuntimeTestHarness.CaptainYoungbloodCreatureId, 2561);
             harness.SeedMission(harness.Client.Player.Id, 1994, (uint)MissionState.Completed, true);
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(harness.Client, youngblood.EntityId, 1995));
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(harness.Client, youngblood.EntityId, 1995));
             Assert.IsTrue(harness.Manager.RecordProgress(harness.Client, MissionProgressEvent.Area(1995, 435)));
         }
 
@@ -229,5 +286,43 @@ namespace Rasa.Test.Missions
         {
             EntityId = corpse.EntityId, MissionId = 1995, ObjectiveId = 2, PlayerFlagId = 1
         };
+
+        private static CompleteNPCObjectivePacket DecodeContinue(DynamicObject corpse)
+        {
+            using var stream = new MemoryStream();
+            using (var writer = new PythonWriter(new BinaryWriter(stream, System.Text.Encoding.UTF8, true)))
+            {
+                writer.WriteTuple(4);
+                writer.WriteULong(corpse.EntityId);
+                writer.WriteUInt(1995);
+                writer.WriteUInt(2);
+                writer.WriteUInt(1);
+            }
+            stream.Position = 0;
+            using var reader = new PythonReader(new BinaryReader(stream));
+            var packet = new CompleteNPCObjectivePacket();
+            packet.Read(reader);
+            Assert.AreEqual(stream.Length, stream.Position);
+            return packet;
+        }
+
+        [TestMethod]
+        [DataRow(5f, true)]
+        [DataRow(5.001f, false)]
+        public void CorpseOpeningUsesTheFiveMetreOriginBoundary(float verticalDistance, bool allowed)
+        {
+            using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);
+            FindMissingSoldiers(harness);
+            var corpse = Corpse(harness);
+            harness.MovePlayerTo(corpse.Position + new System.Numerics.Vector3(0, verticalDistance, 0));
+            harness.Drain();
+            var npcs = new NpcManager(harness.Context, harness.Manager);
+
+            npcs.RequestNpcConverse(harness.Client, new RequestNPCConversePacket { EntityId = corpse.EntityId });
+
+            Assert.AreEqual(allowed ? 1 : 0, harness.Drain().OfType<ConversePacket>().Count());
+            npcs.CompleteNPCObjective(harness.Client, DecodeContinue(corpse));
+            Assert.AreEqual(allowed ? 1 : 0, harness.ReadOwnedTemplateCounts(11519).GetValueOrDefault(11519U));
+        }
     }
 }

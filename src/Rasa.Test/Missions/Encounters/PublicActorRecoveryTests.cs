@@ -36,7 +36,7 @@ namespace Rasa.Test.Missions.Encounters
                 spawns.SpawnPoolWorker(context.Map, 0);
                 var actor = Actor(context);
                 context.Manager.PublicActors.Bind(new PublicEncounterBinding(321, pool.DbId, "guide", "example.escort"));
-                Assert.IsTrue(context.Manager.TryAcceptNpcMission(context.Client, actor.EntityId, 321));
+                Assert.IsTrue(context.Manager.AcceptOfferedMission(context.Client, actor.EntityId, 321));
                 var old = context.Manager.PublicActors.Handle(context.Map, pool.DbId);
                 using (var unit = context.CreateChar())
                     unit.ExecuteTransaction(() => unit.CharacterMissions.Runtime.Scene(old.RunId).Status = status);
@@ -57,7 +57,7 @@ namespace Rasa.Test.Missions.Encounters
                 restarted.PublicActors.Tick(context.Map);
                 Assert.IsTrue(actor.IsInteractable);
                 Assert.IsFalse(restarted.PublicActors.TryResolve(context.Map, old, out _));
-                Assert.IsTrue(restarted.TryAcceptNpcMission(second, actor.EntityId, 321));
+                Assert.IsTrue(restarted.AcceptOfferedMission(second, actor.EntityId, 321));
             }
             finally { singleton.SetValue(null, previous); }
         }
@@ -77,7 +77,7 @@ namespace Rasa.Test.Missions.Encounters
                 spawns.SpawnPoolWorker(context.Map, 0);
                 var actor = Actor(context);
                 context.Manager.PublicActors.Bind(new PublicEncounterBinding(321, pool.DbId, "guide", "example.escort"));
-                Assert.IsTrue(context.Manager.TryAcceptNpcMission(context.Client, actor.EntityId, 321));
+                Assert.IsTrue(context.Manager.AcceptOfferedMission(context.Client, actor.EntityId, 321));
                 var handle = context.Manager.PublicActors.Handle(context.Map, pool.DbId);
                 var before = context.ReadRewardTotals();
                 actor.Position = new Vector3(8, 0, 0);

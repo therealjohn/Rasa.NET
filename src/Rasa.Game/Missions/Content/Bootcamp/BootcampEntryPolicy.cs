@@ -96,16 +96,9 @@ namespace Rasa.Game.Missions.Content.Bootcamp
                 client.Player.Missions.ContainsKey(BootcampInitiationMissionId))
                 return;
 
-            using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
-            if (CanAcceptRadio(client.Player, BootcampInitiationMissionId, unitOfWork))
-                (_missionManager ?? MissionApplication.Instance).OfferRadioMission(client, BootcampInitiationMissionId);
+            (_missionManager ?? MissionApplication.Instance).Offers.TryOffer(client, BootcampInitiationMissionId,
+                Rasa.Missions.Definitions.MissionOfferSourceIdentity.ServerEvent("bootcamp.arrival"));
         }
-
-        public bool CanAcceptRadio(
-            Manifestation player, uint missionId, ICharUnitOfWork unitOfWork) =>
-            missionId == BootcampInitiationMissionId &&
-            IsOwnedBootcampPlayer(player) &&
-            unitOfWork.CharacterStartingExperience.Get(player.Id)?.State == CharacterStartingExperienceState.Bootcamp;
 
         private static bool IsOwnedBootcampPlayer(Manifestation player) =>
             player?.MapContextId == BootcampPrivateMapContextId &&
@@ -153,6 +146,7 @@ namespace Rasa.Game.Missions.Content.Bootcamp
                 return false;
 
             var departed = false;
+            IReadOnlyDictionary<uint, uint> flags = null;
             try
             {
                 using var unitOfWork = _gameUnitOfWorkFactory.CreateChar();
@@ -185,6 +179,7 @@ namespace Rasa.Game.Missions.Content.Bootcamp
                         BootcampAliaHospitalId,
                         WaypointType.Hospital);
                     unitOfWork.CharacterFlags.Set(client.Player.Id, CharacterFlagIds.BootcampComplete, 1);
+                    flags = unitOfWork.CharacterFlags.Get(client.Player.Id);
                     if (!unitOfWork.GameAccounts.TryUpdateCanSkipBootcamp(
                             client.AccountEntry.Id,
                             false,
@@ -214,7 +209,8 @@ namespace Rasa.Game.Missions.Content.Bootcamp
             client.Player.Level = BootcampParityLevel;
             client.AccountEntry.CanSkipBootcamp = true;
             client.Player.StartingExperienceCompleted = true;
-            client.Player.PlayerFlags[CharacterFlagIds.BootcampComplete] = 1;
+            client.FlagProjection.ApplyCommitted(client, flags);
+            (_missionManager ?? MissionApplication.Instance).PublishCharacterFlags(client);
             DynamicObjectManager.ConvergeWaypointGrant(
                 client,
                 new CharacterTeleporterEntry(

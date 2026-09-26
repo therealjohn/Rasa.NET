@@ -8,6 +8,8 @@ using System.Threading;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.Options;
 
 namespace Rasa.Test.Missions
@@ -73,17 +75,18 @@ namespace Rasa.Test.Missions
         internal Action<SqliteCharContext> AfterSave { get; set; }
         internal Action<SqliteCharContext> BeforeQuery { get; set; }
         internal Action<string> BeforeCommand { get; set; }
+        internal Action<string> AfterCommand { get; set; }
         internal Client Client { get; }
         internal MapChannel Map => _world.Map;
         internal MissionApplication Manager { get; }
         internal Creature Receiver { get; private set; }
         internal MissionRewardDefinition Reward { get; private set; }
 
-        internal MissionTestContext()
+        internal MissionTestContext(string migration = null)
         {
             Directory.CreateDirectory(_directory);
             using var context = Open();
-            context.Database.Migrate();
+            context.GetService<IMigrator>().Migrate(migration);
         }
 
         private MissionTestContext(
@@ -131,8 +134,9 @@ namespace Rasa.Test.Missions
 
         internal static MissionTestContext WithCustomDefinitions(
             IReadOnlyDictionary<uint, Mission> definitions,
-            IReadOnlyDictionary<uint, MissionRewardDefinition> rewards = null) =>
-            new(definitions, rewards);
+            IReadOnlyDictionary<uint, MissionRewardDefinition> rewards = null,
+            Func<DateTime> utcNow = null) =>
+            new(definitions, rewards, utcNow: utcNow);
 
         internal static MissionTestContext WithProgressMission(
             MissionProgressRule progressRule,
@@ -142,7 +146,9 @@ namespace Rasa.Test.Missions
             global::Rasa.Missions.Runtime.MissionCreditPolicy creditPolicy = null,
             global::Rasa.Missions.Runtime.MissionRequirement objectiveRequirement = null,
             Func<DateTime> utcNow = null,
-            Action<PythonPacket> beforeMissionPacketPublication = null)
+            Action<PythonPacket> beforeMissionPacketPublication = null,
+            global::Rasa.Missions.Runtime.MissionRepeatPolicy repeatPolicy = null,
+            MissionRewardDefinition reward = null)
         {
             counters ??= new Dictionary<uint, MissionObjectiveCounterDefinition>();
             var counterTextIds = new uint?[3];
@@ -179,9 +185,10 @@ namespace Rasa.Test.Missions
                 true,
                 objectiveRequirements: objectiveRequirement == null ? null :
                     new Dictionary<uint, global::Rasa.Missions.Runtime.MissionRequirement>
-                    { [objectiveId] = objectiveRequirement });
+                    { [objectiveId] = objectiveRequirement }, repeatPolicy: repeatPolicy);
             return new MissionTestContext(
-                new Dictionary<uint, Mission> { [missionId] = mission }, utcNow: utcNow,
+                new Dictionary<uint, Mission> { [missionId] = mission },
+                reward == null ? null : new Dictionary<uint, MissionRewardDefinition> { [missionId] = reward }, utcNow: utcNow,
                 beforeMissionPacketPublication: beforeMissionPacketPublication);
         }
 
@@ -738,7 +745,9 @@ namespace Rasa.Test.Missions
                 MapContextId = map.MapInfo.MapContextId,
                 RuntimeMapChannel = map,
                 Position = position ?? Vector3.Zero,
-                EntityClass = EntityClasses.HumanBaseMale
+                EntityClass = EntityClasses.HumanBaseMale,
+                State = CharacterState.Idle,
+                AppearanceData = new Dictionary<EquipmentData, AppearanceData>()
             };
             _npcs.Add(npc);
             EntityManager.Instance.RegisterEntity(npc.EntityId, EntityType.Creature);
@@ -815,6 +824,7 @@ namespace Rasa.Test.Missions
             client.Player.Id = Client.Player.Id;
             client.Player.Level = Client.Player.Level;
             client.Player.Experience = Client.Player.Experience;
+            client.Player.CloneCredits = Client.Player.CloneCredits;
             client.Player.Credits[CurencyType.Credits] = Client.Player.Credits[CurencyType.Credits];
             client.Player.Credits[CurencyType.Prestige] = Client.Player.Credits[CurencyType.Prestige];
             client.Player.Inventory.PersonalInventory = Enumerable.Repeat(0UL, 250).ToList();
@@ -938,6 +948,15 @@ namespace Rasa.Test.Missions
             {
                 owner.BeforeQuery?.Invoke((SqliteCharContext)eventData.Context);
                 owner.BeforeCommand?.Invoke(command.CommandText);
+                return result;
+            }
+
+            public override System.Data.Common.DbDataReader ReaderExecuted(
+                System.Data.Common.DbCommand command,
+                CommandExecutedEventData eventData,
+                System.Data.Common.DbDataReader result)
+            {
+                owner.AfterCommand?.Invoke(command.CommandText);
                 return result;
             }
         }

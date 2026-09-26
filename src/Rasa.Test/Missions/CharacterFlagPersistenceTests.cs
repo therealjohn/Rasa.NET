@@ -25,7 +25,7 @@ namespace Rasa.Test.Missions
             using var harness = BootcampRuntimeTestHarness.Create();
             AddFlagAction(harness, 901, 7);
             var giver = harness.AddNpc(BootcampRuntimeTestHarness.MajorMcAllisterCreatureId);
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(harness.Client, giver.EntityId, 1990));
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(harness.Client, giver.EntityId, 1990));
             using var publication = new MissionScenarioPlan();
             var adapter = new Rasa.Game.Missions.Persistence.SceneCharacterAdapter(
                 harness.Manager, new ManifestationManager(harness.Context));
@@ -150,7 +150,7 @@ namespace Rasa.Test.Missions
             using var harness = BootcampRuntimeTestHarness.Create();
             AddFlagAction(harness, 901, 7);
             var giver = harness.AddNpc(BootcampRuntimeTestHarness.MajorMcAllisterCreatureId);
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(harness.Client, giver.EntityId, 1990));
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(harness.Client, giver.EntityId, 1990));
             harness.Context.AfterSave = _ => throw new DbUpdateException("Injected mission flag failure.");
 
             Assert.IsFalse(harness.Manager.RecordProgress(harness.Client, MissionProgressEvent.Area(1990, 430)));
@@ -172,9 +172,9 @@ namespace Rasa.Test.Missions
             harness.SeedMission(harness.Client.Player.Id, 1990, (uint)MissionState.Completed, false);
             var giver = harness.AddNpc(BootcampRuntimeTestHarness.MajorMcAllisterCreatureId);
             var delessio = harness.AddNpc(BootcampRuntimeTestHarness.CaptainDelessioCreatureId, 2560);
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(harness.Client, giver.EntityId, 1992));
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(harness.Client, giver.EntityId, 1992));
 
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(harness.Client, delessio.EntityId, 1992, 4, 1));
+            Assert.IsTrue(harness.Manager.CompleteOfferedObjective(harness.Client, delessio.EntityId, 1992, 4, 1));
 
             Assert.AreEqual(0U, harness.Client.Player.PlayerFlags[902]);
             using var verify = harness.Context.CreateChar();
@@ -235,7 +235,7 @@ namespace Rasa.Test.Missions
             var giver = harness.AddNpc(BootcampRuntimeTestHarness.MajorMcAllisterCreatureId);
             harness.Client.Player.PlayerFlags[903] = 1;
 
-            Assert.IsFalse(harness.Manager.TryAcceptNpcMission(harness.Client, giver.EntityId, 1990),
+            Assert.IsFalse(harness.Manager.AcceptOfferedMission(harness.Client, giver.EntityId, 1990),
                 "Acceptance must recheck persisted flags, not trust an unsaved runtime cache.");
         }
 
@@ -245,7 +245,7 @@ namespace Rasa.Test.Missions
             using var harness = BootcampRuntimeTestHarness.Create();
             AddFlagAction(harness, 901, 7);
             var giver = harness.AddNpc(BootcampRuntimeTestHarness.MajorMcAllisterCreatureId);
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(harness.Client, giver.EntityId, 1990));
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(harness.Client, giver.EntityId, 1990));
             Assert.IsTrue(harness.Manager.RecordProgress(harness.Client, MissionProgressEvent.Area(1990, 430)));
             Assert.AreEqual(7U, harness.Client.Player.PlayerFlags[901]);
 

@@ -5,6 +5,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Rasa.Data;
 using Rasa.Managers;
+using Rasa.Packets.MapChannel.Client;
+using Rasa.Packets.MapChannel.Server;
 using Rasa.Services.Preloader.Missions;
 using Rasa.Structures;
 using Rasa.Structures.Char;
@@ -48,7 +50,7 @@ namespace Rasa.Test.Missions
             Assert.HasCount(6, enemies);
             foreach (var enemy in enemies.Take(5))
                 ActorManager.Instance.Damage(harness.BootcampMap, enemy, 100000, soldier);
-            Assert.IsFalse(harness.Manager.TryCompleteNpcObjective(harness.Client, van.EntityId, missionId, 4, 1));
+            Assert.IsFalse(harness.Manager.CompleteOfferedObjective(harness.Client, van.EntityId, missionId, 4, 1));
             Assert.IsFalse(harness.Client.Player.Missions[missionId].Completeable);
             Assert.IsNull(harness.Client.PendingTransfer);
 
@@ -56,7 +58,7 @@ namespace Rasa.Test.Missions
 
             Assert.AreEqual(MissionObjectiveState.Incomplete, harness.Client.Player.Missions[missionId].Objectives[4].State);
             Assert.IsTrue(van.IsInteractable);
-            Assert.IsTrue(harness.Manager.TryCompleteNpcObjective(harness.Client, van.EntityId, missionId, 4, 1));
+            Assert.IsTrue(harness.Manager.CompleteOfferedObjective(harness.Client, van.EntityId, missionId, 4, 1));
             Assert.IsTrue(harness.Client.Player.Missions[missionId].Completeable);
             Assert.IsNull(harness.Client.PendingTransfer, "Check-in alone must not board the player.");
             harness.Manager.Scenes.RecordDefeat(harness.BootcampMap, enemies[^1], null);
@@ -65,6 +67,162 @@ namespace Rasa.Test.Missions
             Assert.HasCount(6, unit.CharacterMissions.Runtime.ActorStates(run.RunId));
             Assert.AreEqual(6, unit.CharacterMissions.Runtime.Messages(run.RunId)
                 .Count(message => message.OperationKey.StartsWith("defeated-", StringComparison.Ordinal) && message.Status == "Handled"));
+        }
+
+        [TestMethod]
+        [DataRow(false, "legacy", true)]
+        [DataRow(false, "unversioned", true)]
+        [DataRow(false, "other-release", false)]
+        [DataRow(true, "legacy", true)]
+        [DataRow(true, "unversioned", true)]
+        [DataRow(true, "other-release", false)]
+        public void VanConversationHonorsStoredRevisionCompatibilityAfterAssault(
+            bool retry, string storedRevision, bool allowed)
+        {
+            using var harness = StartAssault(retry);
+            Arrive(harness);
+            DefeatAll(harness);
+            var missionId = retry ? 2005U : 1995U;
+            var van = Van(harness);
+            Assert.IsTrue(van.IsInteractable);
+            Assert.HasCount(0, Attackers(harness));
+            string assignmentId = null;
+            uint generation = 0;
+            using (var unit = harness.Context.CreateChar())
+                unit.ExecuteTransaction(() =>
+                {
+                    var assignment = unit.CharacterMissions.GetByCharacterAndMission(harness.Client.Player.Id, missionId);
+                    assignmentId = assignment.AssignmentId;
+                    generation = assignment.Generation;
+                    assignment.ContentRevision = storedRevision;
+                    var scene = unit.CharacterMissions.Runtime.Scene(van.SpawnPool.SceneRunId);
+                    Assert.AreEqual(missionId, scene.MissionId);
+                    Assert.AreEqual("deployment_11", scene.Release);
+                });
+            if (allowed)
+            {
+                using var unit = harness.Context.CreateChar();
+                harness.Manager.Hydrate(harness.Client.Player,
+                    unit.CharacterMissions.Get(harness.Client.Player.Id),
+                    unit.CharacterMissionProgress.Get(harness.Client.Player.Id));
+            }
+            harness.MovePlayerTo(van);
+            harness.Drain();
+            var npcs = new NpcManager(harness.Context, harness.Manager);
+
+            npcs.RequestNpcConverse(harness.Client, new RequestNPCConversePacket { EntityId = van.EntityId });
+
+            var conversations = harness.Drain().OfType<ConversePacket>().ToArray();
+            Assert.AreEqual(allowed ? 1 : 0, conversations.Length, $"Mission {missionId}, stored revision {storedRevision}");
+            if (allowed)
+            {
+                var objective = ((System.Collections.Generic.List<CompleteableObjectives>)
+                    conversations.Single().ConvoDataDict[ConversationType.ObjectiveComplete]).Single();
+                Assert.AreEqual((int)missionId, objective.MissionId);
+                Assert.AreEqual(4, objective.ObjectiveId);
+                Assert.AreEqual(1, objective.PlayerFlagId);
+            }
+
+            npcs.CompleteNPCObjective(harness.Client, new CompleteNPCObjectivePacket
+            {
+                EntityId = van.EntityId, MissionId = missionId, ObjectiveId = 4, PlayerFlagId = 1
+            });
+
+            Assert.AreEqual(allowed ? MissionObjectiveState.Completed : MissionObjectiveState.Incomplete,
+                harness.Client.Player.Missions[missionId].Objectives[4].State);
+            Assert.AreEqual(allowed, harness.Client.Player.Missions[missionId].Completeable);
+            Assert.IsNull(harness.Client.PendingTransfer);
+            using var verify = harness.Context.CreateChar();
+            var durable = verify.CharacterMissions.GetByCharacterAndMission(harness.Client.Player.Id, missionId);
+            Assert.AreEqual(assignmentId, durable.AssignmentId);
+            Assert.AreEqual(generation, durable.Generation);
+            Assert.AreEqual(storedRevision, durable.ContentRevision, "Opening and Continue must not rewrite stored revisions.");
+            Assert.AreEqual(allowed ? (byte)MissionObjectiveState.Completed : (byte)MissionObjectiveState.Incomplete,
+                verify.CharacterMissionProgress.GetTracked(harness.Client.Player.Id, missionId)[4].ObjectiveState);
+        }
+
+        [TestMethod]
+        [DataRow(false, "legacy")]
+        [DataRow(false, "unversioned")]
+        [DataRow(true, "legacy")]
+        [DataRow(true, "unversioned")]
+        public void VanConversationRequiresTheCurrentOperationalSceneRelease(
+            bool retry, string storedRevision)
+        {
+            using var harness = StartAssault(retry);
+            Arrive(harness);
+            DefeatAll(harness);
+            var missionId = retry ? 2005U : 1995U;
+            var van = Van(harness);
+            Assert.IsTrue(van.IsInteractable);
+            using (var unit = harness.Context.CreateChar())
+                unit.ExecuteTransaction(() =>
+                {
+                    unit.CharacterMissions.GetByCharacterAndMission(harness.Client.Player.Id, missionId)
+                        .ContentRevision = storedRevision;
+                    unit.CharacterMissions.Runtime.Scene(van.SpawnPool.SceneRunId).Release = storedRevision;
+                });
+            try
+            {
+                harness.MovePlayerTo(van);
+                harness.Drain();
+                var npcs = new NpcManager(harness.Context, harness.Manager);
+
+                npcs.RequestNpcConverse(harness.Client, new RequestNPCConversePacket { EntityId = van.EntityId });
+
+                Assert.HasCount(0, harness.Drain().OfType<ConversePacket>().ToArray(),
+                    "A compatible assignment sentinel must not also make a stale scene release compatible.");
+                npcs.CompleteNPCObjective(harness.Client, new CompleteNPCObjectivePacket
+                {
+                    EntityId = van.EntityId, MissionId = missionId, ObjectiveId = 4, PlayerFlagId = 1
+                });
+                Assert.AreEqual(MissionObjectiveState.Incomplete,
+                    harness.Client.Player.Missions[missionId].Objectives[4].State);
+                using var verify = harness.Context.CreateChar();
+                Assert.AreEqual((byte)MissionObjectiveState.Incomplete,
+                    verify.CharacterMissionProgress.GetTracked(harness.Client.Player.Id, missionId)[4].ObjectiveState);
+            }
+            finally
+            {
+                using var unit = harness.Context.CreateChar();
+                unit.ExecuteTransaction(() => unit.CharacterMissions.Runtime.Scene(van.SpawnPool.SceneRunId).Release =
+                    harness.Manager.LoadedMissions[missionId].ContentRevision);
+            }
+        }
+
+        [TestMethod]
+        [DataRow(false)]
+        [DataRow(true)]
+        public void VanContinueKeepsTheExactStoredRevisionCapturedAtOpening(bool retry)
+        {
+            using var harness = StartAssault(retry);
+            Arrive(harness);
+            DefeatAll(harness);
+            var missionId = retry ? 2005U : 1995U;
+            var van = Van(harness);
+            using (var unit = harness.Context.CreateChar())
+                unit.ExecuteTransaction(() => unit.CharacterMissions.GetByCharacterAndMission(harness.Client.Player.Id, missionId)
+                    .ContentRevision = "legacy");
+            harness.MovePlayerTo(van);
+            harness.Drain();
+            var npcs = new NpcManager(harness.Context, harness.Manager);
+            npcs.RequestNpcConverse(harness.Client, new RequestNPCConversePacket { EntityId = van.EntityId });
+            Assert.HasCount(1, harness.Drain().OfType<ConversePacket>().ToArray());
+            using (var unit = harness.Context.CreateChar())
+                unit.ExecuteTransaction(() => unit.CharacterMissions.GetByCharacterAndMission(harness.Client.Player.Id, missionId)
+                    .ContentRevision = "unversioned");
+
+            npcs.CompleteNPCObjective(harness.Client, new CompleteNPCObjectivePacket
+            {
+                EntityId = van.EntityId, MissionId = missionId, ObjectiveId = 4, PlayerFlagId = 1
+            });
+
+            Assert.AreEqual(MissionObjectiveState.Incomplete,
+                harness.Client.Player.Missions[missionId].Objectives[4].State);
+            Assert.HasCount(0, harness.Drain());
+            using var verify = harness.Context.CreateChar();
+            Assert.AreEqual((byte)MissionObjectiveState.Incomplete,
+                verify.CharacterMissionProgress.GetTracked(harness.Client.Player.Id, missionId)[4].ObjectiveState);
         }
 
         [TestMethod]
@@ -153,7 +311,7 @@ namespace Rasa.Test.Missions
             harness.Manager.TickScenarios(harness.Client);
 
             var youngblood = BootcampRuntimeTestHarness.FindNpcByPackage(harness.BootcampMap, 2561);
-            Assert.IsTrue(harness.Manager.TryAcceptNpcMission(harness.Client, youngblood.EntityId, 2005));
+            Assert.IsTrue(harness.Manager.AcceptOfferedMission(harness.Client, youngblood.EntityId, 2005));
             harness.UseObjectAndRecover(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-dropship-debris"));
 
             Assert.HasCount(6, Attackers(harness));
@@ -213,7 +371,7 @@ namespace Rasa.Test.Missions
                 {
                     harness.UtcNow += TimeSpan.FromSeconds(601);
                     Assert.IsTrue(harness.Manager.EvaluateDeadlines(harness.Client));
-                    Assert.IsTrue(harness.Manager.TryAcceptNpcMission(harness.Client, youngblood.EntityId, 2005));
+                    Assert.IsTrue(harness.Manager.AcceptOfferedMission(harness.Client, youngblood.EntityId, 2005));
                 }
                 harness.UseObjectAndRecover(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-dropship-debris"));
                 return harness;

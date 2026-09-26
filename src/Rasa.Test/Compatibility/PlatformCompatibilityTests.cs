@@ -34,7 +34,15 @@ namespace Rasa.Test.Compatibility
                 .Where(path => path.EndsWith(".csproj", System.StringComparison.OrdinalIgnoreCase))
                 .ToArray();
 
-            Assert.AreEqual(12, projectPaths.Length);
+            CollectionAssert.AreEquivalent(
+                new[]
+                {
+                    "Rasa.Auth", "Rasa.DBL", "Rasa.Shared", "Rasa.Utils", "Rasa.Game", "Rasa.Test",
+                    "Rasa.Communicator", "Rasa.ClientData", "Rasa.Navigation", "Rasa.NavMesh", "Rasa.Missions"
+                },
+                projectPaths.Select(path =>
+                    Path.GetFileNameWithoutExtension(path.Replace('\\', Path.DirectorySeparatorChar))).ToArray(),
+                "The solution retains the mission runtime, not the retired mission-pack publishing project.");
             foreach (var projectPath in projectPaths)
             {
                 var project = XDocument.Load(Path.Combine(

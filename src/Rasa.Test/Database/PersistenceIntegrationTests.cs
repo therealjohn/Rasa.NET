@@ -518,6 +518,137 @@ namespace Rasa.Test.Database
         }
 
         [TestMethod]
+        [DataRow(false)]
+        [DataRow(true)]
+        public void MissionIntegrationUpgradePreservesBaselineCharacterFactsAndLegacyBomb(bool consumed)
+        {
+            WithDisposableSqlite((context, _) =>
+            {
+                const string baseline = "20260924184424_PersistentCharacterFlags";
+                const string assignmentId = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+                const string priorId = "cccccccccccccccccccccccccccccccc";
+                const string runId = "dddddddddddddddddddddddddddddddd";
+                context.GetService<IMigrator>().Migrate(baseline);
+                Assert.AreEqual(baseline, context.Database.GetAppliedMigrations().Last());
+                SeedCharacter(context, 17, 123, 1);
+                context.Database.ExecuteSqlRaw(@"
+INSERT INTO character_mission
+    (character_id, mission_id, mission_state, completeable, assignment_id, content_revision, generation, version)
+VALUES (123, 1995, 0, 0, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'deployment_11', 7, 9),
+       (123, 321, 2, 0, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'legacy', 8, 2);
+INSERT INTO character_mission_objective (character_id, mission_id, objective_id, objective_state)
+VALUES (123, 1995, 2, 2), (123, 1995, 3, 2), (123, 1995, 1, 1), (123, 1995, 4, 4);
+INSERT INTO character_mission_objective_counter (character_id, mission_id, objective_id, counter_id, counter_value)
+VALUES (123, 1995, 1, 0, 2);
+INSERT INTO character_mission_objective_item_counter (character_id, mission_id, objective_id, item_class_id, counter_value)
+VALUES (123, 1995, 1, 3147, 3);
+INSERT INTO character_mission_history
+    (character_id, mission_id, assignment_id, content_revision, completed_at_utc, rewarded, outcome)
+VALUES (123, 321, 'cccccccccccccccccccccccccccccccc', 'legacy', '2026-09-20 12:00:00', 1, 4);
+INSERT INTO mission_receipt (owner_id, generation, operation_key, kind, created_at_utc)
+VALUES ('cccccccccccccccccccccccccccccccc', 0, 'mission-reward', 'Grant', '2026-09-20 12:05:00');
+INSERT INTO character_flag (character_id, flag_id, value) VALUES (123, 901, 42), (123, 902, 0);
+INSERT INTO mission_scene
+    (run_id, release, script_key, state_version, owner_character_id, mission_id, map_key, assignment_id,
+     checkpoint, status, generation, version)
+VALUES ('dddddddddddddddddddddddddddddddd', 'deployment_11', 'bootcamp.reinforcements', 1, 123, 1995,
+        '1985:123', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '{{}}', 'Waiting', 3, 11);
+INSERT INTO mission_scene_participant (run_id, character_id, assignment_id, assignment_generation, active)
+VALUES ('dddddddddddddddddddddddddddddddd', 123, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 7, 1);
+INSERT INTO mission_scene_message (run_id, generation, operation_key, sequence_id, status, version)
+VALUES ('dddddddddddddddddddddddddddddddd', 3, 'existing-site-input', 7, 'Pending', 13);
+INSERT INTO mission_actor_state (run_id, actor_role, generation, owner_character_id, map_context_id, outcome)
+VALUES ('dddddddddddddddddddddddddddddddd', 'assault-1', 3, 123, 1985, 'Defeated');
+INSERT INTO character_mission_scenario_step (character_id, mission_id, step_key)
+VALUES (123, 1995, 'bootcamp-bomb-issued:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+INSERT INTO items (item_id, item_template_id, stack_size, current_hp, color, ammo_count, crafter_name, created_at)
+VALUES (5000, 28, 3, 100, 7, 0, 'baseline item', '2026-09-20 11:00:00');
+INSERT INTO character_inventory (account_id, character_id, invenotry_type, slot_id, item_id)
+VALUES (17, 123, 1, 50, 5000);");
+                context.Database.ExecuteSqlInterpolated($@"
+INSERT INTO character_mission_deadline (character_id, mission_id, due_at_utc, state)
+VALUES (123, 1995, {"2026-09-27 12:00:00"}, {(consumed ? 2 : 1)});");
+                var effectPayload = System.Text.Json.JsonSerializer.Serialize<Rasa.Missions.Scenes.WorldIntent>(
+                    new Rasa.Missions.Scenes.EnsureActorIntent("existing-wreck", "bootcamp-dropship-debris"),
+                    Rasa.Missions.Content.MissionContentCodec.Options);
+                context.Database.ExecuteSqlInterpolated($@"
+INSERT INTO mission_world_effect (run_id, generation, operation_key, payload, status, version)
+VALUES ({runId}, 3, {"existing-wreck"}, {effectPayload}, {"Applied"}, 17);");
+                if (!consumed)
+                    context.Database.ExecuteSqlRaw(@"
+INSERT INTO items (item_id, item_template_id, stack_size, current_hp, color, ammo_count, crafter_name, created_at)
+VALUES (5001, 11519, 1, 100, 0, 0, '', '2026-09-20 11:05:00');
+INSERT INTO character_inventory (account_id, character_id, invenotry_type, slot_id, item_id)
+VALUES (17, 123, 1, 150, 5001);");
+
+                context.Database.Migrate();
+                context.ChangeTracker.Clear();
+
+                var assignment = context.CharacterMissionEntries.Single(row => row.MissionId == 1995);
+                Assert.AreEqual(assignmentId, assignment.AssignmentId);
+                Assert.AreEqual(7U, assignment.Generation);
+                Assert.AreEqual(9L, assignment.Version);
+                Assert.AreEqual("deployment_11", assignment.ContentRevision);
+                Assert.AreEqual(0U, assignment.MissionState);
+                Assert.AreEqual(4, context.CharacterMissionObjectiveEntries.Count(row => row.MissionId == 1995));
+                Assert.AreEqual((byte)2, context.CharacterMissionObjectiveEntries.Single(row =>
+                    row.MissionId == 1995 && row.ObjectiveId == 3).ObjectiveState);
+                Assert.AreEqual(2U, context.Set<CharacterMissionObjectiveCounterEntry>().Single().CounterValue);
+                Assert.AreEqual(3U, context.Set<CharacterMissionObjectiveItemCounterEntry>().Single().CounterValue);
+                Assert.AreEqual(consumed ? CharacterMissionDeadlineState.Satisfied : CharacterMissionDeadlineState.Active,
+                    context.Set<CharacterMissionDeadlineEntry>().Single().State);
+                var flags = context.Set<CharacterFlagEntry>().ToDictionary(row => row.FlagId, row => row.Value);
+                Assert.HasCount(2, flags);
+                Assert.AreEqual(42U, flags[901]);
+                Assert.AreEqual(0U, flags[902]);
+                var scene = context.Set<MissionSceneEntry>().Single();
+                Assert.AreEqual((runId, assignmentId, 3U, 11L, "Waiting", "{}"),
+                    (scene.RunId, scene.AssignmentId, scene.Generation, scene.Version, scene.Status, scene.Checkpoint));
+                var participant = context.Set<MissionSceneParticipantEntry>().Single();
+                Assert.AreEqual((assignmentId, 7U, true),
+                    (participant.AssignmentId, participant.AssignmentGeneration, participant.Active));
+                var message = context.Set<MissionSceneMessageEntry>().Single();
+                Assert.AreEqual(("existing-site-input", 7U, 3U, "Pending", 13L),
+                    (message.OperationKey, message.SequenceId, message.Generation, message.Status, message.Version));
+                var actor = context.Set<MissionActorStateEntry>().Single();
+                Assert.AreEqual(("assault-1", 3U, "Defeated"), (actor.ActorRole, actor.Generation, actor.Outcome));
+                var effect = context.Set<MissionWorldEffectEntry>().Single();
+                Assert.AreEqual((effectPayload, "Applied", 17L), (effect.Payload, effect.Status, effect.Version));
+                Assert.IsNull(effect.SourceAssignmentId);
+                var history = context.Set<CharacterMissionHistoryEntry>().ToArray();
+                Assert.HasCount(2, history);
+                var prior = history.Single(row => row.AssignmentId == priorId);
+                Assert.IsTrue(prior.Rewarded);
+                Assert.AreEqual(new DateTime(2026, 9, 20, 12, 0, 0).Ticks, prior.CompletedAtUtc.Ticks);
+                Assert.AreEqual(new DateTime(2026, 9, 20, 12, 5, 0).Ticks, prior.RewardedAtUtc.Value.Ticks);
+                Assert.IsTrue(history.All(row => row.RewardWindowStartUtc == null));
+                Assert.AreEqual(8U, history.Single(row => row.AssignmentId != priorId).AssignmentGeneration);
+                Assert.AreEqual(2U, history.Single(row => row.AssignmentId != priorId).Outcome);
+                var receipt = context.Set<MissionReceiptEntry>().Single();
+                Assert.AreEqual((priorId, 0U, "mission-reward"), (receipt.OwnerId, receipt.Generation, receipt.OperationKey));
+                var ordinary = context.ItemEntries.Single(row => row.ItemId == 5000);
+                Assert.AreEqual((28U, 3U, 100, 7U, "baseline item"),
+                    (ordinary.ItemTemplateId, ordinary.StackSize, ordinary.CurrentHitPoints, ordinary.Color, ordinary.CrafterName));
+                Assert.AreEqual(50U, context.CharacterInventoryEntries.Single(row => row.ItemId == 5000).SlotId);
+                var owned = context.Set<CharacterMissionItemEntry>().ToArray();
+                Assert.AreEqual(consumed ? 0 : 1, owned.Length);
+                if (!consumed)
+                    Assert.AreEqual((5001U, assignmentId, 7U, "bomb", 1U),
+                        (owned[0].ItemId, owned[0].AssignmentId, owned[0].Generation, owned[0].ItemKey, owned[0].Quantity));
+                CollectionAssert.AreEquivalent(consumed ? new[] { "issue-bomb", "plant-bomb" } : new[] { "issue-bomb" },
+                    context.Set<CharacterMissionItemReceiptEntry>().Select(row => row.OperationKey).ToArray());
+                Assert.IsTrue(context.Set<CharacterMissionItemReceiptEntry>().All(row =>
+                    row.AssignmentId == assignmentId && row.Generation == 7 && row.MissionId == 1995));
+                Assert.IsEmpty(context.Set<CharacterMissionItemQuarantineEntry>().ToArray());
+                Assert.IsEmpty(context.Set<CharacterMissionOfferEntry>().ToArray());
+                Assert.IsFalse(context.Database.GetPendingMigrations().Any());
+                context.Database.Migrate();
+                Assert.AreEqual(2, context.Set<CharacterMissionHistoryEntry>().Count());
+                Assert.AreEqual(consumed ? 1 : 2, context.ItemEntries.Count());
+            });
+        }
+
+        [TestMethod]
         public void SqliteCharMigrationPreservesRowsAndAddsPersistenceState()
         {
             WithDisposableSqlite((context, database) =>
@@ -616,7 +747,7 @@ namespace Rasa.Test.Database
         {
             WithDisposableSqlite((context, database) =>
             {
-                context.Database.Migrate();
+                context.GetService<IMigrator>().Migrate("20260922220915_ModularMissionRuntime");
                 SeedCharacter(context, 17, 123, 1);
                 context.Database.ExecuteSqlRaw(
                     "INSERT INTO character_mission " +
