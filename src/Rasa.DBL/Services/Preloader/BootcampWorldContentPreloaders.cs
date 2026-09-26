@@ -1289,7 +1289,11 @@ namespace Rasa.Services.Preloader
 
     public sealed class BootcampMissionContentDefinitionPreloader : PreloaderBase, IPreloader
     {
-        public void Preload(MigrationBuilder migrationBuilder) => BootcampWorldContentSeedData.Insert(migrationBuilder, MissionContentDefinitionEntry.TableName, BootcampWorldContentSeedData.LegacyMissionDefinitionColumns, GetRows());
+        public void Preload(MigrationBuilder migrationBuilder) => BootcampWorldContentSeedData.Insert(
+            migrationBuilder,
+            MissionContentDefinitionEntry.TableName,
+            BootcampWorldContentSeedData.LegacyMissionDefinitionColumns.Append("abandonment_policy"),
+            GetRows().Select(row => row.Append((object)(byte)1).ToArray()));
         protected override IEnumerable<object[]> GetRows() => BootcampWorldContentSeedData.MissionDefinitions();
     }
 

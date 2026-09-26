@@ -24,10 +24,10 @@ namespace Rasa.Test.Missions.Content
     public class MissionMigrationTests
     {
         [TestMethod]
-        public void ExtractionAssaultMigrationsMatchAcrossProvidersAndKeepTheNativeObjectiveIds()
+        public void ConsolidatedWorldDataMatchesAcrossProvidersAndKeepsTheNativeExtractionObjectiveIds()
         {
-            var sqlite = new Rasa.Migrations.SqliteWorld.BootcampExtractionAssault().UpOperations;
-            var mysql = new Rasa.Migrations.MySqlWorld.BootcampExtractionAssault().UpOperations;
+            var sqlite = new Rasa.Migrations.SqliteWorld.SeedWorldContent().UpOperations;
+            var mysql = new Rasa.Migrations.MySqlWorld.SeedWorldContent().UpOperations;
             CollectionAssert.AreEqual(sqlite.OfType<SqlOperation>().Select(operation => operation.Sql).ToArray(),
                 mysql.OfType<SqlOperation>().Select(operation => operation.Sql).ToArray());
             CollectionAssert.AreEqual(sqlite.OfType<UpdateDataOperation>().SelectMany(operation =>
@@ -88,20 +88,58 @@ namespace Rasa.Test.Missions.Content
         }
 
         [TestMethod]
-        public void MigratedScenesUseTheSameDataForSqliteAndMySql()
+        public void ConsolidatedWorldDataUsesTheSameOperationsForSqliteAndMySql()
         {
-            var sqlite = new Rasa.Migrations.SqliteWorld.SeedMigratedBootcamp().UpOperations;
-            var mysql = new Rasa.Migrations.MySqlWorld.SeedMigratedBootcamp().UpOperations;
-            CollectionAssert.AreEqual(sqlite.Select(operation => operation.GetType().Name).ToArray(),
-                mysql.Select(operation => operation.GetType().Name).ToArray());
-            CollectionAssert.AreEqual(sqlite.OfType<InsertDataOperation>().SelectMany(operation =>
-                    operation.Values.Cast<object>().Select(value => value?.ToString())).ToArray(),
-                mysql.OfType<InsertDataOperation>().SelectMany(operation =>
-                    operation.Values.Cast<object>().Select(value => value?.ToString())).ToArray());
-            CollectionAssert.AreEqual(sqlite.OfType<UpdateDataOperation>().SelectMany(operation =>
-                    operation.Values.Cast<object>().Select(value => value?.ToString())).ToArray(),
-                mysql.OfType<UpdateDataOperation>().SelectMany(operation =>
-                    operation.Values.Cast<object>().Select(value => value?.ToString())).ToArray());
+            var sqlite = new Rasa.Migrations.SqliteWorld.SeedWorldContent();
+            var mysql = new Rasa.Migrations.MySqlWorld.SeedWorldContent();
+            foreach (var (left, right) in new[]
+            {
+                (sqlite.UpOperations, mysql.UpOperations),
+                (sqlite.DownOperations, mysql.DownOperations)
+            })
+            {
+                Assert.AreEqual(left.Count, right.Count);
+                for (var index = 0; index < left.Count; index++)
+                {
+                    Assert.AreEqual(left[index].GetType(), right[index].GetType());
+                    switch (left[index])
+                    {
+                        case SqlOperation sql:
+                            Assert.AreEqual(sql.Sql, ((SqlOperation)right[index]).Sql);
+                            break;
+                        case InsertDataOperation insert:
+                            var otherInsert = (InsertDataOperation)right[index];
+                            Assert.AreEqual(insert.Table, otherInsert.Table);
+                            CollectionAssert.AreEqual(insert.Columns, otherInsert.Columns);
+                            AssertValues(insert.Values, otherInsert.Values);
+                            break;
+                        case UpdateDataOperation update:
+                            var otherUpdate = (UpdateDataOperation)right[index];
+                            Assert.AreEqual(update.Table, otherUpdate.Table);
+                            CollectionAssert.AreEqual(update.Columns, otherUpdate.Columns);
+                            CollectionAssert.AreEqual(update.KeyColumns, otherUpdate.KeyColumns);
+                            AssertValues(update.Values, otherUpdate.Values);
+                            AssertValues(update.KeyValues, otherUpdate.KeyValues);
+                            break;
+                        case DeleteDataOperation delete:
+                            var otherDelete = (DeleteDataOperation)right[index];
+                            Assert.AreEqual(delete.Table, otherDelete.Table);
+                            CollectionAssert.AreEqual(delete.KeyColumns, otherDelete.KeyColumns);
+                            AssertValues(delete.KeyValues, otherDelete.KeyValues);
+                            break;
+                        default:
+                            Assert.Fail($"Unexpected data migration operation: {left[index].GetType().Name}");
+                            break;
+                    }
+                }
+            }
+        }
+
+        private static void AssertValues(object[,] expected, object[,] actual)
+        {
+            Assert.AreEqual(expected.GetLength(0), actual.GetLength(0));
+            Assert.AreEqual(expected.GetLength(1), actual.GetLength(1));
+            CollectionAssert.AreEqual(expected.Cast<object>().ToArray(), actual.Cast<object>().ToArray());
         }
 
         [TestMethod]

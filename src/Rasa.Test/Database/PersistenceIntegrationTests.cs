@@ -256,7 +256,30 @@ namespace Rasa.Test.Database
         }
 
         [TestMethod]
-        public void MigrationIdsAreUniqueOrderedAndIncludePersistenceLineage()
+        [DataRow(typeof(SqliteAuthContext), 0)]
+        [DataRow(typeof(MySqlAuthContext), 0)]
+        [DataRow(typeof(SqliteCharContext), 1)]
+        [DataRow(typeof(MySqlCharContext), 1)]
+        [DataRow(typeof(SqliteWorldContext), 2)]
+        [DataRow(typeof(MySqlWorldContext), 2)]
+        public void BranchMigrationsAreConsolidatedByDatabase(Type contextType, int expectedCount)
+        {
+            using var context = CreateContext(contextType, "unused");
+            var added = context.Database.GetMigrations()
+                .Where(id => string.CompareOrdinal(id, "202609") >= 0).ToArray();
+
+            Assert.AreEqual(expectedCount, added.Length, contextType.Name);
+            if (expectedCount == 1)
+                StringAssert.EndsWith(added[0], "_ConsolidatedCharacterSchema");
+            if (expectedCount == 2)
+            {
+                StringAssert.EndsWith(added[0], "_ConsolidatedWorldSchema");
+                StringAssert.EndsWith(added[1], "_SeedWorldContent");
+            }
+        }
+
+        [TestMethod]
+        public void MigrationIdsAreUniqueAndOrdered()
         {
             foreach (var contextType in ContextTypes)
             {
@@ -265,164 +288,29 @@ namespace Rasa.Test.Database
                 Assert.AreEqual(migrations.Length, migrations.Distinct().Count(), contextType.Name);
                 CollectionAssert.AreEqual(
                     migrations.OrderBy(id => id, StringComparer.Ordinal).ToArray(),
-                    migrations,
-                    contextType.Name);
-
-                if (contextType == typeof(SqliteCharContext))
-                {
-                    CollectionAssert.IsSubsetOf(
-                        new[]
-                        {
-                            "20260917130621_AbilityTraySelection",
-                            "20260917200225_MissionCharacterState",
-                            "20260918001335_MissionObjectiveProgress",
-                            "20260919053207_MissionDurabilityState",
-                            "20260919060000_StartingExperienceLegacyBackfill"
-                        },
-                        migrations);
-                }
-                else if (contextType == typeof(MySqlCharContext))
-                {
-                    CollectionAssert.IsSubsetOf(
-                        new[]
-                        {
-                            "20260917130734_AbilityTraySelection",
-                            "20260917200310_MissionCharacterState",
-                            "20260918002055_MissionObjectiveProgress",
-                            "20260919053307_MissionDurabilityState",
-                            "20260919060100_StartingExperienceLegacyBackfill"
-                        },
-                        migrations);
-                }
+                    migrations, contextType.Name);
             }
         }
 
         [TestMethod]
-        [DataRow(typeof(SqliteCharContext),
-            "20260919053207_MissionDurabilityState",
-            "StartingExperienceLegacyBackfill")]
-        [DataRow(typeof(MySqlCharContext),
-            "20260919053307_MissionDurabilityState",
-            "StartingExperienceLegacyBackfill")]
-        public void MissionDurabilityMigrationsOrderSchemaBeforeDataAndKeepDataMigrationSchemaFree(
-            Type contextType,
-            string schemaMigrationName,
-            string dataMigrationTypeName)
+        public void MySqlCharacterSchemaPreservesIdentityWhenChangingPrimaryKeys()
         {
-            using var context = CreateContext(contextType, "unused");
-            var migrations = context.Database.GetMigrations().ToArray();
-            var schemaIndex = Array.IndexOf(migrations, schemaMigrationName);
-            var dataIndex = Array.FindIndex(
-                migrations,
-                migration => migration.EndsWith(
-                    "_" + dataMigrationTypeName,
-                    StringComparison.Ordinal));
-
-            Assert.IsTrue(schemaIndex >= 0, schemaMigrationName);
-            Assert.IsTrue(dataIndex >= 0, dataMigrationTypeName);
-            Assert.IsTrue(schemaIndex < dataIndex, contextType.Name);
-
-            var assembly = context.GetService<IMigrationsAssembly>();
-            var schemaMigration = assembly.Migrations.Values
-                .Select(type => assembly.CreateMigration(type, context.Database.ProviderName))
-                .Single(candidate => candidate.GetType().Name == "MissionDurabilityState");
-            var dataMigration = assembly.Migrations.Values
-                .Select(type => assembly.CreateMigration(type, context.Database.ProviderName))
-                .Single(candidate => candidate.GetType().Name == dataMigrationTypeName);
-
-            Assert.IsFalse(
-                schemaMigration.UpOperations.OfType<SqlOperation>().Any(),
-                "Schema migration should remain schema-only.");
-            Assert.AreEqual(0, schemaMigration.DownOperations.OfType<SqlOperation>().Count());
-            Assert.IsTrue(dataMigration.UpOperations.Count > 0, dataMigrationTypeName);
-            Assert.IsTrue(
-                dataMigration.UpOperations.All(operation => operation is SqlOperation),
-                "Data migration should contain SQL only.");
-            Assert.AreEqual(0, dataMigration.DownOperations.Count);
-            StringAssert.Contains(
-                ((SqlOperation)dataMigration.UpOperations.Single()).Sql,
-                "character_starting_experience",
-                dataMigrationTypeName);
-            StringAssert.Contains(
-                ((SqlOperation)dataMigration.UpOperations.Single()).Sql,
-                "character",
-                dataMigrationTypeName);
-        }
-
-        [TestMethod]
-        public void RetainedMySqlMetadataMigrationsAreSchemaNoOps()
-        {
-            foreach (var contextType in new[] { typeof(MySqlAuthContext), typeof(MySqlCharContext) })
+            var migration = new Rasa.Migrations.MySqlChar.ConsolidatedCharacterSchema();
+            foreach (var table in new[] { "character_mission", "friend", "ignored" })
             {
-                using var context = CreateContext(contextType, "unused");
-                var assembly = context.GetService<IMigrationsAssembly>();
-                var migration = assembly.Migrations.Values
-                    .Select(type => assembly.CreateMigration(type, context.Database.ProviderName))
-                    .Single(candidate => candidate.GetType().Name == "Net10IdentityMetadata");
-
-                Assert.AreEqual(0, migration.UpOperations.Count, contextType.Name);
-                Assert.AreEqual(0, migration.DownOperations.Count, contextType.Name);
+                var alterUp = migration.UpOperations.Select((operation, index) => (operation, index))
+                    .Single(item => item.operation is AlterColumnOperation column && column.Table == table).index;
+                var dropKeyUp = migration.UpOperations.Select((operation, index) => (operation, index))
+                    .Single(item => item.operation is DropPrimaryKeyOperation key && key.Table == table).index;
+                Assert.IsTrue(alterUp < dropKeyUp, table);
+                var addKeyDown = migration.DownOperations.Select((operation, index) => (operation, index))
+                    .Single(item => item.operation is AddPrimaryKeyOperation key && key.Table == table).index;
+                var alterDown = migration.DownOperations.Select((operation, index) => (operation, index))
+                    .Single(item => item.operation is AlterColumnOperation column && column.Table == table).index;
+                Assert.IsTrue(addKeyDown < alterDown, table);
             }
-        }
-
-        [TestMethod]
-        public void MySqlMissionMigrationRemovesIdentityBeforeChangingPrimaryKey()
-        {
-            using var context = CreateContext(typeof(MySqlCharContext), "unused");
-            var assembly = context.GetService<IMigrationsAssembly>();
-            var migration = assembly.Migrations.Values
-                .Select(type => assembly.CreateMigration(type, context.Database.ProviderName))
-                .Single(candidate => candidate.GetType().Name == "MissionCharacterState");
-
-            var alterUp = migration.UpOperations
-                .Select((operation, index) => (operation, index))
-                .Single(item => item.operation is AlterColumnOperation column &&
-                    column.Table == "character_mission" &&
-                    column.Name == "character_id").index;
-            var dropPrimaryKeyUp = migration.UpOperations
-                .Select((operation, index) => (operation, index))
-                .Single(item => item.operation is DropPrimaryKeyOperation key &&
-                    key.Table == "character_mission").index;
-            Assert.IsTrue(alterUp < dropPrimaryKeyUp);
-
-            var addPrimaryKeyDown = migration.DownOperations
-                .Select((operation, index) => (operation, index))
-                .Single(item => item.operation is AddPrimaryKeyOperation key &&
-                    key.Table == "character_mission").index;
-            var alterDown = migration.DownOperations
-                .Select((operation, index) => (operation, index))
-                .Single(item => item.operation is AlterColumnOperation column &&
-                    column.Table == "character_mission" &&
-                    column.Name == "character_id").index;
-            Assert.IsTrue(addPrimaryKeyDown < alterDown);
-        }
-
-        [TestMethod]
-        [DataRow(typeof(MySqlCharContext))]
-        [DataRow(typeof(SqliteCharContext))]
-        public void MissionMigrationDeletesOnlyOrphansBeforeAddingCascadeForeignKey(Type contextType)
-        {
-            using var context = CreateContext(contextType, "unused");
-            var assembly = context.GetService<IMigrationsAssembly>();
-            var migration = assembly.Migrations.Values
-                .Select(type => assembly.CreateMigration(type, context.Database.ProviderName))
-                .Single(candidate => candidate.GetType().Name == "MissionCharacterState");
-
-            var orphanCleanup = migration.UpOperations
-                .Select((operation, index) => (operation, index))
-                .Single(item => item.operation is SqlOperation sql &&
-                    sql.Sql.Contains("DELETE FROM", StringComparison.OrdinalIgnoreCase) &&
-                    sql.Sql.Contains("character_mission", StringComparison.OrdinalIgnoreCase) &&
-                    sql.Sql.Contains("NOT EXISTS", StringComparison.OrdinalIgnoreCase));
-            var foreignKey = migration.UpOperations
-                .Select((operation, index) => (operation, index))
-                .Single(item => item.operation is AddForeignKeyOperation key &&
-                    key.Table == "character_mission");
-
-            Assert.IsTrue(orphanCleanup.index < foreignKey.index);
-            Assert.AreEqual(
-                ReferentialAction.Cascade,
-                ((AddForeignKeyOperation)foreignKey.operation).OnDelete);
+            Assert.AreEqual(3, migration.UpOperations.OfType<AlterColumnOperation>().Count());
+            Assert.AreEqual(3, migration.DownOperations.OfType<AlterColumnOperation>().Count());
         }
 
         [TestMethod]
@@ -438,10 +326,7 @@ namespace Rasa.Test.Database
             StringAssert.Contains(script, "__EFMigrationsHistory");
             if (contextType == typeof(MySqlCharContext))
             {
-                StringAssert.Contains(script, "AbilityTraySelection");
-                StringAssert.Contains(script, "MissionCharacterState");
-                StringAssert.Contains(script, "MissionObjectiveProgress");
-                StringAssert.Contains(script, "MissionDurabilityState");
+                StringAssert.Contains(script, "ConsolidatedCharacterSchema");
             }
         }
 
@@ -456,14 +341,14 @@ namespace Rasa.Test.Database
             StringAssert.Contains(script, "character_mission_deadline");
             StringAssert.Contains(script, "character_mission_scenario_step");
             StringAssert.Contains(script, "character_starting_experience");
-            StringAssert.Contains(script, "character_qualification");
+            StringAssert.Contains(script, "character_flag");
             StringAssert.Contains(script, "CK_character_mission_deadline_state");
             StringAssert.Contains(script, "CK_character_starting_experience_state");
-            StringAssert.Contains(script, "CK_character_qualification_key");
+            StringAssert.Contains(script, "CK_character_flag_id");
         }
 
         [TestMethod]
-        public void MySqlMissionDurabilityOfflineSqlCapturesDatabaseParityAndLegacyBackfill()
+        public void MySqlMissionDurabilityOfflineSqlCapturesDatabaseParity()
         {
             using var context = CreateContext(typeof(MySqlCharContext), "unused");
             var sql = NormalizeSql(context.GetService<IMigrator>().GenerateScript());
@@ -476,12 +361,9 @@ namespace Rasa.Test.Database
             StringAssert.Contains(sql, "due_at_utc datetime(6) not null");
             StringAssert.Contains(sql, "constraint ck_character_mission_deadline_state check (state in (1, 2, 3, 4))");
             StringAssert.Contains(sql, "constraint ck_character_starting_experience_state check (state in (1, 2, 3, 4, 5))");
-            StringAssert.Contains(sql, "constraint ck_character_qualification_key check (qualification_key in (1))");
+            StringAssert.Contains(sql, "constraint ck_character_flag_id check (flag_id between 1 and 4294967295)");
             StringAssert.Contains(sql, "foreign key (character_id, mission_id) references character_mission (character_id, mission_id) on delete cascade");
             StringAssert.Contains(sql, "foreign key (character_id) references character (id) on delete cascade");
-            StringAssert.Contains(
-                sql,
-                "insert into character_starting_experience (character_id, content_revision, state) select character.id, 'legacy', 5 from character where not exists (select 1 from character_starting_experience existing where existing.character_id = character.id)");
         }
 
         [TestMethod]
@@ -518,143 +400,11 @@ namespace Rasa.Test.Database
         }
 
         [TestMethod]
-        [DataRow(false)]
-        [DataRow(true)]
-        public void MissionIntegrationUpgradePreservesBaselineCharacterFactsAndLegacyBomb(bool consumed)
-        {
-            WithDisposableSqlite((context, _) =>
-            {
-                const string baseline = "20260924184424_PersistentCharacterFlags";
-                const string assignmentId = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-                const string priorId = "cccccccccccccccccccccccccccccccc";
-                const string runId = "dddddddddddddddddddddddddddddddd";
-                context.GetService<IMigrator>().Migrate(baseline);
-                Assert.AreEqual(baseline, context.Database.GetAppliedMigrations().Last());
-                SeedCharacter(context, 17, 123, 1);
-                context.Database.ExecuteSqlRaw(@"
-INSERT INTO character_mission
-    (character_id, mission_id, mission_state, completeable, assignment_id, content_revision, generation, version)
-VALUES (123, 1995, 0, 0, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'deployment_11', 7, 9),
-       (123, 321, 2, 0, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'legacy', 8, 2);
-INSERT INTO character_mission_objective (character_id, mission_id, objective_id, objective_state)
-VALUES (123, 1995, 2, 2), (123, 1995, 3, 2), (123, 1995, 1, 1), (123, 1995, 4, 4);
-INSERT INTO character_mission_objective_counter (character_id, mission_id, objective_id, counter_id, counter_value)
-VALUES (123, 1995, 1, 0, 2);
-INSERT INTO character_mission_objective_item_counter (character_id, mission_id, objective_id, item_class_id, counter_value)
-VALUES (123, 1995, 1, 3147, 3);
-INSERT INTO character_mission_history
-    (character_id, mission_id, assignment_id, content_revision, completed_at_utc, rewarded, outcome)
-VALUES (123, 321, 'cccccccccccccccccccccccccccccccc', 'legacy', '2026-09-20 12:00:00', 1, 4);
-INSERT INTO mission_receipt (owner_id, generation, operation_key, kind, created_at_utc)
-VALUES ('cccccccccccccccccccccccccccccccc', 0, 'mission-reward', 'Grant', '2026-09-20 12:05:00');
-INSERT INTO character_flag (character_id, flag_id, value) VALUES (123, 901, 42), (123, 902, 0);
-INSERT INTO mission_scene
-    (run_id, release, script_key, state_version, owner_character_id, mission_id, map_key, assignment_id,
-     checkpoint, status, generation, version)
-VALUES ('dddddddddddddddddddddddddddddddd', 'deployment_11', 'bootcamp.reinforcements', 1, 123, 1995,
-        '1985:123', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '{{}}', 'Waiting', 3, 11);
-INSERT INTO mission_scene_participant (run_id, character_id, assignment_id, assignment_generation, active)
-VALUES ('dddddddddddddddddddddddddddddddd', 123, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 7, 1);
-INSERT INTO mission_scene_message (run_id, generation, operation_key, sequence_id, status, version)
-VALUES ('dddddddddddddddddddddddddddddddd', 3, 'existing-site-input', 7, 'Pending', 13);
-INSERT INTO mission_actor_state (run_id, actor_role, generation, owner_character_id, map_context_id, outcome)
-VALUES ('dddddddddddddddddddddddddddddddd', 'assault-1', 3, 123, 1985, 'Defeated');
-INSERT INTO character_mission_scenario_step (character_id, mission_id, step_key)
-VALUES (123, 1995, 'bootcamp-bomb-issued:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
-INSERT INTO items (item_id, item_template_id, stack_size, current_hp, color, ammo_count, crafter_name, created_at)
-VALUES (5000, 28, 3, 100, 7, 0, 'baseline item', '2026-09-20 11:00:00');
-INSERT INTO character_inventory (account_id, character_id, invenotry_type, slot_id, item_id)
-VALUES (17, 123, 1, 50, 5000);");
-                context.Database.ExecuteSqlInterpolated($@"
-INSERT INTO character_mission_deadline (character_id, mission_id, due_at_utc, state)
-VALUES (123, 1995, {"2026-09-27 12:00:00"}, {(consumed ? 2 : 1)});");
-                var effectPayload = System.Text.Json.JsonSerializer.Serialize<Rasa.Missions.Scenes.WorldIntent>(
-                    new Rasa.Missions.Scenes.EnsureActorIntent("existing-wreck", "bootcamp-dropship-debris"),
-                    Rasa.Missions.Content.MissionContentCodec.Options);
-                context.Database.ExecuteSqlInterpolated($@"
-INSERT INTO mission_world_effect (run_id, generation, operation_key, payload, status, version)
-VALUES ({runId}, 3, {"existing-wreck"}, {effectPayload}, {"Applied"}, 17);");
-                if (!consumed)
-                    context.Database.ExecuteSqlRaw(@"
-INSERT INTO items (item_id, item_template_id, stack_size, current_hp, color, ammo_count, crafter_name, created_at)
-VALUES (5001, 11519, 1, 100, 0, 0, '', '2026-09-20 11:05:00');
-INSERT INTO character_inventory (account_id, character_id, invenotry_type, slot_id, item_id)
-VALUES (17, 123, 1, 150, 5001);");
-
-                context.Database.Migrate();
-                context.ChangeTracker.Clear();
-
-                var assignment = context.CharacterMissionEntries.Single(row => row.MissionId == 1995);
-                Assert.AreEqual(assignmentId, assignment.AssignmentId);
-                Assert.AreEqual(7U, assignment.Generation);
-                Assert.AreEqual(9L, assignment.Version);
-                Assert.AreEqual("deployment_11", assignment.ContentRevision);
-                Assert.AreEqual(0U, assignment.MissionState);
-                Assert.AreEqual(4, context.CharacterMissionObjectiveEntries.Count(row => row.MissionId == 1995));
-                Assert.AreEqual((byte)2, context.CharacterMissionObjectiveEntries.Single(row =>
-                    row.MissionId == 1995 && row.ObjectiveId == 3).ObjectiveState);
-                Assert.AreEqual(2U, context.Set<CharacterMissionObjectiveCounterEntry>().Single().CounterValue);
-                Assert.AreEqual(3U, context.Set<CharacterMissionObjectiveItemCounterEntry>().Single().CounterValue);
-                Assert.AreEqual(consumed ? CharacterMissionDeadlineState.Satisfied : CharacterMissionDeadlineState.Active,
-                    context.Set<CharacterMissionDeadlineEntry>().Single().State);
-                var flags = context.Set<CharacterFlagEntry>().ToDictionary(row => row.FlagId, row => row.Value);
-                Assert.HasCount(2, flags);
-                Assert.AreEqual(42U, flags[901]);
-                Assert.AreEqual(0U, flags[902]);
-                var scene = context.Set<MissionSceneEntry>().Single();
-                Assert.AreEqual((runId, assignmentId, 3U, 11L, "Waiting", "{}"),
-                    (scene.RunId, scene.AssignmentId, scene.Generation, scene.Version, scene.Status, scene.Checkpoint));
-                var participant = context.Set<MissionSceneParticipantEntry>().Single();
-                Assert.AreEqual((assignmentId, 7U, true),
-                    (participant.AssignmentId, participant.AssignmentGeneration, participant.Active));
-                var message = context.Set<MissionSceneMessageEntry>().Single();
-                Assert.AreEqual(("existing-site-input", 7U, 3U, "Pending", 13L),
-                    (message.OperationKey, message.SequenceId, message.Generation, message.Status, message.Version));
-                var actor = context.Set<MissionActorStateEntry>().Single();
-                Assert.AreEqual(("assault-1", 3U, "Defeated"), (actor.ActorRole, actor.Generation, actor.Outcome));
-                var effect = context.Set<MissionWorldEffectEntry>().Single();
-                Assert.AreEqual((effectPayload, "Applied", 17L), (effect.Payload, effect.Status, effect.Version));
-                Assert.IsNull(effect.SourceAssignmentId);
-                var history = context.Set<CharacterMissionHistoryEntry>().ToArray();
-                Assert.HasCount(2, history);
-                var prior = history.Single(row => row.AssignmentId == priorId);
-                Assert.IsTrue(prior.Rewarded);
-                Assert.AreEqual(new DateTime(2026, 9, 20, 12, 0, 0).Ticks, prior.CompletedAtUtc.Ticks);
-                Assert.AreEqual(new DateTime(2026, 9, 20, 12, 5, 0).Ticks, prior.RewardedAtUtc.Value.Ticks);
-                Assert.IsTrue(history.All(row => row.RewardWindowStartUtc == null));
-                Assert.AreEqual(8U, history.Single(row => row.AssignmentId != priorId).AssignmentGeneration);
-                Assert.AreEqual(2U, history.Single(row => row.AssignmentId != priorId).Outcome);
-                var receipt = context.Set<MissionReceiptEntry>().Single();
-                Assert.AreEqual((priorId, 0U, "mission-reward"), (receipt.OwnerId, receipt.Generation, receipt.OperationKey));
-                var ordinary = context.ItemEntries.Single(row => row.ItemId == 5000);
-                Assert.AreEqual((28U, 3U, 100, 7U, "baseline item"),
-                    (ordinary.ItemTemplateId, ordinary.StackSize, ordinary.CurrentHitPoints, ordinary.Color, ordinary.CrafterName));
-                Assert.AreEqual(50U, context.CharacterInventoryEntries.Single(row => row.ItemId == 5000).SlotId);
-                var owned = context.Set<CharacterMissionItemEntry>().ToArray();
-                Assert.AreEqual(consumed ? 0 : 1, owned.Length);
-                if (!consumed)
-                    Assert.AreEqual((5001U, assignmentId, 7U, "bomb", 1U),
-                        (owned[0].ItemId, owned[0].AssignmentId, owned[0].Generation, owned[0].ItemKey, owned[0].Quantity));
-                CollectionAssert.AreEquivalent(consumed ? new[] { "issue-bomb", "plant-bomb" } : new[] { "issue-bomb" },
-                    context.Set<CharacterMissionItemReceiptEntry>().Select(row => row.OperationKey).ToArray());
-                Assert.IsTrue(context.Set<CharacterMissionItemReceiptEntry>().All(row =>
-                    row.AssignmentId == assignmentId && row.Generation == 7 && row.MissionId == 1995));
-                Assert.IsEmpty(context.Set<CharacterMissionItemQuarantineEntry>().ToArray());
-                Assert.IsEmpty(context.Set<CharacterMissionOfferEntry>().ToArray());
-                Assert.IsFalse(context.Database.GetPendingMigrations().Any());
-                context.Database.Migrate();
-                Assert.AreEqual(2, context.Set<CharacterMissionHistoryEntry>().Count());
-                Assert.AreEqual(consumed ? 1 : 2, context.ItemEntries.Count());
-            });
-        }
-
-        [TestMethod]
-        public void SqliteCharMigrationPreservesRowsAndAddsPersistenceState()
+        public void SqliteCharSchemaPersistsMissionProgressAndAbilitySelection()
         {
             WithDisposableSqlite((context, database) =>
             {
-                context.GetService<Microsoft.EntityFrameworkCore.Migrations.IMigrator>()
-                    .Migrate("20260915200000_Add_clan_lockbox_log");
+                context.Database.Migrate();
                 context.Database.ExecuteSqlRaw(
                     "INSERT INTO account (id, email, name, family_name) " +
                     "VALUES (17, 'task4@example.invalid', 'Task4Account', 'Task4Family')");
@@ -664,19 +414,21 @@ VALUES (17, 123, 1, 150, 5001);");
                     "coord_z, rotation) VALUES " +
                     "(123, 17, 1, 'Task4Preserved', 1, 1, 0, 1, 4000, 9, 100, 0, 0, 0, 7777, 1, 2, 3, 0)");
                 context.Database.ExecuteSqlRaw(
-                    "INSERT INTO character_mission (character_id, mission_id, mission_state) " +
-                    "VALUES (123, 321, 0)");
-                context.Database.ExecuteSqlRaw(
-                    "INSERT INTO character_mission (character_id, mission_id, mission_state) " +
-                    "VALUES (999, 654, 0)");
+                    "INSERT INTO character_mission (character_id, mission_id, mission_state, assignment_id) " +
+                    "VALUES (123, 321, 0, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')");
 
                 context.Database.Migrate();
                 context.Database.ExecuteSqlRaw(
                     "UPDATE character SET current_ability_slot = 24 WHERE id = 123");
                 context.Database.ExecuteSqlRaw(
                     "INSERT INTO character_mission " +
-                    "(character_id, mission_id, mission_state, completeable) " +
-                    "VALUES (123, 429, 4, 1)");
+                    "(character_id, mission_id, mission_state, completeable, assignment_id) " +
+                    "VALUES (123, 429, 4, 1, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')");
+                var orphan = Assert.ThrowsExactly<Microsoft.Data.Sqlite.SqliteException>(() =>
+                    context.Database.ExecuteSqlRaw(
+                        "INSERT INTO character_mission (character_id, mission_id, mission_state, assignment_id) " +
+                        "VALUES (999, 654, 0, 'cccccccccccccccccccccccccccccccc')"));
+                Assert.AreEqual(787, orphan.SqliteExtendedErrorCode);
                 context.Database.ExecuteSqlRaw(
                     "INSERT INTO character_mission_objective " +
                     "(character_id, mission_id, objective_id, objective_state) " +
@@ -709,65 +461,8 @@ VALUES (17, 123, 1, 150, 5001);");
                     "AND item_class_id = 200").Single());
                 Assert.AreEqual(7777, reopened.Database.SqlQueryRaw<int>(
                     "SELECT map_context_id AS Value FROM character WHERE id = 123").Single());
-                Assert.AreEqual(5, reopened.Database.SqlQueryRaw<int>(
-                    "SELECT state AS Value FROM character_starting_experience WHERE character_id = 123").Single());
-                Assert.AreEqual("legacy", reopened.Database.SqlQueryRaw<string>(
-                    "SELECT content_revision AS Value FROM character_starting_experience WHERE character_id = 123").Single());
+                Assert.IsEmpty(reopened.CharacterStartingExperienceEntries.ToArray());
                 Assert.IsFalse(reopened.Database.GetPendingMigrations().Any());
-            });
-        }
-
-        [TestMethod]
-        public void SqliteMissionMigrationDowngradesAfterValidUpgrade()
-        {
-            WithDisposableSqlite((context, database) =>
-            {
-                context.GetService<IMigrator>()
-                    .Migrate("20260917200225_MissionCharacterState");
-                SeedCharacter(context, 17, 123, 1);
-                context.Database.ExecuteSqlRaw(
-                    "INSERT INTO character_mission " +
-                    "(character_id, mission_id, mission_state, completeable) " +
-                    "VALUES (123, 429, 4, 1)");
-
-                context.GetService<IMigrator>()
-                    .Migrate("20260917130621_AbilityTraySelection");
-
-                Assert.AreEqual(1, context.Database.SqlQueryRaw<int>(
-                    "SELECT COUNT(*) AS Value FROM character_mission " +
-                    "WHERE character_id = 123 AND mission_id = 429 AND mission_state = 4").Single());
-                Assert.AreEqual(
-                    "20260917130621_AbilityTraySelection",
-                    context.Database.GetAppliedMigrations().Last());
-            });
-        }
-
-        [TestMethod]
-        public void SqliteModularMissionMigrationsDowngradeToHistoricalContentBoundary()
-        {
-            WithDisposableSqlite((context, database) =>
-            {
-                context.GetService<IMigrator>().Migrate("20260922220915_ModularMissionRuntime");
-                SeedCharacter(context, 17, 123, 1);
-                context.Database.ExecuteSqlRaw(
-                    "INSERT INTO character_mission " +
-                    "(character_id, mission_id, mission_state, completeable) " +
-                    "VALUES (123, 429, 4, 1)");
-
-                context.GetService<IMigrator>()
-                    .Migrate("20260922161000_BootcampReinforcements");
-
-                Assert.AreEqual(1, context.Database.SqlQueryRaw<int>(
-                    "SELECT COUNT(*) AS Value FROM character_mission " +
-                    "WHERE character_id = 123 AND mission_id = 429 AND mission_state = 4 AND completeable = 1").Single());
-                Assert.AreEqual(0, context.Database.SqlQueryRaw<int>(
-                    "SELECT COUNT(*) AS Value FROM pragma_table_info('character_mission') " +
-                    "WHERE name IN ('assignment_id', 'content_revision', 'generation', 'version')").Single());
-                Assert.AreEqual(0, context.Database.SqlQueryRaw<int>(
-                    "SELECT COUNT(*) AS Value FROM sqlite_master WHERE type = 'table' " +
-                    "AND name IN ('mission_scene', 'mission_outcome', 'mission_receipt')").Single());
-                Assert.AreEqual("20260922161000_BootcampReinforcements",
-                    context.Database.GetAppliedMigrations().Last());
             });
         }
 
@@ -1229,7 +924,7 @@ VALUES (17, 123, 1, 150, 5001);");
                 userOptions: null);
         }
 
-        private static RasaDbContextBase CreateContext(Type contextType, string database)
+        internal static RasaDbContextBase CreateContext(Type contextType, string database)
         {
             var connection = new DatabaseConnectionConfiguration { Database = database };
             var isSqlite = contextType.Name.StartsWith("Sqlite", StringComparison.Ordinal);

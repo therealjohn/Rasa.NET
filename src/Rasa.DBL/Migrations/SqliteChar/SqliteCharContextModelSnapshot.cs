@@ -397,7 +397,9 @@ namespace Rasa.Migrations.SqliteChar
 
                     b.Property<string>("AssignmentId")
                         .IsRequired()
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("varchar(32)")
+                        .HasDefaultValue("")
                         .HasColumnName("assignment_id");
 
                     b.Property<bool>("Completeable")
@@ -408,11 +410,15 @@ namespace Rasa.Migrations.SqliteChar
 
                     b.Property<string>("ContentRevision")
                         .IsRequired()
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("varchar(32)")
+                        .HasDefaultValue("")
                         .HasColumnName("content_revision");
 
                     b.Property<uint>("Generation")
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER")
+                        .HasDefaultValue(0u)
                         .HasColumnName("generation");
 
                     b.Property<uint>("MissionState")
@@ -421,7 +427,9 @@ namespace Rasa.Migrations.SqliteChar
 
                     b.Property<long>("Version")
                         .IsConcurrencyToken()
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER")
+                        .HasDefaultValue(0L)
                         .HasColumnName("version");
 
                     b.HasKey("CharacterId", "MissionId");
@@ -1386,7 +1394,9 @@ namespace Rasa.Migrations.SqliteChar
 
                     b.Property<string>("AssignmentId")
                         .IsRequired()
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("varchar(32)")
+                        .HasDefaultValue("")
                         .HasColumnName("assignment_id");
 
                     b.Property<string>("Checkpoint")
@@ -1555,7 +1565,9 @@ namespace Rasa.Migrations.SqliteChar
                         .HasColumnName("remaining_ticks");
 
                     b.Property<uint>("SequenceId")
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER")
+                        .HasDefaultValue(0u)
                         .HasColumnName("sequence_id");
 
                     b.Property<long>("Version")

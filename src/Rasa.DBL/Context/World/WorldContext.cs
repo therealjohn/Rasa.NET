@@ -306,7 +306,7 @@ namespace Rasa.Context.World
             }
 
             var scenarioStepParameterSetConstraint =
-                "(kind IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22)) " +
+                "(kind IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23)) " +
                 $"AND (kind <> 1 OR (spawn_group_id IS NOT NULL AND {ScenarioStepNullColumns("spawn_group_id")})) " +
                 $"AND (kind <> 2 OR (spawn_group_id IS NOT NULL AND {ScenarioStepNullColumns("spawn_group_id")})) " +
                 $"AND (kind <> 3 OR ((((entity_class_id IS NOT NULL AND spawn_group_id IS NULL AND spawn_id IS NULL) " +
@@ -886,6 +886,7 @@ namespace Rasa.Context.World
                 .AsUnsignedInt(_dbContextPropertyModifier, 11);
             modelBuilder.Entity<MissionSpawnGroupEntry>()
                 .Property(entry => entry.SpawnPolicy)
+                .HasDefaultValue(MissionSpawnGroupPolicy.OrdinaryRespawn)
                 .HasConversion<byte>()
                 .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
             modelBuilder.Entity<MissionSpawnGroupEntry>()
@@ -925,6 +926,7 @@ namespace Rasa.Context.World
                 .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
             modelBuilder.Entity<MissionScenarioEntry>()
                 .Property(entry => entry.StartPolicy)
+                .HasDefaultValue(MissionScenarioStartPolicy.Automatic)
                 .HasConversion<byte>()
                 .AsUnsignedTinyInt(_dbContextPropertyModifier, 3);
 

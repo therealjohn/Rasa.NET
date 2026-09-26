@@ -4,58 +4,28 @@ Mission content is deployed by **EF Core database migrations**, just like the
 other World data. There is no mission pack, publication command, release
 activation step, or separate database path to provide to another tool.
 
-The original transition to migration-owned content targets **fresh databases**.
-It does not convert previously published mission databases or old experimental
-saves. Database files are never deleted automatically. Use a fresh development
-database path, or remove your own disposable databases when you intend to start
-over.
+This branch targets **fresh databases**. All branch-added migrations have been
+consolidated; databases containing the removed intermediate migration IDs are
+not supported upgrade sources. Previously published experimental mission
+databases and character saves are not converted. Database files are never
+deleted automatically. Use a fresh development database path, or remove your
+own disposable databases when you intend to start over.
 
-The subsequent integration fixtures also verify SQLite upgrades from the actual
-current-branch baseline: `PersistentCharacterFlags` in Char and
-`BootcampCorpseDialogue` in World. Existing assignments, counters, flags, scene
-state, rewards and ordinary items survive the combined item/repeat/offer
-migrations. Legacy bombs are adopted only with proven assignment, scene and
-issue-receipt identity. This narrow upgrade coverage does not extend the original
-transition to older experimental saves, or certify live MySQL behavior.
+After the preserved `development` history, each provider has one Char schema
+migration and two World migrations: `ConsolidatedCharacterSchema`,
+`ConsolidatedWorldSchema`, and `SeedWorldContent`. The schemas create assignment
+items, per-attempt history, forwarding provenance, radio authority and nullable
+party-source identity directly. There are no intermediate save backfills.
+See [the migration layout](setup.md#mission-data-migrations) and
+[quest-item persistence](mission-reference.md#assignment-owned-quest-items).
 
-Current-branch Bootcamp bomb assignments have a separate, narrow forward
-upgrade to assignment-owned inventory. It preserves unambiguous item identities
-and receipts, and quarantines ambiguity instead of reissuing or deleting
-items. See [quest-item persistence](mission-reference.md#assignment-owned-quest-items).
-
-Current-branch mission history also has a forward upgrade for repeatability.
-`MissionRepeatAttempts` changes history to per-assignment rows;
-`MissionRepeatHistoryUpgrade` preserves old outcomes and receipts and imports
-terminal journal rows. Apply both Char migrations and the World
-`MissionRepeatPolicies` migration before running this build. These changes do
-not enable any new production content or make Bootcamp repeatable.
-
-Apply the paired Char `ForwardedSceneEffectProvenance` migration as well. It
-records the originating assignment and scene generation independently of the
-experience root that executes shared-actor work. Existing forwarding hashes
-cannot recover that identity: the migration cancels unattributed `Pending` and
-`Running` forwarded effects with an explicit failure reason, while preserving
-root-owned work and already-applied experience state. Inspect those cancelled
-operations when upgrading an in-flight mission; they are not silently replayed
-against a later attempt. Removing provenance is not a supported downgrade;
-restore a backup instead.
-
-Radio admission requires the paired Char `MissionRadioOffers`, World
-`MissionRadioChannels`, and World `BootcampRadioOfferAuthority` migrations.
-They add bounded pending authority, explicit
-channels and nullable NPC IDs without rewriting assignments or history.
+The World seed installs explicit radio channels and bounded offer authority.
 Only Initiation gains a radio source: its existing arrival offer now uses the
 generic authority. Its NPC path is retained, completion stays NPC-only, and
 all Bootcamp missions remain Once, private and unshareable. Wilderness content
-remains disabled. The data-only authority migration follows the schema migration
-so SQLite finishes its nullable-ID table rebuild before seeding the source.
-These migrations are forward-only.
-
-Explicit party sharing also requires the paired Char `MissionPartyOffers`
-migration. It adds nullable sender/party identity to the existing offer table,
-preserving old radio offers, assignments and history. No World schema or
-production content activation accompanies this change. Native UI and live
-MySQL behavior still need separate acceptance checks.
+remains disabled. The data migration follows the final schema migration for
+both providers. Native UI and live MySQL behavior still need separate
+acceptance checks.
 
 ## Start the servers
 
@@ -98,7 +68,8 @@ the existing typed scene interface.
 Current Bootcamp scene data lives in
 `src\Rasa.DBL\Services\Preloader\Missions\BootcampMissionDataV1.*.cs`.
 The older C# World preloaders supply the normalized objective, reward and world
-rows; `SeedMigratedBootcamp` binds those definitions to the modular scripts.
+rows; `SeedWorldContent` calls `WorldContentDataV1` to install those definitions,
+the current scene bindings and their supporting World data.
 `MissionDataMigration` provides typed helpers for inserting/updating scene and
 experience bindings and enabling a completed mission definition.
 
@@ -433,8 +404,8 @@ progress changes commit before success packets.
 Assignment item ledgers are not children of the active journal row. Cleanup
 runs inside the terminal transaction, before removing that row, and targets
 only that assignment's durable item IDs. Normal reward and loot stacks remain
-unbound. When a legacy item upgrade cannot prove ownership, inspect the
-read-only diagnostic before preparing a corrective migration:
+unbound. If an assignment is quarantined, inspect the read-only diagnostic before
+preparing a corrective migration:
 
 ```sql
 SELECT character_id, mission_id, assignment_id, reason
@@ -442,7 +413,7 @@ FROM character_mission_item_quarantine;
 ```
 
 Do not clear a quarantine row, adopt by template alone, or remove all matching
-templates as a repair. Reconcile the exact assignment, old issue receipt,
+templates as a repair. Reconcile the exact assignment, issue receipt,
 scene participant and concrete inventory row first. Deploy both providers'
 equivalent migration changes with the server build; a generated MySQL script
 does not replace testing against a live MySQL server.
@@ -454,18 +425,12 @@ operation also rolls back its flag changes. The generic repository is available
 to future reward and door checks; it is not tied to a mission assignment.
 See [flag storage and IDs](mission-reference.md#persistent-character-flags).
 
-`PersistentCharacterFlags` replaces `character_qualification` in the Char schema.
-This branch change deliberately targets **fresh databases**: it does not copy
-old qualifications or attempt to reconstruct flags that existed only in memory.
-Use fresh disposable SQLite databases as agreed for testing; the operator
-chooses when to remove old files. The server does not delete databases.
-MySQL remains manually migrated. Historical migrations remain unchanged even
-though the final schema no longer contains the qualification table.
-
-That fresh-database restriction applies to the original flag/content transition,
-not to the later incremental upgrades described above. There is no automatic
-reset, database deletion or mission-pack publishing. Back up real databases
-before applying schema/data changes.
+`ConsolidatedCharacterSchema` creates `character_flag` directly, without an
+intermediate `character_qualification` table or a legacy backfill. The
+fresh-database restriction applies to the entire consolidated branch history,
+not only the original flag/content transition. The operator chooses when to
+remove disposable files. There is no automatic reset, database deletion or
+mission-pack publishing. MySQL remains manually migrated.
 
 ## Focused verification
 
@@ -475,12 +440,11 @@ dotnet test .\src\Rasa.Test\Rasa.Test.csproj --no-restore --filter "FullyQualifi
 
 The migration checks exercise fresh SQLite initialization, repeat startup,
 enabled content, script validation and provider-equivalent seed operations.
-`MissionIntegrationUpgradePreservesBaselineCharacterFactsAndLegacyBomb` and
-`MissionIntegrationUpgradePreservesBaselineWorldContentAndAddsOnlyAuthoredCapabilities`
-exercise the complete forward path from that baseline, including consumed items
-and prior successful history beside a newer failed attempt. Historical rollback
-tests stop at the migration they test; they must not first apply later
-forward-only migrations or query a historical schema with newly added columns.
+`MigrationConsolidationTests` checks schema-only operations, preserved defaults,
+and full-row round trips through the retained `development` migration boundary.
+`BranchMigrationsAreConsolidatedByDatabase` checks the six-step layout. The
+content suites retain final objective, reward, scene, item and radio assertions;
+they no longer require removed intermediate migration IDs.
 Use the affected gameplay suites for the mission being changed, then the
 [native-client checklist](world-testing.md#native-client-bootcamp-acceptance-checklist).
 Offline MySQL model/SQL checks are not a live MySQL acceptance result.

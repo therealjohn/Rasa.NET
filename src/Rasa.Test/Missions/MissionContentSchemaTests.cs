@@ -230,7 +230,7 @@ namespace Rasa.Test.Missions
                 using var context = CreateContext(contextType, "unused");
                 Assert.IsFalse(context.Database.HasPendingModelChanges(), contextType.Name);
                 Assert.IsTrue(context.Database.GetMigrations().Any(migration => migration.Contains(
-                    "BootcampFinalReviewFixes", StringComparison.Ordinal)), contextType.Name);
+                    "ConsolidatedWorldSchema", StringComparison.Ordinal)), contextType.Name);
             }
         }
 
@@ -240,7 +240,8 @@ namespace Rasa.Test.Missions
         public void WorldMissionContentMigrationsGenerateOfflineSqlWithConstraintsAndCrossLinks(Type contextType)
         {
             using var context = CreateContext(contextType, "unused");
-            var sql = NormalizeSql(context.GetService<IMigrator>().GenerateScript());
+            var sql = NormalizeSql(context.GetService<IMigrator>()
+                .GenerateScript("Add_data_to_world", "ConsolidatedWorldSchema"));
 
             AssertContainsCreateTable(sql, MissionContentDefinitionEntry.TableName);
             AssertContainsCreateTable(sql, MissionPrerequisiteEntry.TableName);
@@ -276,7 +277,7 @@ namespace Rasa.Test.Missions
             StringAssert.Contains(sql, "constraint ck_mission_scenario_step_kind_parameter_set check");
             StringAssert.Contains(sql, "constraint ck_mission_scenario_step_numeric_bounds check");
             StringAssert.Contains(sql, "kind in (1, 2, 3, 4, 5)");
-            StringAssert.Contains(sql, "kind in (1, 2, 3, 4, 5, 6, 7, 8, 9)");
+            StringAssert.Contains(sql, "kind in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)");
             StringAssert.Contains(sql, "kind in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23)");
             StringAssert.Contains(sql, "selection_count in (0, 1)");
             StringAssert.Contains(sql, "kind in (1, 2)");
@@ -331,216 +332,6 @@ namespace Rasa.Test.Missions
             StringAssert.Contains(
                 sql,
                 "foreign key (mission_id, content_revision, target_scenario_id) references mission_scenario (mission_id, content_revision, scenario_id) on delete restrict");
-        }
-
-        [TestMethod]
-        [DataRow(typeof(SqliteWorldContext),
-            "update mission_reward_definition set selection_count = case kind when 2 then 1 else 0 end",
-            "update mission_reward_item set kind = case when exists (select 1 from mission_reward_definition reward where reward.mission_id = mission_reward_item.mission_id and reward.content_revision = mission_reward_item.content_revision and reward.reward_id = mission_reward_item.reward_id and reward.kind = 2) then 2 else 1 end")]
-        [DataRow(typeof(MySqlWorldContext),
-            "update mission_reward_definition set selection_count = case kind when 2 then 1 else 0 end",
-            "update mission_reward_item inner join mission_reward_definition reward on reward.mission_id = mission_reward_item.mission_id and reward.content_revision = mission_reward_item.content_revision and reward.reward_id = mission_reward_item.reward_id set mission_reward_item.kind = case reward.kind when 2 then 2 else 1 end")]
-        public void MissionContentRewardShapeMigrationConvertsLegacyKindsBeforeDroppingDefinitionKind(
-            Type contextType,
-            string expectedSelectionCountSql,
-            string expectedRewardItemSql)
-        {
-            using var context = CreateContext(contextType, "unused");
-            var migration = CreateMigration(context, "MissionContentRewardShape");
-
-            var sqlOperations = migration.UpOperations
-                .Select((operation, index) => (operation, index))
-                .Where(item => item.operation is SqlOperation)
-                .Select(item => (((SqlOperation)item.operation).Sql, item.index))
-                .ToArray();
-            var selectionCountUpdate = sqlOperations.Single(item =>
-                NormalizeSql(item.Sql).Contains(expectedSelectionCountSql, StringComparison.Ordinal));
-            var rewardItemUpdate = sqlOperations.Single(item =>
-                NormalizeSql(item.Sql).Contains(expectedRewardItemSql, StringComparison.Ordinal));
-            var dropKind = migration.UpOperations
-                .Select((operation, index) => (operation, index))
-                .Single(item => item.operation is DropColumnOperation column &&
-                    column.Table == "mission_reward_definition" &&
-                    column.Name == "kind");
-
-            Assert.IsTrue(selectionCountUpdate.index < dropKind.index, contextType.Name);
-            Assert.IsTrue(rewardItemUpdate.index < dropKind.index, contextType.Name);
-        }
-
-        [TestMethod]
-        [DataRow(typeof(SqliteWorldContext),
-            "update mission_reward_definition set kind = case when selection_count > 0 or exists (select 1 from mission_reward_item item where item.mission_id = mission_reward_definition.mission_id and item.content_revision = mission_reward_definition.content_revision and item.reward_id = mission_reward_definition.reward_id and item.kind = 2) then 2 else 1 end")]
-        [DataRow(typeof(MySqlWorldContext),
-            "update mission_reward_definition set kind = case when selection_count > 0 or exists (select 1 from mission_reward_item item where item.mission_id = mission_reward_definition.mission_id and item.content_revision = mission_reward_definition.content_revision and item.reward_id = mission_reward_definition.reward_id and item.kind = 2) then 2 else 1 end")]
-        public void MissionContentRewardShapeDownMigrationRestoresLegacyKindsBeforeDroppingNewRewardShapeColumns(
-            Type contextType,
-            string expectedDefinitionKindSql)
-        {
-            using var context = CreateContext(contextType, "unused");
-            var migration = CreateMigration(context, "MissionContentRewardShape");
-
-            var addDefinitionKind = migration.DownOperations
-                .Select((operation, index) => (operation, index))
-                .Single(item => item.operation is AddColumnOperation column &&
-                    column.Table == "mission_reward_definition" &&
-                    column.Name == "kind");
-            var definitionKindRestore = migration.DownOperations
-                .Select((operation, index) => (operation, index))
-                .Where(item => item.operation is SqlOperation)
-                .Select(item => (((SqlOperation)item.operation).Sql, item.index))
-                .Single(item => NormalizeSql(item.Sql).Contains(
-                    expectedDefinitionKindSql,
-                    StringComparison.Ordinal));
-            var dropRewardItemKind = migration.DownOperations
-                .Select((operation, index) => (operation, index))
-                .Single(item => item.operation is DropColumnOperation column &&
-                    column.Table == "mission_reward_item" &&
-                    column.Name == "kind");
-            var dropSelectionCount = migration.DownOperations
-                .Select((operation, index) => (operation, index))
-                .Single(item => item.operation is DropColumnOperation column &&
-                    column.Table == "mission_reward_definition" &&
-                    column.Name == "selection_count");
-
-            Assert.IsTrue(addDefinitionKind.index < definitionKindRestore.index, contextType.Name);
-            Assert.IsTrue(definitionKindRestore.index < dropRewardItemKind.index, contextType.Name);
-            Assert.IsTrue(definitionKindRestore.index < dropSelectionCount.index, contextType.Name);
-        }
-
-        [TestMethod]
-        [DataRow(typeof(SqliteWorldContext),
-            "update mission_spawn_group set respawn_seconds = 1 where mission_id = 1994 and spawn_group_id in (1, 2, 3)")]
-        [DataRow(typeof(MySqlWorldContext),
-            "update mission_spawn_group set respawn_seconds = 1 where mission_id = 1994 and spawn_group_id in (1, 2, 3)")]
-        public void MissionContentScenarioSpawnPolicyDownMigrationRestoresLegacyRespawnSecondsBeforeDroppingSpawnPolicy(
-            Type contextType,
-            string expectedRestoreSql)
-        {
-            using var context = CreateContext(contextType, "unused");
-            var migration = CreateMigration(context, "MissionContentScenarioSpawnPolicy");
-
-            var restoreRespawnSeconds = migration.DownOperations
-                .Select((operation, index) => (operation, index))
-                .Where(item => item.operation is SqlOperation)
-                .Select(item => (((SqlOperation)item.operation).Sql, item.index))
-                .Single(item => NormalizeSql(item.Sql).Contains(
-                    expectedRestoreSql,
-                    StringComparison.Ordinal));
-            var dropSpawnPolicy = migration.DownOperations
-                .Select((operation, index) => (operation, index))
-                .Single(item => item.operation is DropColumnOperation column &&
-                    column.Table == "mission_spawn_group" &&
-                    column.Name == "spawn_policy");
-
-            Assert.IsTrue(restoreRespawnSeconds.index < dropSpawnPolicy.index, contextType.Name);
-        }
-
-        [TestMethod]
-        public void SqliteMissionContentScenarioSpawnPolicyDownMigrationRestoresBootcampRespawnSeconds()
-        {
-            WithDisposableSqliteWorld((context, database) =>
-            {
-                context.GetService<IMigrator>().Migrate("20260919114029_MissionContentScenarioSpawnPolicy");
-
-                var upgradedGroups = context.MissionSpawnGroupEntries
-                    .Where(entry => entry.MissionId == 1994 &&
-                                    entry.ContentRevision == "deployment_11" &&
-                                    entry.SpawnGroupId <= 3)
-                    .OrderBy(entry => entry.SpawnGroupId)
-                    .ToArray();
-                Assert.AreEqual(3, upgradedGroups.Length);
-                Assert.IsTrue(upgradedGroups.All(entry => entry.RespawnSeconds == null));
-                Assert.IsTrue(upgradedGroups.All(entry => entry.SpawnPolicy == MissionSpawnGroupPolicy.ScenarioControlled));
-
-                context.GetService<IMigrator>().Migrate("20260919110000_BootcampMissionContent");
-
-                using var connection = new SqliteConnection($"Data Source={database}.db");
-                connection.Open();
-
-                using var tableInfo = connection.CreateCommand();
-                tableInfo.CommandText =
-                    "SELECT COUNT(*) " +
-                    "FROM pragma_table_info('mission_spawn_group') " +
-                    "WHERE name = 'spawn_policy'";
-                Assert.AreEqual(0L, (long)tableInfo.ExecuteScalar()!);
-
-                using var command = connection.CreateCommand();
-                command.CommandText =
-                    "SELECT spawn_group_id, respawn_seconds " +
-                    "FROM mission_spawn_group " +
-                    "WHERE mission_id = 1994 AND content_revision = 'deployment_11' AND spawn_group_id IN (1, 2, 3) " +
-                    "ORDER BY spawn_group_id";
-
-                using var reader = command.ExecuteReader();
-                var restoredRespawnSeconds = new List<uint>();
-                while (reader.Read())
-                {
-                    restoredRespawnSeconds.Add(reader.GetFieldValue<uint>(1));
-                }
-
-                CollectionAssert.AreEqual(
-                    new uint[] { 1, 1, 1 },
-                    restoredRespawnSeconds.ToArray());
-            });
-        }
-
-        [TestMethod]
-        public void SqliteMissionContentRewardShapeDownMigrationMapsMixedRewardsToSelectableKind()
-        {
-            WithDisposableSqliteWorld((context, database) =>
-            {
-                context.GetService<IMigrator>().Migrate("20260919035937_MissionContentRewardShape");
-                context.Database.ExecuteSqlRaw(
-                    "INSERT INTO mission_content_definition " +
-                    "(mission_id, content_revision, requirement, client_name_text_id, giver_id, receiver_id, level, group_type, category_id, shareable, radio_completeable, comment) " +
-                    "VALUES (654321, 'mixed-reward-down', 1, 0, 10, 20, 30, 1, 2, 0, 0, 'Down migration test mission')");
-                context.Database.ExecuteSqlRaw(
-                    "INSERT INTO mission_reward_definition " +
-                    "(mission_id, content_revision, reward_id, requirement, experience, credits, prestige, selection_count, comment) " +
-                    "VALUES " +
-                    "(654321, 'mixed-reward-down', 1, 1, 10, 0, 0, 0, 'Fixed reward'), " +
-                    "(654321, 'mixed-reward-down', 2, 1, 20, 0, 0, 1, 'Selection-count reward'), " +
-                    "(654321, 'mixed-reward-down', 3, 1, 30, 0, 0, 0, 'Selectable item reward'), " +
-                    "(654321, 'mixed-reward-down', 4, 1, 40, 0, 0, 1, 'Mixed reward')");
-                context.Database.ExecuteSqlRaw(
-                    "INSERT INTO mission_reward_item " +
-                    "(mission_id, content_revision, reward_id, item_id, kind, item_template_id, quantity) " +
-                    "VALUES " +
-                    "(654321, 'mixed-reward-down', 1, 1, 1, 1001, 1), " +
-                    "(654321, 'mixed-reward-down', 2, 1, 1, 1002, 1), " +
-                    "(654321, 'mixed-reward-down', 3, 1, 2, 1003, 1), " +
-                    "(654321, 'mixed-reward-down', 4, 1, 1, 1004, 1), " +
-                    "(654321, 'mixed-reward-down', 4, 2, 2, 1005, 1)");
-
-                context.GetService<IMigrator>().Migrate("20260919034933_MissionContentReviewFixes");
-
-                using var connection = new SqliteConnection($"Data Source={database}.db");
-                connection.Open();
-
-                using var command = connection.CreateCommand();
-                command.CommandText =
-                    "SELECT reward_id, kind " +
-                    "FROM mission_reward_definition " +
-                    "WHERE mission_id = 654321 " +
-                    "ORDER BY reward_id";
-
-                using var reader = command.ExecuteReader();
-                var restoredKinds = new List<byte>();
-                while (reader.Read())
-                {
-                    restoredKinds.Add(reader.GetByte(1));
-                }
-
-                CollectionAssert.AreEqual(
-                    new byte[]
-                    {
-                        1,
-                        2,
-                        2,
-                        2
-                    },
-                    restoredKinds.ToArray());
-            });
         }
 
         [TestMethod]
@@ -851,55 +642,30 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
-        [DataRow(typeof(SqliteWorldContext),
-            "20260919034933_MissionContentReviewFixes",
-            "MissionContentLegacyNpcMissionBackfill")]
-        [DataRow(typeof(MySqlWorldContext),
-            "20260919034939_MissionContentReviewFixes",
-            "MissionContentLegacyNpcMissionBackfill")]
-        public void MissionContentMigrationsOrderSchemaBeforeDataAndKeepDataMigrationSchemaFree(
-            Type contextType,
-            string schemaMigrationName,
-            string dataMigrationTypeName)
+        [DataRow(typeof(SqliteWorldContext))]
+        [DataRow(typeof(MySqlWorldContext))]
+        public void MissionContentMigrationsOrderFinalSchemaBeforeData(Type contextType)
         {
             using var context = CreateContext(contextType, "unused");
             var migrations = context.Database.GetMigrations().ToArray();
-            var schemaIndex = Array.IndexOf(migrations, schemaMigrationName);
-            var dataIndex = Array.FindIndex(
-                migrations,
-                migration => migration.EndsWith(
-                    "_" + dataMigrationTypeName,
-                    StringComparison.Ordinal));
-
-            Assert.IsTrue(schemaIndex >= 0, schemaMigrationName);
-            Assert.IsTrue(dataIndex >= 0, dataMigrationTypeName);
-            Assert.IsTrue(schemaIndex < dataIndex, contextType.Name);
-
-            var assembly = context.GetService<IMigrationsAssembly>();
-            var schemaMigration = assembly.Migrations.Values
-                .Select(type => assembly.CreateMigration(type, context.Database.ProviderName))
-                .Single(candidate => candidate.GetType().Name == "MissionContentReviewFixes");
-            var dataMigration = assembly.Migrations.Values
-                .Select(type => assembly.CreateMigration(type, context.Database.ProviderName))
-                .Single(candidate => candidate.GetType().Name == dataMigrationTypeName);
-
-            Assert.IsFalse(
-                schemaMigration.UpOperations.OfType<SqlOperation>().Any(),
-                "Schema review migration should no longer perform data backfills.");
-            Assert.AreEqual(0, schemaMigration.DownOperations.OfType<SqlOperation>().Count());
-            Assert.IsTrue(dataMigration.UpOperations.Count > 0, dataMigrationTypeName);
-            Assert.IsTrue(
-                dataMigration.UpOperations.All(operation => operation is SqlOperation),
-                "Data migration should contain SQL only.");
-            Assert.AreEqual(0, dataMigration.DownOperations.Count);
-            StringAssert.Contains(
-                ((SqlOperation)dataMigration.UpOperations.Single()).Sql,
-                "mission_content_definition",
-                dataMigrationTypeName);
-            StringAssert.Contains(
-                ((SqlOperation)dataMigration.UpOperations.Single()).Sql,
-                "npc_mission",
-                dataMigrationTypeName);
+            var schemaIndex = Array.FindIndex(migrations, id => id.EndsWith("_ConsolidatedWorldSchema"));
+            var dataIndex = Array.FindIndex(migrations, id => id.EndsWith("_SeedWorldContent"));
+            Assert.IsTrue(schemaIndex >= 0 && dataIndex == schemaIndex + 1, contextType.Name);
+            var schema = CreateMigration(context, "ConsolidatedWorldSchema");
+            var data = CreateMigration(context, "SeedWorldContent");
+            Assert.IsTrue(schema.UpOperations.All(operation =>
+                operation is not SqlOperation and not InsertDataOperation and not UpdateDataOperation and not DeleteDataOperation));
+            Assert.IsTrue(schema.DownOperations.All(operation =>
+                operation is not SqlOperation and not InsertDataOperation and not UpdateDataOperation and not DeleteDataOperation));
+            Assert.IsTrue(data.UpOperations.Count > 0);
+            Assert.IsTrue(data.UpOperations.Concat(data.DownOperations).All(operation =>
+                operation is SqlOperation or InsertDataOperation or UpdateDataOperation or DeleteDataOperation));
+            Assert.IsFalse(schema.UpOperations.OfType<CreateTableOperation>().Any(table =>
+                table.Name is "mission_active_release" or "mission_release_member"));
+            var reward = schema.UpOperations.OfType<CreateTableOperation>()
+                .Single(table => table.Name == "mission_reward_definition");
+            Assert.IsFalse(reward.Columns.Any(column => column.Name == "kind"));
+            Assert.IsTrue(reward.Columns.Any(column => column.Name == "selection_count"));
         }
 
         [TestMethod]
@@ -909,9 +675,9 @@ namespace Rasa.Test.Missions
             {
                 var dataMigrationId = context.Database.GetMigrations().Single(id =>
                     id.EndsWith(
-                        "_MissionContentLegacyNpcMissionBackfill",
+                        "_SeedWorldContent",
                         StringComparison.Ordinal));
-                context.GetService<IMigrator>().Migrate("20260919033748_MissionContentDefinition");
+                context.GetService<IMigrator>().Migrate("ConsolidatedWorldSchema");
                 context.Database.ExecuteSqlRaw(
                     "INSERT INTO npc_mission " +
                     "(id, giver_id, reciver_id, level, group_type, category_id, shareable, radio_completeable, comment) " +
@@ -921,7 +687,6 @@ namespace Rasa.Test.Missions
                     "(id, giver_id, reciver_id, level, group_type, category_id, shareable, radio_completeable, comment) " +
                     "VALUES (900429, 201, 202, 12, 4, 5, 0, 1, 'Legacy final assault')");
 
-                context.GetService<IMigrator>().Migrate("20260919034933_MissionContentReviewFixes");
                 using (var command = context.Database.GetDbConnection().CreateCommand())
                 {
                     if (command.Connection.State != System.Data.ConnectionState.Open)
@@ -932,9 +697,6 @@ namespace Rasa.Test.Missions
                 }
 
                 context.GetService<IMigrator>().Migrate(dataMigrationId);
-                var schemaMigrationId = context.Database.GetMigrations().Single(id =>
-                    id.EndsWith("_MissionContentPolicies", StringComparison.Ordinal));
-                context.GetService<IMigrator>().Migrate(schemaMigrationId);
 
                 var backfilled = context.MissionContentDefinitionEntries
                     .Where(entry => entry.MissionId == 900321 || entry.MissionId == 900429)
@@ -981,14 +743,14 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
-        public void MySqlMissionContentDataMigrationSqlBackfillsLegacyNpcMissionRowsUpgradeSafely()
+        public void MySqlWorldDataSeedsLegacyNpcMissionRows()
         {
             using var context = CreateContext(typeof(MySqlWorldContext), "unused");
-            var sql = NormalizeSql(context.GetService<IMigrator>().GenerateScript());
-
-            StringAssert.Contains(
-                sql,
-                "insert into mission_content_definition (mission_id, content_revision, requirement, client_name_text_id, giver_id, receiver_id, level, group_type, category_id, shareable, radio_completeable, comment) select npc_mission.id, 'legacy', 2, 0, npc_mission.giver_id, npc_mission.reciver_id, npc_mission.level, npc_mission.group_type, npc_mission.category_id, npc_mission.shareable, npc_mission.radio_completeable, npc_mission.comment from npc_mission where not exists (select 1 from mission_content_definition existing where existing.mission_id = npc_mission.id and existing.content_revision = 'legacy')");
+            var sql = NormalizeSql(context.GetService<IMigrator>()
+                .GenerateScript("ConsolidatedWorldSchema", "SeedWorldContent"));
+            StringAssert.Contains(sql, "insert into mission_content_definition");
+            StringAssert.Contains(sql, "select id, 'legacy', 2, 0, giver_id, reciver_id");
+            StringAssert.Contains(sql, "radio_completeable, comment, 1 from npc_mission");
         }
 
         private static void AssertContainsCreateTable(string sql, string tableName)

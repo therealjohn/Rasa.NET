@@ -106,9 +106,9 @@ replayed by a rejected duplicate request or ordinary reconnect. The native
 offer narrator owns its dialog playback; it is not played again by a second
 acceptance cue unless one is explicitly authored.
 
-Apply the `BootcampLightningCue` **World** migration when deploying (SQLite
-applies pending migrations on startup; MySQL requires an explicit update). It
-changes the first Eloh greeting to `1634`, the client's Logos/Lightning cue.
+The `SeedWorldContent` migration installs greeting `1634`, the client's
+Logos/Lightning cue (SQLite applies pending migrations on startup; MySQL
+requires an explicit update).
 `client/ui/conversationwindow.py` selects `tutlightning_left` or
 `tutlightning_right` for that greeting. The client owns the glow animation and
 hides it when the animation ends; the server does not change the selected slot
@@ -118,7 +118,7 @@ should confirm the expected roughly five-second highlight in both UI layouts.
 The focused creation, acceptance, rollback, reconnect and cue checks are:
 
 ```powershell
-dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~CharacterStartingExperienceCreationTests|FullyQualifiedName~BootcampCharacterEntryTests|FullyQualifiedName~BootcampInitiationTests|FullyQualifiedName~BootcampLightningCueMigration|FullyQualifiedName~MissionProtocolTests"
+dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~CharacterStartingExperienceCreationTests|FullyQualifiedName~BootcampCharacterEntryTests|FullyQualifiedName~BootcampInitiationTests|FullyQualifiedName~BootcampLightningCue|FullyQualifiedName~MissionProtocolTests"
 ```
 
 For guidance on authoring new mission content itself - conversation delivery,
@@ -436,9 +436,8 @@ crate stays visible in its opened state, including after reconnect and mission
 completion. A character whose crate objective was already completed by the old
 bulk-grant implementation does not receive a second loadout.
 
-The historical `BootcampCrateLoot` World migration replaces the bulk grant and
-crate despawn. The modular runtime additionally needs the current World/Char
-migrations, including the C# Bootcamp content seed; see
+`SeedWorldContent` installs the final crate behavior without an intermediate
+bulk-grant or despawn migration. Apply the current World/Char migrations; see
 [deployment setup](setup.md#mission-data-migrations).
 The crate's world lifetime now belongs to the experience run. Its per-template
 loot-claim records still use `character_mission_scenario_step`; do not confuse
@@ -488,12 +487,12 @@ The mission briefing remains until that turn-in; training completion is not an
 automatic reward claim. DeSimone then offers Capture the Flag (`1994`) through
 the existing NPC conversation.
 
-Apply the `BootcampWorldSetup` **World** migration when deploying. It corrects
-DeSimone's height and gives McAllister a nonzero run speed while retaining his
-zero wander speed. It does not reset characters or change the mission chain.
+`SeedWorldContent` includes DeSimone's corrected height and McAllister's nonzero
+run speed, while retaining his zero wander speed. It does not change the
+mission chain.
 
 ```powershell
-dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~BootcampMapSetupTests|FullyQualifiedName~BootcampWorldSetupMigration"
+dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~BootcampMapSetupTests|FullyQualifiedName~BootcampWorldContentGrounds"
 ```
 
 In the native client, verify the locked crate before accepting Gearing Up,
@@ -532,10 +531,9 @@ complete the Lightning objective. Weapon ammunition and Lightning eligibility,
 range, costs, interruption and cooldown checks remain on their normal paths.
 Other abilities and higher-rank object arc behavior are not added by this change.
 
-Apply the pending **World** migrations when deploying. `BootcampPracticeTargets`
-replaces the old mission-controlled creature spawns with the shared target
-bindings. `BootcampObjectiveIndicators` disables `show_3d_effect` for the
-Bootcamp chain, preserving navigation coordinates, radii and objective progress.
+Apply the pending **World** migrations when deploying. `SeedWorldContent`
+installs the shared practice-target bindings and disables `show_3d_effect` for
+the Bootcamp chain, preserving navigation coordinates and radii.
 The client's `missionlog.py` checks this flag before creating the floating
 `OVERHEAD_MISSION_INDICATOR` effects; NPC conversation status is not suppressed.
 
@@ -548,7 +546,7 @@ No client files are modified.
 Run the focused regression cases with:
 
 ```powershell
-dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~BootcampGearingUpInteractionTests|FullyQualifiedName~BootcampPracticeTargetsMigration|FullyQualifiedName~BootcampObjectiveIndicatorsMigration"
+dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~BootcampGearingUpInteractionTests|FullyQualifiedName~BootcampPracticeTargets|FullyQualifiedName~BootcampObjectiveIndicators"
 ```
 
 Native-client acceptance still requires a new connection to the updated server:
@@ -573,7 +571,7 @@ dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore 
 
 ### Capture the Flag encounter and escort
 
-Apply the paired `BootcampCaptureTheFlag` World migration before exercising
+Apply the paired `SeedWorldContent` World migration before exercising
 mission `1994`. It disables the old Collector/Dissector bridge pools, adds a
 recurring battle between AFS soldiers and Thrax Infantry Initiates, and authors
 the three Forean companions. The cave-exit area and indicator `439` are unchanged.
@@ -621,7 +619,7 @@ Thrax while remaining available for conversations. His kills grant player XP
 and loot only when the player or their owned escort damaged that enemy during
 its current life; unattended base fighting grants no player rewards.
 
-The paired `BootcampCombat` World migration adds twelve packs (42 Thrax total)
+The paired `SeedWorldContent` World migration adds twelve packs (42 Thrax total)
 along the cave, base, missing-team and crash-site approaches. Each pack contains
 three or four level-8-13 infantry; the new pools respawn after 120 seconds.
 Tizzik is level 13. The pre-existing bridge battle keeps its 20-second respawn.
@@ -648,7 +646,7 @@ lifetimes (120 seconds unclaimed, 300 seconds while open), not the one-second
 cleanup used for non-lootable scenario actors.
 
 ```powershell
-dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~BootcampCaptureTheFlag|FullyQualifiedName~CaptureTheFlagMigration|FullyQualifiedName~BootcampEncounterLootTests|FullyQualifiedName~BootcampCompanionCombatTests"
+dotnet test src\Rasa.Test\Rasa.Test.csproj --configuration Release --no-restore --filter "FullyQualifiedName~BootcampCaptureTheFlag|FullyQualifiedName~CaptureTheFlagContent|FullyQualifiedName~BootcampEncounterLootTests|FullyQualifiedName~BootcampCompanionCombatTests"
 ```
 
 #### Navigation repair from the cave exit to the reclaimed base
@@ -750,16 +748,13 @@ Internal extraction trigger `60` uses the wreck's pad at
 `(-225, 101.12099, -71)`, rather than the old hillside location. It is not a
 discoverable waypoint. Bootcamp does not create an always-on hovering ship at
 map entry. Other public-world dropship pads keep their existing visuals and menus.
-The forward `BootcampEvacuationReadyCleanup` migration also clears a retained
-wreck when an already-checked-in character reconnects from the previous scene
-data, before staging the ready ship.
+The ready-state sequence clears a retained wreck before staging the ready ship
+on reconnect.
 
-`BootcampExtractionAssault` extends the earlier `BootcampFinalePresentation`
-and ready-state cleanup with a forward World data migration for both providers.
-It adds the assault and reinforcement templates and updates the typed scene
-bindings. SQLite applies it on startup; MySQL remains manually migrated.
-No database reset or mission publish step is required. A character who already
-reached the old check-in stage is not forced to replay a newly added battle.
+`SeedWorldContent` installs the finale, ready-state cleanup, assault templates
+and reinforcement bindings together. SQLite applies it on startup; MySQL
+remains manually migrated. The consolidated branch history requires fresh
+databases and has no separate mission publication step.
 
 The new encounter positions and balance are authored server behavior, not
 claimed retail measurements. Native acceptance must check the uphill advance,
@@ -798,18 +793,13 @@ timeout or abandonment removes it, and accepting retry `2005` supplies one new
 bomb. Item changes share the mission/scene transaction and are published only
 after commit. Full Mission inventory rejects pickup without completing the
 objective. The issuance receipt prevents repeated reconnects from granting
-extra bombs. The `BootcampCorpseDialogue` World migration replaces the
-loot-only corpse with native conversation-capable class `21081`
+extra bombs. `SeedWorldContent` uses native conversation-capable class `21081`
 (`UsableNPCHumMCorpseV01`, mesh `29456`).
 
-The matching `BootcampCorpseDialogueProgress` Char migration repairs current
-branch saves whose durable area-scene input proves that the missing soldiers
-were already found. It completes the search, exposes the corpse objective and
-retires old survivor spawn receipts without granting a bomb or changing an
-active/satisfied bomb deadline. Characters already carrying or planting a bomb
-keep that progress. Apply both World and Char migrations; SQLite does so during
-normal startup. This is not a conversion for pre-redesign experimental schemas,
-and does not require resetting current character databases.
+Apply both World and Char migrations to fresh databases; SQLite does so during
+normal startup. No migration repairs older survivor layouts or adopts
+intermediate branch bomb attempts. Ordinary reconnect preserves progress and
+deadlines written by the current schema.
 
 The old Conrad placement `(-102.4, 86.20677, 66.8)` was inside the client's
 static trench wall (class `9707`), despite having a nearby navmesh polygon.
@@ -839,8 +829,8 @@ layouts has been removed for the fresh-database design.
 
 ### SQLite pass
 
-The character-flag consolidation is fresh-database-only. Its schema migration
-does not backfill old qualification rows. On the new database, verify that a
+The consolidated branch history is fresh-database-only. Its Char schema creates
+flags directly without backfilling old qualifications. On the new database, verify that a
 mission-set numeric flag survives reconnect, a failed transition grants no flag,
 and deleting/recreating a character does not carry flags into the new character.
 Bootcamp completion and skip store `CharacterFlagIds.BootcampComplete = 1`;

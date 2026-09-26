@@ -136,8 +136,8 @@ object/assignment before the scoped objective-3 transition commits.
 The former loot-only class `24990` has TreasureDispenser augmentation `64`,
 not the NPC receiver required for the Continue dialog. No standing or hidden
 proxy human is created, and no client files are changed. Server-only objective
-`10` is not sent. Current-branch saves are repaired without restarting an active
-bomb deadline.
+`10` is not sent. The consolidated history installs the final dialogue on fresh
+databases; it does not repair intermediate branch saves.
 See the [Bootcamp checks](world-testing.md) for migration and interaction coverage.
 
 ## Authorized radio missions
@@ -225,8 +225,8 @@ membership, stale assignment generations and old-run deaths.
 
 These checks use disposable fixtures and do not activate production missions.
 Native UI and live MySQL remain separate gates. The non-deadline lifecycle
-query budget is purpose-counted, and historical content fixtures use their
-actual migration boundaries rather than the latest entity shape.
+query budget is purpose-counted, and migration fixtures use the preserved
+`development` boundary and the consolidated schema/data steps.
 
 ## Assignment-owned quest items
 
@@ -248,9 +248,8 @@ Conrad's full Mission inventory must reject Continue without completing
 objective `3`, starting the deadline or losing the valid open conversation.
 Planting spends the bound bomb in its objective transaction before the fuse.
 Timeout preserves unrelated copies, and retry `2005` issues a new bound item
-only on acceptance. Char upgrade tests retain unambiguous legacy identity and
-consumed receipts, and quarantine ambiguous or unreceipted inventory without
-adopting or deleting it.
+only on acceptance. These fixtures create the final Char schema directly;
+there is no intermediate legacy-inventory upgrade.
 
 These checks run against disposable SQLite fixtures. Native UI behavior and
 live MySQL migration/transaction acceptance remain separate checks; generated
@@ -265,7 +264,7 @@ dotnet test src\Rasa.Test\Rasa.Test.csproj --no-restore --filter "FullyQualified
 `MissionRepeatabilityTests` covers opt-in authoring, per-assignment history,
 independent rewards, competing retries, cooldown/reset boundaries, UTC
 midnight and non-midnight windows, relog, pending rewards, terminal
-replacement/capacity, migration preservation, and stale conversations,
+replacement/capacity, durable history, and stale conversations,
 progress publications, scene inputs, item operations and group candidates.
 Automatic terminal replacement checks `MissionCleared -> MissionGained` and
 rejects any publication before the replacement transaction commits.

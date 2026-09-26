@@ -95,42 +95,5 @@ namespace Rasa.Services.Preloader
             migration.Sql(FormattableString.Invariant(
                 $"update {table} set pos_x = {position.X:R}, pos_y = {position.Y:R}, pos_z = {position.Z:R} where {key};"));
 
-        internal static void UpCharacters(MigrationBuilder migration)
-        {
-            // Unknown layouts stay intact for the runtime's explicit compatibility error.
-            migration.Sql(
-                "create temporary table bootcamp_reinforcements_legacy as " +
-                "select legacy.character_id, case when legacy.objective_state = 4 then " +
-                "case when search.objective_state = 2 then 1 else search.objective_state end " +
-                "else legacy.objective_state end as mapped_state " +
-                "from character_mission_objective legacy join character_mission_objective search " +
-                "on search.character_id = legacy.character_id and search.mission_id = 1995 and search.objective_id = 2 " +
-                "join character_mission mission on mission.character_id = legacy.character_id and mission.mission_id = 1995 " +
-                "where legacy.mission_id = 1995 and legacy.objective_id = 10 " +
-                "and mission.mission_state in (0, 1, 2, 4) " +
-                "and (mission.mission_state <> 0 or mission.completeable = case when not exists " +
-                "(select 1 from character_mission_objective incomplete where incomplete.character_id = legacy.character_id " +
-                "and incomplete.mission_id = 1995 and incomplete.objective_state <> 2) then 1 else 0 end) " +
-                "and (legacy.objective_state = 4 or search.objective_state = 2) " +
-                "and (select count(*) from character_mission_objective all_objectives " +
-                "where all_objectives.character_id = legacy.character_id and all_objectives.mission_id = 1995) = 5 " +
-                "and not exists (select 1 from character_mission_objective invalid " +
-                "where invalid.character_id = legacy.character_id and invalid.mission_id = 1995 " +
-                "and (invalid.objective_id not in (2, 10, 3, 1, 4) or invalid.objective_state not between 1 and 4)) " +
-                "and not exists (select 1 from character_mission_objective_counter counter_row " +
-                "where counter_row.character_id = legacy.character_id and counter_row.mission_id = 1995) " +
-                "and not exists (select 1 from character_mission_objective_item_counter counter_row " +
-                "where counter_row.character_id = legacy.character_id and counter_row.mission_id = 1995);");
-            migration.Sql(
-                "update character_mission_objective set objective_state = coalesce(" +
-                "(select mapped_state from bootcamp_reinforcements_legacy where character_id = character_mission_objective.character_id), objective_state) " +
-                "where mission_id = 1995 and objective_id = 2;");
-            migration.Sql(
-                "delete from character_mission_objective where mission_id = 1995 and objective_id = 10 " +
-                "and character_id in (select character_id from bootcamp_reinforcements_legacy);");
-            migration.Sql(migration.ActiveProvider == "Pomelo.EntityFrameworkCore.MySql"
-                ? "drop temporary table bootcamp_reinforcements_legacy;"
-                : "drop table bootcamp_reinforcements_legacy;");
-        }
     }
 }

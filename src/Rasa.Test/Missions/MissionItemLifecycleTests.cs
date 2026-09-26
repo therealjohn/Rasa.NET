@@ -478,83 +478,6 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
-        [DataRow(false)]
-        [DataRow(true)]
-        public void ForwardUpgradePreservesAnUnambiguousLegacyBombAndItsIssueReceipt(bool consumed)
-        {
-            using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);
-            ConradCorpseDialogueTests.FindMissingSoldiers(harness);
-            harness.UseObjectAndRecover(ConradCorpseDialogueTests.Corpse(harness));
-            uint itemId;
-            string assignmentId;
-            using (var unit = harness.Context.CreateChar())
-            {
-                var assignment = unit.CharacterMissions.GetByCharacterAndMission(harness.Client.Player.Id, 1995);
-                assignmentId = assignment.AssignmentId;
-                itemId = unit.CharacterMissionItems.GetOwned(harness.Client.Player.Id).Single().ItemId;
-                unit.CharacterMissionScenario.Add(new Rasa.Structures.Char.CharacterMissionScenarioStepEntry(
-                    harness.Client.Player.Id, 1995, "bootcamp-bomb-issued:" + assignmentId));
-            }
-            if (consumed)
-                harness.UseObjectAndRecover(BootcampRuntimeTestHarness.FindScenarioObject(harness.BootcampMap, "bootcamp-dropship-debris"));
-            using (var database = harness.Context.Open())
-            {
-                RewindItemSchema(database);
-                database.Database.Migrate();
-            }
-            harness.ReconnectFresh();
-
-            using var verify = harness.Context.CreateChar();
-            var owned = verify.CharacterMissionItems.GetOwned(harness.Client.Player.Id);
-            if (consumed)
-            {
-                Assert.AreEqual(0, owned.Count);
-                Assert.IsNotNull(verify.CharacterMissionItems.GetReceipt(harness.Client.Player.Id, assignmentId, "plant-bomb"));
-            }
-            else
-            {
-                Assert.AreEqual(itemId, owned.Single().ItemId);
-                Assert.AreEqual(assignmentId, owned.Single().AssignmentId);
-            }
-            Assert.IsNotNull(verify.CharacterMissionItems.GetReceipt(harness.Client.Player.Id, assignmentId, "issue-bomb"));
-        }
-
-        [TestMethod]
-        [DataRow(true)]
-        [DataRow(false)]
-        public void ForwardUpgradeQuarantinesAmbiguousOrUnreceiptedBombsWithoutAdoptingOrDeletingThem(bool extraCopy)
-        {
-            using var harness = BootcampRuntimeTestHarness.Create(useWorldContent: true);
-            ConradCorpseDialogueTests.FindMissingSoldiers(harness);
-            harness.UseObjectAndRecover(ConradCorpseDialogueTests.Corpse(harness));
-            string assignmentId;
-            using (var unit = harness.Context.CreateChar())
-            {
-                assignmentId = unit.CharacterMissions.GetByCharacterAndMission(harness.Client.Player.Id, 1995).AssignmentId;
-                if (extraCopy)
-                {
-                    unit.CharacterMissionScenario.Add(new Rasa.Structures.Char.CharacterMissionScenarioStepEntry(
-                        harness.Client.Player.Id, 1995, "bootcamp-bomb-issued:" + assignmentId));
-                    using var grant = new InventoryManager.InventoryGrant();
-                    unit.ExecuteTransaction(() => grant.PlanAndSave(harness.Client,
-                        new[] { new InventoryManager.InventoryItemGrant(11519, 1) }, unit));
-                    grant.Publish(harness.Client);
-                }
-            }
-            using (var database = harness.Context.Open())
-            {
-                RewindItemSchema(database);
-                database.Database.Migrate();
-            }
-            harness.ReconnectFresh();
-            Assert.IsFalse(harness.Manager.TryAbandon(harness.Client, 1995));
-            Assert.AreEqual(extraCopy ? 2 : 1, harness.ReadOwnedTemplateCounts(11519).GetValueOrDefault(11519U));
-            using var verify = harness.Context.CreateChar();
-            Assert.AreEqual(0, verify.CharacterMissionItems.GetOwned(harness.Client.Player.Id).Count);
-            Assert.IsNotNull(verify.CharacterMissionItems.GetQuarantine(harness.Client.Player.Id, assignmentId));
-        }
-
-        [TestMethod]
         public void AnInventoryChangeDuringFinalWritesRollsBackTheStagedItemAndReceipt()
         {
             using var context = Create();
@@ -1393,14 +1316,6 @@ namespace Rasa.Test.Missions
         }
 
         private static MissionTestContext Create(params uint[] missionIds) => Create(false, missionIds);
-
-        private static void RewindItemSchema(Rasa.Context.Char.SqliteCharContext database)
-        {
-            // Recreate only P4's legacy item schema in this disposable fixture.
-            // Later per-attempt history is deliberately forward-only.
-            database.Database.ExecuteSqlRaw(database.GetService<IMigrator>().GenerateScript(
-                "20260925145508_MissionItemLegacyUpgrade", "20260924184424_PersistentCharacterFlags"));
-        }
 
         private static MissionTestContext Create(bool acceptanceItems, params uint[] missionIds)
         {

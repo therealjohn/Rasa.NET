@@ -199,8 +199,9 @@ different Python `Zero` struct are not interpreted as a clear. The unused item
 field must retain its existing `None` contract.
 
 `character.current_ability_slot` is a new server-owned byte field with migration
-default zero, not a fabricated client option. Additive SQLite and MySQL
-`AbilityTraySelection` migrations and snapshots preserve earlier migrations.
+default zero, not a fabricated client option. The SQLite and MySQL
+`ConsolidatedCharacterSchema` migrations include it after the preserved
+`development` history.
 Drawer contents and cursor are sent together on assignment, including an empty
 drawer. Invalid restored mappings, ranks, budget, slots or cursor fail closed
 before world admission, with an explicit log and per-client disconnect rather

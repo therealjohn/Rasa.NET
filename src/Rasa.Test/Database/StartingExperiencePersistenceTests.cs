@@ -55,32 +55,18 @@ namespace Rasa.Test.Database
         }
 
         [TestMethod]
-        public void MigrationMarksExistingCharactersLegacyWithoutMovingThem()
+        public void FreshSchemaDoesNotInventLegacyStartingExperience()
         {
             WithDisposableSqlite((context, database) =>
             {
-                var dataMigrationId = context.Database.GetMigrations().Single(id =>
-                    id.EndsWith(
-                        "_StartingExperienceLegacyBackfill",
-                        StringComparison.Ordinal));
-                context.GetService<IMigrator>()
-                    .Migrate("20260918001335_MissionObjectiveProgress");
+                context.Database.Migrate();
                 SeedCharacter(context, 17, 123, 1, 7777);
-
-                context.GetService<IMigrator>()
-                    .Migrate("20260919053207_MissionDurabilityState");
-                Assert.IsNull(new CharacterStartingExperienceRepository(context).Get(123));
-
-                context.GetService<IMigrator>().Migrate(dataMigrationId);
+                context.Initialize();
 
                 using var reopened = Open(database);
-                var character = new CharacterRepository(reopened).Get(123);
-                var experience = new CharacterStartingExperienceRepository(reopened).Get(123);
-
-                Assert.AreEqual(7777U, character.MapContextId);
-                Assert.IsNotNull(experience);
-                Assert.AreEqual("legacy", experience.ContentRevision);
-                Assert.AreEqual(CharacterStartingExperienceState.Legacy, experience.State);
+                Assert.AreEqual(7777U, new CharacterRepository(reopened).Get(123).MapContextId);
+                Assert.IsNull(new CharacterStartingExperienceRepository(reopened).Get(123));
+                Assert.IsFalse(reopened.Database.GetMigrations().Any(id => id.Contains("LegacyBackfill")));
             });
         }
 

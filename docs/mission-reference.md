@@ -11,6 +11,7 @@ envelope, release manifest or publish command is required.
 | Shared scene and experience definitions | [MissionSceneDefinition.cs](../src/Rasa.Missions/Content/MissionSceneDefinition.cs) |
 | Internal scene serialization | [MissionContentCodec.cs](../src/Rasa.Missions/Content/MissionContentCodec.cs) |
 | Migration helpers | [MissionDataMigration.cs](../src/Rasa.DBL/Services/Preloader/Missions/MissionDataMigration.cs) |
+| Consolidated World seed | [WorldContentDataV1.cs](../src/Rasa.DBL/Services/Preloader/WorldContentDataV1.cs) |
 | Fixed Bootcamp migration data | [BootcampMissionDataV1.cs](../src/Rasa.DBL/Services/Preloader/Missions/BootcampMissionDataV1.cs) |
 | Normalized row fields | `src\Rasa.DBL\Structures\World\Mission*Entry.cs` |
 | Objective trigger shapes | [MissionObjectiveRuntimeAnalyzer.cs](../src/Rasa.Game/Managers/MissionObjectiveRuntimeAnalyzer.cs), [MissionProgressRuleAuthoring.cs](../src/Rasa.Game/Managers/MissionProgressRuleAuthoring.cs) |
@@ -365,15 +366,10 @@ claims. Other outcomes use null windows and do not collide on that guard.
 Failure and abandonment consume neither cooldown nor Daily eligibility.
 Unsettled `Success`, including preserved legacy history, blocks a new attempt.
 
-Forward Char migrations preserve valid old IDs, revisions, outcome and
-completion timestamps. They restore reward timestamps from receipts where
-available, otherwise from old history. Terminal journals missing a history row
-are imported using their receipt time, or the migration's UTC time if no
-terminal timestamp was recorded. Missing legacy history IDs receive new
-identities; recorded valid IDs are not rewritten. Old collapsed history cannot
-reconstruct attempts that were never recorded. The data migration is
-forward-only: collapsing per-attempt history on downgrade would discard
-reward claims. Back up the database before migration.
+`ConsolidatedCharacterSchema` creates per-assignment history, reward timestamps
+and forwarding provenance directly. It does not import intermediate branch
+journals, reconstruct missing attempts or infer prior reward claims. The
+consolidated branch history requires fresh databases.
 
 Bootcamp remains `Once`, private and unshareable. Persistent flags and
 starting-experience state are separate from attempt history. Party acceptance
@@ -575,14 +571,13 @@ marker or ownership change during the transaction still rejects. Clone-credit
 redemption rejects assignment ownership and commits the ordinary item cost
 and credit increment together before publishing either change.
 
-### Bootcamp forward data
+### Bootcamp seed data
 
-`AuthoredMissionItems` installs the action payload schema.
-`BootcampAssignmentItems` installs the fixed `BootcampMissionItemsV7` data.
-These are separate paired migrations because SQLite rebuilds the action
-constraint before the new data can use it. `ItemIntentJson` is fluent-mapped:
-adding a reflected `ColumnAttribute` would change historical preloader row
-widths.
+`ConsolidatedWorldSchema` creates the final action payload schema.
+`SeedWorldContent` installs the fixed `BootcampMissionItemsV7` data through
+`WorldContentDataV1`. Schema and data are separate paired migrations, so all
+constraints exist before seeding. `ItemIntentJson` is fluent-mapped: adding a
+reflected `ColumnAttribute` would change fixed preloader row widths.
 
 For mission `1995`, objective-3 Continue issues one template `11519`; its
 existing objective activation starts the 600-second deadline in that same
@@ -590,18 +585,14 @@ transaction. The planting transition consumes that assignment's item before
 queuing the existing fuse. Timeout and abandonment remove only that attempt's
 item. Mission `2005` explicitly issues one new item on acceptance.
 
-`AssignmentMissionItems` installs the Char ledger and receipts.
-`MissionItemLegacyUpgrade` adopts a legacy bomb only with an exact old issue
-receipt, matching private Bootcamp scene/participant, one active attempt and
-one valid, single-quantity personal bomb. Settled attempts preserve issue and
-plant receipts without restoring an item. Ambiguous or missing evidence is
-recorded in `character_mission_item_quarantine`, and item operations and cleanup
-reject it. No unrelated item is adopted or deleted to resolve ambiguity.
+`ConsolidatedCharacterSchema` installs the item ledger, receipts and quarantine
+table. No migration adopts legacy bombs or reconstructs their receipts.
+Runtime item operations and cleanup reject quarantined assignments; unrelated
+items must not be adopted or deleted to resolve ambiguity.
 
-Apply the paired World and Char updates before admitting players. This is a
-narrow upgrade of current-branch assignments, not a conversion of old
-experimental mission databases. The five existing Bootcamp missions remain
-the only enabled production definitions.
+Apply the paired World and Char migrations to fresh databases before admitting
+players. The five existing Bootcamp missions remain the only enabled
+production definitions.
 
 ## Player mission conversations
 
@@ -1054,13 +1045,14 @@ Experience-level `ActorPolicies` remain a private-map fallback; public roles
 use the actor metadata above rather than installing a map/template override.
 The fixed C# Bootcamp example is
 [BootcampMissionDataV1.Experience.cs](../src/Rasa.DBL/Services/Preloader/Missions/BootcampMissionDataV1.Experience.cs).
-The subsequent
+The composable helper
 [BootcampFinaleDataV2.cs](../src/Rasa.DBL/Services/Preloader/Missions/BootcampFinaleDataV2.cs)
-shows a forward migration that changes the finale without editing the first seed.
+supplies finale presentation and experience bindings.
 [BootcampAudioAndCreditsV3.cs](../src/Rasa.DBL/Services/Preloader/Missions/BootcampAudioAndCreditsV3.cs)
-then supplies native audio bindings and the configured credit rewards.
+supplies native audio bindings and the configured credit rewards.
 [BootcampExtractionDataV5.cs](../src/Rasa.DBL/Services/Preloader/Missions/BootcampExtractionDataV5.cs)
 authors a finite assault, allied defenders and defeat-sequence bindings.
+`SeedWorldContent` applies these fixed helpers in dependency order.
 The mission-local extraction script keeps its additive checkpoint compatible
 with earlier sequence-only saves; the generic mission manager has no
 Bootcamp-specific enemy counters or spawn coordinates.

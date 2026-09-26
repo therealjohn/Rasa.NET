@@ -54,14 +54,14 @@ namespace Rasa.Test.Missions
         [TestMethod]
         public void BothProvidersAuthorTheSameEncounterContentAndRollback()
         {
-            var sqlite = new Rasa.Migrations.SqliteWorld.BootcampCombat();
-            var mysql = new Rasa.Migrations.MySqlWorld.BootcampCombat();
+            var sqlite = new Rasa.Migrations.SqliteWorld.SeedWorldContent();
+            var mysql = new Rasa.Migrations.MySqlWorld.SeedWorldContent();
             CollectionAssert.AreEqual(
-                sqlite.UpOperations.Cast<SqlOperation>().Select(operation => operation.Sql).ToArray(),
-                mysql.UpOperations.Cast<SqlOperation>().Select(operation => operation.Sql).ToArray());
+                sqlite.UpOperations.OfType<SqlOperation>().Select(operation => operation.Sql).ToArray(),
+                mysql.UpOperations.OfType<SqlOperation>().Select(operation => operation.Sql).ToArray());
             CollectionAssert.AreEqual(
-                sqlite.DownOperations.Cast<SqlOperation>().Select(operation => operation.Sql).ToArray(),
-                mysql.DownOperations.Cast<SqlOperation>().Select(operation => operation.Sql).ToArray());
+                sqlite.DownOperations.OfType<SqlOperation>().Select(operation => operation.Sql).ToArray(),
+                mysql.DownOperations.OfType<SqlOperation>().Select(operation => operation.Sql).ToArray());
         }
 
         [TestMethod]

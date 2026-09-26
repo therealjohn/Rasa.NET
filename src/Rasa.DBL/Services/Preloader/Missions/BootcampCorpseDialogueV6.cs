@@ -74,31 +74,5 @@ namespace Rasa.Services.Preloader.Missions
             MissionDataMigration.UpdateExperience(migration, BootcampExtractionDataV5.Experience());
         }
 
-        public static void UpgradeCharacters(MigrationBuilder migration)
-        {
-            // The queued area scene is durable proof that this assignment already found the bodies.
-            migration.Sql(
-                "create temporary table bootcamp_corpse_dialogue_upgrade as " +
-                "select s.run_id, s.generation, s.owner_character_id as character_id " +
-                "from mission_scene s join character_mission m on m.assignment_id = s.assignment_id " +
-                "join character_mission_objective search on search.character_id = m.character_id and search.mission_id = m.mission_id and search.objective_id = 2 " +
-                "join character_mission_objective bomb on bomb.character_id = m.character_id and bomb.mission_id = m.mission_id and bomb.objective_id = 3 " +
-                "where s.mission_id = 1995 and s.script_key = 'bootcamp.reinforcements' and m.mission_state = 0 " +
-                "and s.status in ('Running', 'Waiting') and search.objective_state = 1 and bomb.objective_state = 4 " +
-                "and exists (select 1 from mission_scene_message input where input.run_id = s.run_id and input.generation = s.generation and input.sequence_id = 1 and input.status in ('Pending', 'Handled'));");
-            migration.Sql(
-                "update character_mission_objective set objective_state = case when objective_id = 2 then 2 else 1 end " +
-                "where mission_id = 1995 and objective_id in (2, 3) and character_id in (select character_id from bootcamp_corpse_dialogue_upgrade);");
-            migration.Sql(
-                "insert into mission_scene_message (run_id, generation, operation_key, sequence_id, status, version) " +
-                "select run_id, generation, 'corpse-dialogue-upgrade', 7, 'Pending', 0 from bootcamp_corpse_dialogue_upgrade;");
-            migration.Sql(
-                "update mission_world_effect set payload = '{\"$kind\":\"remove\",\"OperationKey\":\"sequence-1-step-1-group-1-spawn-1-0\",\"Role\":\"group-1-spawn-1-0\"}', status = 'Pending', failure = null " +
-                "where operation_key = 'sequence-1-step-1-group-1-spawn-1-0' and run_id in " +
-                "(select run_id from mission_scene where mission_id = 1995 and script_key = 'bootcamp.reinforcements');");
-            migration.Sql(migration.ActiveProvider == "Pomelo.EntityFrameworkCore.MySql"
-                ? "drop temporary table bootcamp_corpse_dialogue_upgrade;"
-                : "drop table bootcamp_corpse_dialogue_upgrade;");
-        }
     }
 }

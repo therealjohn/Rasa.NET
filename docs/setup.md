@@ -191,7 +191,9 @@ mission diagnostic and refuses to print `Server ready!` until the content is
 fixed. Apply the matching World migrations and deploy the required C# mission
 scripts; there is no separate active-release requirement.
 
-The .NET 10 platform update does not add or regenerate database migrations or model snapshots. Apply the repository's existing migrations in their recorded order.
+The .NET 10 platform update itself requires no schema change. Apply the
+repository's migrations in their recorded order, subject to the fresh-database
+boundary below.
 
 Now navigate to the folder of the Rasa.DBL project:
 
@@ -262,14 +264,28 @@ SQLite startup creates missing files and applies pending schema/data migrations.
 MySQL requires the normal explicit `dotnet ef database update` commands before
 starting Game. Both providers use shared C# mission-data helpers.
 
-This branch's replacement of experimental pack publication targets **fresh
-databases**, with no old-release or saved-state conversion. Use fresh database
-paths, or remove your own disposable files when you intend to start over.
-The server does not delete databases or reset characters.
+This branch consolidates its 162 development-time migration steps into **six**,
+counting SQLite and MySQL separately. Migrations already on `development` remain
+unchanged.
 
-The `SeedMigratedBootcamp` data migration installs five enabled missions and
-their private experience bindings. Required script and content validation
-remains part of startup. Read the [authoring guide](missions.md) and
+| Database | New migrations for each provider |
+| --- | --- |
+| Auth | None; the MySQL identity correction is snapshot metadata only |
+| Char | `ConsolidatedCharacterSchema` |
+| World | `ConsolidatedWorldSchema`, then `SeedWorldContent` |
+
+The consolidated history targets **fresh databases**. It does not upgrade
+databases that recorded the removed branch migration IDs, convert experimental
+mission releases, or backfill intermediate character saves. Use fresh database
+paths, or remove your own disposable files when you intend to start over.
+Do not rewrite `__EFMigrationsHistory` to make an old branch database appear
+compatible. The server does not delete databases or reset characters.
+
+`SeedWorldContent` installs shared World content, including the five enabled
+Bootcamp missions and their private experience bindings. Both providers call
+`WorldContentDataV1`; schema and data remain separate. Subsequent content changes
+should add new migrations rather than edit this seed. Required script and content
+validation remains part of startup. Read the [authoring guide](missions.md) and
 [data/script reference](mission-reference.md) when adding or changing missions.
 
 ## Build and run the code from Visual Studio

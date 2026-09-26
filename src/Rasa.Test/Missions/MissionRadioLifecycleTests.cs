@@ -1233,9 +1233,9 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
-        public void RadioOfferCharMigrationPreservesAssignmentsObjectivesHistoryAndReceipts()
+        public void ReinitializationPreservesRadioAssignmentsObjectivesHistoryAndReceipts()
         {
-            using var context = new MissionTestContext("20260925210143_ForwardedSceneEffectProvenance");
+            using var context = new MissionTestContext();
             context.SeedCharacter(1, 0, 1);
             context.SeedMission(1, 731, (uint)MissionState.Completed, false);
             context.SeedMission(1, 732, (uint)MissionState.Failed, false);

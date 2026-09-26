@@ -10,6 +10,10 @@ namespace Rasa.Context.Char
         internal static void Configure(ModelBuilder model)
         {
             model.Entity<CharacterMissionEntry>().HasIndex(entry => entry.AssignmentId).IsUnique();
+            model.Entity<CharacterMissionEntry>().Property(entry => entry.AssignmentId).HasDefaultValue("");
+            model.Entity<CharacterMissionEntry>().Property(entry => entry.ContentRevision).HasDefaultValue("");
+            model.Entity<CharacterMissionEntry>().Property(entry => entry.Generation).HasDefaultValue(0U);
+            model.Entity<CharacterMissionEntry>().Property(entry => entry.Version).HasDefaultValue(0L);
             model.Entity<CharacterMissionOfferEntry>().HasKey(entry => new { entry.CharacterId, entry.MissionId });
             model.Entity<CharacterMissionOfferEntry>().HasIndex(entry => entry.OfferId).IsUnique();
             model.Entity<CharacterMissionOfferEntry>().Property(entry => entry.PartySource).HasConversion(
@@ -28,6 +32,7 @@ namespace Rasa.Context.Char
             model.Entity<MissionSceneEntry>().HasIndex(entry => new { entry.OwnerCharacterId, entry.MissionId });
             model.Entity<MissionSceneEntry>().HasIndex(entry =>
                 new { entry.OwnerCharacterId, entry.MissionId, entry.ScriptKey, entry.AssignmentId }).IsUnique();
+            model.Entity<MissionSceneEntry>().Property(entry => entry.AssignmentId).HasDefaultValue("");
             model.Entity<MissionSceneParticipantEntry>().HasKey(entry => new { entry.RunId, entry.CharacterId });
             model.Entity<MissionSceneParticipantEntry>().HasOne<MissionSceneEntry>().WithMany()
                 .HasForeignKey(entry => entry.RunId).OnDelete(DeleteBehavior.Cascade);
@@ -35,6 +40,7 @@ namespace Rasa.Context.Char
             model.Entity<MissionActorLeaseEntry>().HasOne<MissionSceneEntry>().WithMany()
                 .HasForeignKey(entry => entry.RunId).OnDelete(DeleteBehavior.Restrict);
             model.Entity<MissionTimerEntry>().HasKey(entry => new { entry.RunId, entry.Name });
+            model.Entity<MissionTimerEntry>().Property(entry => entry.SequenceId).HasDefaultValue(0U);
             model.Entity<MissionTimerEntry>().HasIndex(entry => new { entry.Disposition, entry.DueAtUtc });
             model.Entity<MissionTimerEntry>().HasOne<MissionSceneEntry>().WithMany()
                 .HasForeignKey(entry => entry.RunId).OnDelete(DeleteBehavior.Cascade);

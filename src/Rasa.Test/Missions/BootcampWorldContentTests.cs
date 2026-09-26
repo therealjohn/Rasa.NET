@@ -31,8 +31,8 @@ namespace Rasa.Test.Missions
     public class BootcampMissionContentTests
     {
         private const string BootcampRevision = "deployment_11";
-        private const string SqliteMigrationId = "20260919110000_BootcampMissionContent";
-        private const string MySqlMigrationId = "20260919110000_BootcampMissionContent";
+        private const string SqliteMigrationId = "20260926190153_SeedWorldContent";
+        private const string MySqlMigrationId = "20260926190349_SeedWorldContent";
         private static readonly uint[] RequiredMissionIds = { 1990, 1992, 1994, 1995, 2005 };
         private static readonly uint[] AllMissionIds = { 1990, 1992, 1994, 1995, 2005 };
         private static readonly uint[] BootcampNpcIds =
@@ -41,13 +41,11 @@ namespace Rasa.Test.Missions
         };
 
         [TestMethod]
-        public void MissionIntegrationUpgradePreservesBaselineWorldContentAndAddsOnlyAuthoredCapabilities()
+        public void RepeatedInitializationPreservesWorldContentAndAuthoredCapabilities()
         {
             WithDisposableSqliteWorld((context, _) =>
             {
-                const string baseline = "20260924180050_BootcampCorpseDialogue";
-                context.GetService<IMigrator>().Migrate(baseline);
-                Assert.AreEqual(baseline, context.Database.GetAppliedMigrations().Last());
+                context.Database.Migrate();
                 string Definitions() => System.Text.Json.JsonSerializer.Serialize(context.MissionContentDefinitionEntries
                     .AsNoTracking().OrderBy(row => row.MissionId).ThenBy(row => row.ContentRevision).ToArray());
                 string Rewards() => System.Text.Json.JsonSerializer.Serialize(context.MissionRewardDefinitionEntries
@@ -84,12 +82,10 @@ namespace Rasa.Test.Missions
                             Assert.AreEqual(new Rasa.Missions.Scenes.IssueMissionItemIntent(
                                 "accept-bomb", 2005, "bomb", 11519, 1), upgraded.AcceptanceItems.Single());
                     }
-                    upgraded.Items = null;
-                    upgraded.AcceptanceItems = null;
                     Assert.AreEqual(
                         System.Text.Json.JsonSerializer.Serialize(scenes[id], Rasa.Missions.Content.MissionContentCodec.Options),
                         System.Text.Json.JsonSerializer.Serialize(upgraded, Rasa.Missions.Content.MissionContentCodec.Options),
-                        $"Mission {id}'s existing scene and dialogue must survive the combined upgrade.");
+                        $"Mission {id}'s existing scene and dialogue must survive repeated initialization.");
                 }
                 Assert.AreEqual(3, context.MissionActionEntries.Count(row => (byte)row.Kind >= 10));
                 Assert.IsEmpty(context.Set<MissionRepeatPolicyEntry>().ToArray());
@@ -105,11 +101,11 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
-        public void RadioChannelMigrationPreservesWorldRowsAndSupportsActuallyNullableNpcIds()
+        public void RadioChannelsSupportNullableNpcIdsAndPreserveWorldRowsOnReinitialization()
         {
             WithDisposableSqliteWorld((context, _) =>
             {
-                context.GetService<IMigrator>().Migrate("20260925190929_MissionRepeatPolicies");
+                context.Database.Migrate();
                 var before = System.Text.Json.JsonSerializer.Serialize(
                     context.MissionContentDefinitionEntries.AsNoTracking().OrderBy(entry => entry.MissionId)
                         .ThenBy(entry => entry.ContentRevision).ToArray());
@@ -172,8 +168,8 @@ namespace Rasa.Test.Missions
         public void RadioSchemaChangesKeepDataInASubsequentMigration(bool mysql)
         {
             Migration schema = mysql
-                ? new Rasa.Migrations.MySqlWorld.MissionRadioChannels()
-                : new Rasa.Migrations.SqliteWorld.MissionRadioChannels();
+                ? new Rasa.Migrations.MySqlWorld.ConsolidatedWorldSchema()
+                : new Rasa.Migrations.SqliteWorld.ConsolidatedWorldSchema();
             Assert.IsEmpty(schema.UpOperations.OfType<Microsoft.EntityFrameworkCore.Migrations.Operations.SqlOperation>(),
                 "SQLite defers the nullable-ID table rebuild; seed data only in a later migration.");
         }
@@ -609,234 +605,84 @@ namespace Rasa.Test.Missions
         }
 
         [TestMethod]
-        public void BootcampCrateLootMigrationUpgradesAndDowngradesExistingWorldContent()
+        public void BootcampCrateLootDisablesTheEmptyCrateWithoutGrantingItsContentsTwice()
         {
             WithDisposableSqliteWorld((context, _) =>
             {
-                const string previous = "20260919183000_BootcampFinalReviewFixes";
-                var migrator = context.GetService<IMigrator>();
-                migrator.Migrate(previous);
-                Assert.AreEqual(MissionScenarioStepKind.GrantRewardPackage,
-                    context.MissionScenarioStepEntries.AsNoTracking().Single(step =>
-                        step.MissionId == 1992 && step.ScenarioId == 2 && step.StepId == 1).Kind);
-
-                migrator.Migrate("20260921183000_BootcampCrateLoot");
-
+                context.Database.Migrate();
                 var steps = context.MissionScenarioStepEntries.AsNoTracking().Where(step =>
                     step.MissionId == 1992 && step.ScenarioId == 2).ToArray();
                 Assert.AreEqual(MissionScenarioStepKind.DisableInteraction,
                     steps.Single(step => step.StepId == 1).Kind);
                 Assert.AreEqual(29877U, steps.Single(step => step.StepId == 1).EntityClassId);
-                Assert.IsFalse(steps.Any(step =>
-                    step.Kind == MissionScenarioStepKind.GrantRewardPackage ||
+                Assert.IsFalse(steps.Any(step => step.Kind == MissionScenarioStepKind.GrantRewardPackage ||
                     step.Kind == MissionScenarioStepKind.DespawnDynamicObject));
                 Assert.AreEqual(2, steps.Count(step => step.Kind == MissionScenarioStepKind.GrantSkillAbility));
-
-                migrator.Migrate(previous);
-
-                steps = context.MissionScenarioStepEntries.AsNoTracking().Where(step =>
-                    step.MissionId == 1992 && step.ScenarioId == 2).ToArray();
-                Assert.AreEqual(MissionScenarioStepKind.GrantRewardPackage,
-                    steps.Single(step => step.StepId == 1).Kind);
-                Assert.AreEqual(MissionScenarioStepKind.DespawnDynamicObject,
-                    steps.Single(step => step.StepId == 2).Kind);
-                migrator.Migrate();
                 Assert.IsFalse(Validate(LoadSnapshot(context), context).BlocksReadiness);
             });
         }
 
         [TestMethod]
-        [DataRow(typeof(SqliteWorldContext), "20260922161000_BootcampReinforcements", false)]
-        [DataRow(typeof(MySqlWorldContext), "20260922161010_BootcampReinforcements", false)]
-        [DataRow(typeof(Rasa.Context.Char.SqliteCharContext), "20260922161000_BootcampReinforcements", true)]
-        [DataRow(typeof(Rasa.Context.Char.MySqlCharContext), "20260922161010_BootcampReinforcements", true)]
-        public void ReinforcementsProviderMigrationsPreserveProgressAndRepairWorldContent(
-            Type contextType, string migrationId, bool characterData)
-        {
-            using var context = CreateContext(contextType, "unused");
-            var migrations = context.Database.GetMigrations().ToArray();
-            CollectionAssert.Contains(migrations, migrationId);
-            var previous = migrations.TakeWhile(migration => migration != migrationId).Last();
-            var sql = NormalizeSql(context.GetService<IMigrator>().GenerateScript(previous, migrationId));
-            if (characterData)
-            {
-                StringAssert.Contains(sql, "create temporary table bootcamp_reinforcements_legacy");
-                StringAssert.Contains(sql, "delete from character_mission_objective where mission_id = 1995 and objective_id = 10");
-                Assert.IsFalse(sql.Contains("update character_mission_deadline", StringComparison.Ordinal));
-                Assert.IsFalse(sql.Contains("delete from character_mission_scenario", StringComparison.Ordinal));
-                if (contextType == typeof(Rasa.Context.Char.MySqlCharContext))
-                    StringAssert.Contains(sql, "drop temporary table bootcamp_reinforcements_legacy");
-            }
-            else
-            {
-                StringAssert.Contains(sql, "update mission_trigger set objective_id = 2, transition_id = 2");
-                StringAssert.Contains(sql, "update mission_scenario_step set entity_class_id = 24586");
-                StringAssert.Contains(sql, "update mission_trigger set subject_id = 24586");
-                StringAssert.Contains(sql, "delete from mission_objective_definition where mission_id = 1995 and content_revision = 'deployment_11' and objective_id = 10");
-            }
-        }
-
-        [TestMethod]
-        [DataRow(typeof(SqliteWorldContext), "20260919183000_BootcampFinalReviewFixes", "20260921183000_BootcampCrateLoot")]
-        [DataRow(typeof(MySqlWorldContext), "20260919183010_BootcampFinalReviewFixes", "20260921183010_BootcampCrateLoot")]
-        public void BootcampCrateLootMigrationGeneratesBoundedUpgradeSqlForBothProviders(
-            Type contextType,
-            string previous,
-            string current)
-        {
-            using var context = CreateContext(contextType, "unused");
-            CollectionAssert.Contains(context.Database.GetMigrations().ToArray(), current);
-            var sql = NormalizeSql(context.GetService<IMigrator>().GenerateScript(previous, current));
-
-            StringAssert.Contains(sql, "set kind = 4, reward_id = null, entity_class_id = 29877");
-            StringAssert.Contains(sql, "where mission_id = 1992 and content_revision = 'deployment_11' and scenario_id = 2");
-            StringAssert.Contains(sql, "and step_id = 2 and kind = 21 and dynamic_object_key = 'bootcamp-equipment-crate'");
-            Assert.IsFalse(context.Database.HasPendingModelChanges());
-        }
-
-        [TestMethod]
-        public void BootcampPracticeTargetsMigrationReplacesCreatureSpawnsAndKeepsTheTrainingStagesDistinct()
+        public void BootcampPracticeTargetsKeepTheTrainingStagesDistinct()
         {
             WithDisposableSqliteWorld((context, _) =>
             {
-                var migrator = context.GetService<IMigrator>();
-                migrator.Migrate("20260921183000_BootcampCrateLoot");
-                migrator.Migrate("20260921203000_BootcampPracticeTargets");
-                var triggers = context.MissionTriggerEntries.AsNoTracking()
-                    .Where(trigger => trigger.MissionId == 1992 &&
-                        (trigger.ObjectiveId == 3 || trigger.ObjectiveId == 8)).ToArray();
+                context.Database.Migrate();
+                var triggers = context.MissionTriggerEntries.AsNoTracking().Where(trigger =>
+                    trigger.MissionId == 1992 && (trigger.ObjectiveId == 3 || trigger.ObjectiveId == 8)).ToArray();
                 Assert.IsTrue(triggers.All(trigger => trigger.EventKind == 13 && trigger.SubjectId == 29365));
                 Assert.AreEqual(1U, triggers.Single(trigger => trigger.ObjectiveId == 3).CounterId);
                 Assert.AreEqual(194U, triggers.Single(trigger => trigger.ObjectiveId == 8).CounterId);
                 var steps = context.MissionScenarioStepEntries.AsNoTracking().Where(step =>
-                    step.MissionId == 1992 &&
-                    ((step.ScenarioId == 3 && step.StepId == 1) || (step.ScenarioId == 4 && step.StepId == 3)))
-                    .ToArray();
+                    step.MissionId == 1992 && ((step.ScenarioId == 3 && step.StepId == 1) ||
+                    (step.ScenarioId == 4 && step.StepId == 3))).ToArray();
                 Assert.AreEqual(2, steps.Length);
                 Assert.IsTrue(steps.All(step => step.Kind == MissionScenarioStepKind.EnableInteraction &&
                     step.EntityClassId == 29365 && step.SpawnGroupId == null));
-
-                migrator.Migrate("20260921183000_BootcampCrateLoot");
-                triggers = context.MissionTriggerEntries.AsNoTracking()
-                    .Where(trigger => trigger.MissionId == 1992 &&
-                        (trigger.ObjectiveId == 3 || trigger.ObjectiveId == 8)).ToArray();
-                Assert.AreEqual((byte)2, triggers.Single(trigger => trigger.ObjectiveId == 3).EventKind);
-                Assert.AreEqual((byte)9, triggers.Single(trigger => trigger.ObjectiveId == 8).EventKind);
-                migrator.Migrate();
-                Assert.IsFalse(Validate(LoadSnapshot(context), context).BlocksReadiness);
             });
         }
 
         [TestMethod]
-        [DataRow(typeof(SqliteWorldContext), "20260921183000_BootcampCrateLoot", "20260921203000_BootcampPracticeTargets")]
-        [DataRow(typeof(MySqlWorldContext), "20260921183010_BootcampCrateLoot", "20260921203010_BootcampPracticeTargets")]
-        public void BootcampPracticeTargetsMigrationHasProviderParity(
-            Type contextType, string previous, string current)
-        {
-            using var context = CreateContext(contextType, "unused");
-            var sql = NormalizeSql(context.GetService<IMigrator>().GenerateScript(previous, current));
-            StringAssert.Contains(sql, "event_kind = 13, subject_id = 29365");
-            StringAssert.Contains(sql, "counter_id = case objective_id when 3 then 1 else 194 end");
-            StringAssert.Contains(sql, "kind = 3, spawn_group_id = null");
-            Assert.IsFalse(context.Database.HasPendingModelChanges());
-        }
-
-        [TestMethod]
-        public void BootcampObjectiveIndicatorsMigrationOnlyDisablesWorldEffects()
+        public void BootcampObjectiveIndicatorsRemainStableWithoutWorldEffects()
         {
             WithDisposableSqliteWorld((context, _) =>
             {
-                var migrator = context.GetService<IMigrator>();
-                migrator.Migrate("20260921203000_BootcampPracticeTargets");
+                context.Database.Migrate();
                 var before = context.MissionIndicatorEntries.AsNoTracking()
                     .Where(entry => AllMissionIds.Contains(entry.MissionId)).ToArray();
-                Assert.IsTrue(before.Length > 0 && before.All(entry => entry.Show3DEffect));
-
-                migrator.Migrate("20260921204500_BootcampObjectiveIndicators");
-
+                Assert.AreEqual(12, before.Length);
+                Assert.IsFalse(before.Any(entry => entry.Show3DEffect));
+                context.Initialize();
                 var after = context.MissionIndicatorEntries.AsNoTracking()
                     .Where(entry => AllMissionIds.Contains(entry.MissionId)).ToArray();
-                Assert.IsFalse(after.Any(entry => entry.Show3DEffect));
                 CollectionAssert.AreEquivalent(
                     before.Select(entry => (entry.MissionId, entry.ObjectiveId, entry.IndicatorId,
-                        entry.PosX, entry.PosY, entry.PosZ, entry.Radius)).ToArray(),
+                        entry.PosX, entry.PosY, entry.PosZ, entry.Radius, entry.Show3DEffect)).ToArray(),
                     after.Select(entry => (entry.MissionId, entry.ObjectiveId, entry.IndicatorId,
-                        entry.PosX, entry.PosY, entry.PosZ, entry.Radius)).ToArray());
-                migrator.Migrate("20260921203000_BootcampPracticeTargets");
-                Assert.IsTrue(context.MissionIndicatorEntries.AsNoTracking()
-                    .Where(entry => AllMissionIds.Contains(entry.MissionId)).All(entry => entry.Show3DEffect));
-                migrator.Migrate();
-                Assert.IsFalse(Validate(LoadSnapshot(context), context).BlocksReadiness);
+                        entry.PosX, entry.PosY, entry.PosZ, entry.Radius, entry.Show3DEffect)).ToArray());
             });
         }
 
         [TestMethod]
-        [DataRow(typeof(SqliteWorldContext), "20260921203000_BootcampPracticeTargets", "20260921204500_BootcampObjectiveIndicators")]
-        [DataRow(typeof(MySqlWorldContext), "20260921203010_BootcampPracticeTargets", "20260921204510_BootcampObjectiveIndicators")]
-        public void BootcampObjectiveIndicatorsMigrationHasProviderParity(
-            Type contextType, string previous, string current)
-        {
-            using var context = CreateContext(contextType, "unused");
-            var sql = NormalizeSql(context.GetService<IMigrator>().GenerateScript(previous, current));
-            StringAssert.Contains(sql, "update mission_indicator set show_3d_effect = 0");
-            StringAssert.Contains(sql, "mission_id in (1990, 1992, 1994, 1995, 2005)");
-            Assert.IsFalse(context.Database.HasPendingModelChanges());
-        }
-
-        [TestMethod]
-        public void BootcampWorldSetupMigrationGroundsDeSimoneAndEnablesAlistersRun()
+        public void BootcampWorldContentGroundsDeSimoneAndEnablesAlistersRun()
         {
             WithDisposableSqliteWorld((context, _) =>
             {
-                var migrator = context.GetService<IMigrator>();
-                migrator.Migrate("20260921204500_BootcampObjectiveIndicators");
-                var before = context.SpawnPoolEntries.AsNoTracking().Single(entry => entry.Id == 510206);
-                Assert.AreEqual(114.0, before.PosY);
-                Assert.AreEqual(0U, context.Set<CreatureEntry>().AsNoTracking()
-                    .Single(entry => entry.Id == 510203).RunSpeed);
-
-                migrator.Migrate("20260921231500_BootcampWorldSetup");
-
-                var after = context.SpawnPoolEntries.AsNoTracking().Single(entry => entry.Id == 510206);
-                Assert.AreEqual(120.059, after.PosY, 0.001);
-                Assert.AreEqual(before.PosX, after.PosX);
-                Assert.AreEqual(before.PosZ, after.PosZ);
-                Assert.AreEqual(before.Rotation, after.Rotation);
-                Assert.AreEqual(before.Creature1Id, after.Creature1Id);
-                Assert.AreEqual(7U, context.Set<CreatureEntry>().AsNoTracking()
-                    .Single(entry => entry.Id == 510203).RunSpeed);
-
-                migrator.Migrate("20260921204500_BootcampObjectiveIndicators");
-
-                Assert.AreEqual(114.0, context.SpawnPoolEntries.AsNoTracking()
-                    .Single(entry => entry.Id == 510206).PosY);
-                Assert.AreEqual(0U, context.Set<CreatureEntry>().AsNoTracking()
-                    .Single(entry => entry.Id == 510203).RunSpeed);
-                migrator.Migrate();
-                Assert.IsFalse(Validate(LoadSnapshot(context), context).BlocksReadiness);
+                context.Database.Migrate();
+                var spawn = context.SpawnPoolEntries.AsNoTracking().Single(entry => entry.Id == 510206);
+                Assert.AreEqual(120.059, spawn.PosY, 0.001);
+                Assert.AreEqual(510206U, spawn.Creature1Id);
+                Assert.AreEqual(7U, context.CreatureEntries.AsNoTracking().Single(entry => entry.Id == 510203).RunSpeed);
             });
         }
 
         [TestMethod]
-        [DataRow(typeof(SqliteWorldContext), "20260921204500_BootcampObjectiveIndicators", "20260921231500_BootcampWorldSetup")]
-        [DataRow(typeof(MySqlWorldContext), "20260921204510_BootcampObjectiveIndicators", "20260921231510_BootcampWorldSetup")]
-        public void BootcampWorldSetupMigrationHasProviderParity(
-            Type contextType, string previous, string current)
-        {
-            using var context = CreateContext(contextType, "unused");
-            var sql = NormalizeSql(context.GetService<IMigrator>().GenerateScript(previous, current));
-            StringAssert.Contains(sql, "update spawnpool set pos_y = 120.059 where id = 510206 and map_context_id = 1985");
-            StringAssert.Contains(sql, "update creature set run_speed = 7 where id = 510203");
-            Assert.IsFalse(context.Database.HasPendingModelChanges());
-        }
-
-        [TestMethod]
-        public void CaptureTheFlagMigrationPreservesTheWorkingCaveTriggerAndRoundTripsTheEncounter()
+        public void CaptureTheFlagContentPreservesTheCaveTriggerAndEncounterOnReinitialization()
         {
             WithDisposableSqliteWorld((context, _) =>
             {
                 var migrator = context.GetService<IMigrator>();
-                migrator.Migrate("20260921231500_BootcampWorldSetup");
+                migrator.Migrate();
                 var area = context.MissionAreaEntries.AsNoTracking()
                     .Single(entry => entry.MissionId == 1994 && entry.AreaId == 439);
                 var indicator = context.MissionIndicatorEntries.AsNoTracking()
@@ -846,7 +692,7 @@ namespace Rasa.Test.Missions
                 var beforeIndicator = (indicator.ObjectiveId, indicator.PosX, indicator.PosY,
                     indicator.PosZ, indicator.Radius, indicator.Show3DEffect);
 
-                migrator.Migrate("20260922004500_BootcampCaptureTheFlag");
+                context.Initialize();
 
                 area = context.MissionAreaEntries.AsNoTracking()
                     .Single(entry => entry.MissionId == 1994 && entry.AreaId == 439);
@@ -867,74 +713,25 @@ namespace Rasa.Test.Missions
                 Assert.IsTrue(context.MissionSpawnGroupEntries.AsNoTracking()
                     .Single(entry => entry.MissionId == 1994 && entry.SpawnGroupId == 1).Enabled);
 
-                migrator.Migrate("20260921231500_BootcampWorldSetup");
-
-                Assert.AreEqual(0, context.CreatureEntries.Count(entry => entry.Id >= 510213 && entry.Id <= 510217));
-                Assert.AreEqual(0, context.SpawnPoolEntries.Count(entry => entry.Id >= 510216 && entry.Id <= 510220));
-                Assert.IsTrue(context.SpawnPoolEntries.AsNoTracking()
-                    .Where(entry => entry.Id == 520009 || entry.Id == 520010).All(entry => entry.Mode == 0));
-                var restored = context.MissionSpawnEntries.AsNoTracking()
-                    .Single(entry => entry.MissionId == 1994 && entry.SpawnGroupId == 1);
-                Assert.AreEqual(39U, restored.CreatureId);
-                Assert.AreEqual(2U, restored.Quantity);
-                Assert.AreEqual(0U, context.CreatureEntries.AsNoTracking().Single(entry => entry.Id == 510210).Action1);
-                migrator.Migrate();
-                Assert.IsFalse(Validate(LoadSnapshot(context), context).BlocksReadiness);
             });
         }
 
         [TestMethod]
-        [DataRow(typeof(SqliteWorldContext), "20260921231500_BootcampWorldSetup", "20260922004500_BootcampCaptureTheFlag")]
-        [DataRow(typeof(MySqlWorldContext), "20260921231510_BootcampWorldSetup", "20260922004510_BootcampCaptureTheFlag")]
-        public void CaptureTheFlagMigrationHasProviderParity(Type contextType, string previous, string current)
-        {
-            using var context = CreateContext(contextType, "unused");
-            var sql = NormalizeSql(context.GetService<IMigrator>().GenerateScript(previous, current));
-            StringAssert.Contains(sql, "id in (520009, 520010)");
-            StringAssert.Contains(sql, "bootcamp thrax infantry initiate");
-            StringAssert.Contains(sql, "forean companions");
-            Assert.IsFalse(sql.Contains("update mission_area", StringComparison.Ordinal));
-            Assert.IsFalse(sql.Contains("update mission_indicator", StringComparison.Ordinal));
-            Assert.IsFalse(context.Database.HasPendingModelChanges());
-        }
-
-        [TestMethod]
-        public void BootcampLightningCueMigrationUsesTheNativeHighlightGreetingAndRollsBack()
+        public void BootcampLightningCueUsesTheNativeHighlightGreeting()
         {
             WithDisposableSqliteWorld((context, _) =>
             {
-                var migrator = context.GetService<IMigrator>();
-                migrator.Migrate("20260921231500_BootcampWorldSetup");
-                uint? FirstGreeting() => context.MissionActionEntries.AsNoTracking().Where(entry =>
+                context.Database.Migrate();
+                uint? Greeting(uint objective) => context.MissionActionEntries.AsNoTracking().Where(entry =>
                     entry.MissionId == 1990 && entry.ContentRevision == BootcampRevision &&
-                    entry.ObjectiveId == 1 && entry.Kind == MissionActionKind.ShowAmbientConversation)
+                    entry.ObjectiveId == objective && entry.Kind == MissionActionKind.ShowAmbientConversation)
                     .Select(entry => entry.NpcPackageId).Single();
-                Assert.AreEqual(1635U, FirstGreeting());
-
-                migrator.Migrate("20260922013000_BootcampLightningCue");
-                Assert.AreEqual(1634U, FirstGreeting());
-                Assert.AreEqual(1636U, context.MissionActionEntries.AsNoTracking().Where(entry =>
-                    entry.MissionId == 1990 && entry.ContentRevision == BootcampRevision &&
-                    entry.ObjectiveId == 2 && entry.Kind == MissionActionKind.ShowAmbientConversation)
-                    .Select(entry => entry.NpcPackageId).Single());
-
-                migrator.Migrate("20260921231500_BootcampWorldSetup");
-                Assert.AreEqual(1635U, FirstGreeting());
-                migrator.Migrate();
-                Assert.IsFalse(Validate(LoadSnapshot(context), context).BlocksReadiness);
+                Assert.AreEqual(1634U, Greeting(1));
+                Assert.AreEqual(1636U, Greeting(2));
+                context.Initialize();
+                Assert.AreEqual(1634U, Greeting(1));
+                Assert.AreEqual(1636U, Greeting(2));
             });
-        }
-
-        [TestMethod]
-        [DataRow(typeof(SqliteWorldContext), "20260921231500_BootcampWorldSetup", "20260922013000_BootcampLightningCue")]
-        [DataRow(typeof(MySqlWorldContext), "20260921231510_BootcampWorldSetup", "20260922013010_BootcampLightningCue")]
-        public void BootcampLightningCueMigrationHasProviderParity(Type contextType, string previous, string current)
-        {
-            using var context = CreateContext(contextType, "unused");
-            var sql = NormalizeSql(context.GetService<IMigrator>().GenerateScript(previous, current));
-            StringAssert.Contains(sql, "update mission_action set npc_package_id = 1634");
-            StringAssert.Contains(sql, "mission_id = 1990 and content_revision = 'deployment_11' and objective_id = 1");
-            Assert.IsFalse(context.Database.HasPendingModelChanges());
         }
 
         [TestMethod]
@@ -960,7 +757,7 @@ namespace Rasa.Test.Missions
         [TestMethod]
         [DataRow(typeof(SqliteWorldContext))]
         [DataRow(typeof(MySqlWorldContext))]
-        public void BootcampMissionContentScriptsInsertSpawnGroupsWithPreSpawnPolicyColumnShape(
+        public void BootcampMissionContentScriptsSeedFinalScenarioSpawnPolicies(
             Type contextType)
         {
             using var context = CreateContext(contextType, "unused");
@@ -971,117 +768,48 @@ namespace Rasa.Test.Missions
                 "insert into mission_spawn_group (mission_id, content_revision, spawn_group_id, requirement, area_id, map_context_id, enabled, respawn_seconds, comment) values");
             StringAssert.Contains(
                 sql,
-                "update mission_spawn_group set spawn_policy = 1 where mission_id = 1994 and spawn_group_id in (1, 2, 3)");
+                "update mission_spawn_group set spawn_policy = 1, respawn_seconds = null where mission_id = 1994 and spawn_group_id in (1, 2, 3)");
         }
 
         [TestMethod]
-        public void SqliteHistoricalBootcampMigrationReplaySeedsSpawnGroupsBeforeSpawnPolicyUpgrade()
+        public void SqliteWorldSeedsOnlyAfterTheFinalSchemaIsInstalled()
         {
             WithDisposableSqliteWorld((context, database) =>
             {
-                var migrations = context.Database.GetMigrations().ToArray();
-                var bootcampIndex = Array.IndexOf(migrations, SqliteMigrationId);
-                Assert.IsTrue(bootcampIndex > 0, SqliteMigrationId);
-
-                context.GetService<IMigrator>().Migrate(migrations[bootcampIndex - 1]);
-                context.GetService<IMigrator>().Migrate(SqliteMigrationId);
-
-                using (var connection = new SqliteConnection($"Data Source={database}.db"))
-                {
-                    connection.Open();
-
-                    using var tableInfo = connection.CreateCommand();
-                    tableInfo.CommandText =
-                        "SELECT COUNT(*) " +
-                        "FROM pragma_table_info('mission_spawn_group') " +
-                        "WHERE name = 'spawn_policy'";
-                    Assert.AreEqual(0L, (long)tableInfo.ExecuteScalar()!);
-
-                    using var command = connection.CreateCommand();
-                    command.CommandText =
-                        "SELECT respawn_seconds " +
-                        "FROM mission_spawn_group " +
-                        "WHERE mission_id = 1994 AND content_revision = 'deployment_11' AND spawn_group_id IN (1, 2, 3) " +
-                        "ORDER BY spawn_group_id";
-
-                    using var reader = command.ExecuteReader();
-                    var respawnSeconds = new List<uint>();
-                    while (reader.Read())
-                    {
-                        respawnSeconds.Add(reader.GetFieldValue<uint>(0));
-                    }
-
-                    CollectionAssert.AreEqual(
-                        new uint[] { 1, 1, 1 },
-                        respawnSeconds.ToArray());
-                }
-
+                context.GetService<IMigrator>().Migrate("ConsolidatedWorldSchema");
+                Assert.IsEmpty(context.MissionSpawnGroupEntries.ToArray());
+                Assert.IsEmpty(context.MissionContentDefinitionEntries.ToArray());
+                context.GetService<IMigrator>().Migrate("SeedWorldContent");
                 using var reopened = (SqliteWorldContext)CreateContext(typeof(SqliteWorldContext), database);
-                reopened.Database.Migrate();
-
-                var upgradedGroups = reopened.MissionSpawnGroupEntries
-                    .Where(entry => entry.MissionId == 1994 &&
-                                    entry.ContentRevision == BootcampRevision &&
-                                    entry.SpawnGroupId <= 3)
-                    .OrderBy(entry => entry.SpawnGroupId)
-                    .ToArray();
-                Assert.AreEqual(3, upgradedGroups.Length);
-                Assert.IsTrue(upgradedGroups.All(entry => entry.RespawnSeconds == null));
-                Assert.IsTrue(upgradedGroups.All(entry => entry.SpawnPolicy == MissionSpawnGroupPolicy.ScenarioControlled));
+                reopened.Initialize();
+                var groups = reopened.MissionSpawnGroupEntries.Where(entry => entry.MissionId == 1994 &&
+                    entry.ContentRevision == BootcampRevision && entry.SpawnGroupId <= 3).ToArray();
+                Assert.AreEqual(3, groups.Length);
+                Assert.IsTrue(groups.All(entry => entry.RespawnSeconds == null &&
+                    entry.SpawnPolicy == MissionSpawnGroupPolicy.ScenarioControlled));
             });
         }
 
         [TestMethod]
-        public void BootcampMissionContentMySqlScriptMatchesSqliteSeededRowCounts()
+        public void ConsolidatedWorldContentPreservesEveryBootcampTableRowCount()
         {
             WithDisposableSqliteWorld((context, _) =>
             {
-                // Compare seed inserts before later migrations update or remove authored rows.
-                context.GetService<IMigrator>().Migrate("20260919183000_BootcampFinalReviewFixes");
-
-                var sqliteCounts = new Dictionary<string, int>
+                context.Database.Migrate();
+                var expected = new Dictionary<string, int>
                 {
-                    ["mission_content_definition"] = context.MissionContentDefinitionEntries.Count(entry =>
-                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
-                    ["mission_prerequisite"] = context.MissionPrerequisiteEntries.Count(entry =>
-                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
-                    ["mission_objective_definition"] = context.MissionObjectiveDefinitionEntries.Count(entry =>
-                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
-                    ["mission_objective_transition"] = context.MissionObjectiveTransitionEntries.Count(entry =>
-                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
-                    ["mission_trigger"] = context.MissionTriggerEntries.Count(entry =>
-                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
-                    ["mission_action"] = context.MissionActionEntries.Count(entry =>
-                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
-                    ["mission_reward_definition"] = context.MissionRewardDefinitionEntries.Count(entry =>
-                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
-                    ["mission_reward_item"] = context.MissionRewardItemEntries.Count(entry =>
-                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
-                    ["mission_indicator"] = context.MissionIndicatorEntries.Count(entry =>
-                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
-                    ["mission_area"] = context.MissionAreaEntries.Count(entry =>
-                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
-                    ["mission_spawn_group"] = context.MissionSpawnGroupEntries.Count(entry =>
-                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
-                    ["mission_spawn"] = context.MissionSpawnEntries.Count(entry =>
-                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
-                    ["mission_scenario"] = context.MissionScenarioEntries.Count(entry =>
-                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
-                    ["mission_scenario_step"] = context.MissionScenarioStepEntries.Count(entry =>
-                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision),
-                    ["mission_evidence"] = context.MissionEvidenceEntries.Count(entry =>
-                        AllMissionIds.Contains(entry.MissionId) && entry.ContentRevision == BootcampRevision)
+                    ["mission_content_definition"] = 5, ["mission_prerequisite"] = 4,
+                    ["mission_objective_definition"] = 21, ["mission_objective_transition"] = 27,
+                    ["mission_trigger"] = 27, ["mission_action"] = 80, ["mission_reward_definition"] = 7,
+                    ["mission_reward_item"] = 6, ["mission_indicator"] = 12, ["mission_area"] = 7,
+                    ["mission_spawn_group"] = 12, ["mission_spawn"] = 26, ["mission_scenario"] = 20,
+                    ["mission_scenario_step"] = 52, ["mission_evidence"] = 17, ["mission_scene_binding"] = 5,
+                    ["mission_channel_policy"] = 1, ["mission_repeat_policy"] = 0
                 };
-
-                using var mysqlContext = CreateContext(typeof(MySqlWorldContext), "unused");
-                var sql = NormalizeSql(mysqlContext.GetService<IMigrator>().GenerateScript(
-                    toMigration: "20260919183010_BootcampFinalReviewFixes"));
-
-                foreach (var (table, expectedCount) in sqliteCounts)
-                    Assert.AreEqual(
-                        expectedCount,
-                        CountBootcampRevisionInsertStatements(sql, table),
-                        $"Generated MySQL script does not match SQLite seeded row count for {table}.");
+                foreach (var (table, count) in expected)
+                    Assert.AreEqual(count, context.Database.SqlQueryRaw<int>(
+                        $"SELECT COUNT(*) AS Value FROM {table} WHERE content_revision = 'deployment_11'").Single(), table);
+                Assert.AreEqual(1, context.Set<MissionExperienceBindingEntry>().Count());
             });
         }
 
@@ -1142,12 +870,6 @@ namespace Rasa.Test.Missions
                 .Replace("\t", " ");
             return System.Text.RegularExpressions.Regex.Replace(sql, "\\s+", " ").Trim();
         }
-
-        private static int CountBootcampRevisionInsertStatements(string sql, string tableName) =>
-            System.Text.RegularExpressions.Regex.Matches(
-                    sql.ToLowerInvariant(),
-                    $@"insert into {System.Text.RegularExpressions.Regex.Escape(tableName.ToLowerInvariant())} \([^)]*\) values \((1990|1992|1994|1995|2005), 'deployment_11',")
-                .Count;
 
         private static string FindRepositoryRoot()
         {

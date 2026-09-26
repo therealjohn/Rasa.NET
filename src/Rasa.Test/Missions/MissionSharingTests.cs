@@ -1276,23 +1276,23 @@ namespace Rasa.Test.Missions
         [TestMethod]
         [DataRow(false)]
         [DataRow(true)]
-        public void PartyMigrationsOnlyAddNullableSourceIdentityAndRefuseDestructiveDowngrade(bool mysql)
+        public void CharacterSchemaIncludesNullablePartySourceIdentity(bool mysql)
         {
-            Migration migration = mysql ? new Rasa.Migrations.MySqlChar.MissionPartyOffers() :
-                new Rasa.Migrations.SqliteChar.MissionPartyOffers();
-            Assert.HasCount(1, migration.UpOperations);
-            var column = migration.UpOperations.OfType<AddColumnOperation>().Single();
-            Assert.AreEqual("character_mission_offer", column.Table);
-            Assert.AreEqual("party_source", column.Name);
+            Migration migration = mysql ? new Rasa.Migrations.MySqlChar.ConsolidatedCharacterSchema() :
+                new Rasa.Migrations.SqliteChar.ConsolidatedCharacterSchema();
+            var table = migration.UpOperations.OfType<CreateTableOperation>()
+                .Single(operation => operation.Name == "character_mission_offer");
+            var column = table.Columns.Single(operation => operation.Name == "party_source");
             Assert.AreEqual("text", column.ColumnType);
             Assert.IsTrue(column.IsNullable);
-            Assert.ThrowsExactly<NotSupportedException>(() => { _ = migration.DownOperations; });
+            Assert.IsTrue(migration.DownOperations.OfType<DropTableOperation>()
+                .Any(operation => operation.Name == "character_mission_offer"));
         }
 
         [TestMethod]
-        public void PartyMigrationPreservesP7OffersAssignmentsObjectivesHistoryAndReceipts()
+        public void ReinitializationPreservesOffersAssignmentsObjectivesHistoryAndReceipts()
         {
-            using var context = new MissionTestContext("20260925231151_MissionRadioOffers");
+            using var context = new MissionTestContext();
             context.SeedCharacter(1, 0, 1);
             var assignment = new CharacterMissionEntry(1, 321, (uint)MissionState.Completed)
                 { ContentRevision = "p7-preserved", Generation = 7, Completeable = true };

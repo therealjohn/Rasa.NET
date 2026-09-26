@@ -47,8 +47,10 @@ foreach ($file in 'rasaauth.db', 'rasachar.db', 'rasaworld.db') {
 docker compose build
 ```
 
-This branch's change from experimental pack publication requires fresh
-databases. Do not run this as an existing-save conversion procedure.
+This branch's consolidated migration history requires fresh databases,
+including when replacing databases from earlier versions of this branch.
+Do not run this as an existing-save conversion procedure or edit migration
+history to bypass that boundary.
 For later normal upgrades, stop containers and back up the databases before
 applying migrations. See [mission authoring and operations](missions.md).
 Native-client and live container acceptance remain separate from static layout
